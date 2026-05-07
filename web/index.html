@@ -533,8 +533,51 @@ applyFavicon();
 // ── Server Monitor ────────────────────────────────────────────────────────
 let _srvChart = null;
 let _srvInterval = null;
-const _cpuHist = Array(30).fill(0);
-const _ramHist = Array(30).fill(0);
+let _srvActiveTab = 'cpu';
+const _cpuHist  = Array(30).fill(0);
+const _ramHist  = Array(30).fill(0);
+const _diskHist = Array(30).fill(0);
+
+const _srvTabConfig = {
+  cpu:  {label:'CPU Usage',  color:'#22c55e', hist:null, borderColor:'2px solid #22c55e'},
+  ram:  {label:'RAM Usage',  color:'#3b82f6', hist:null, borderColor:'2px solid #3b82f6'},
+  disk: {label:'Disk Usage', color:'#f59e0b', hist:null, borderColor:'2px solid #f59e0b'},
+};
+
+function srvSetTab(tab) {
+  _srvActiveTab = tab;
+  const cfg = _srvTabConfig[tab];
+
+  // Update chart dataset
+  if (_srvChart) {
+    const hist = tab==='cpu'?_cpuHist:tab==='ram'?_ramHist:_diskHist;
+    _srvChart.data.datasets[0].data = hist;
+    _srvChart.data.datasets[0].borderColor = cfg.color;
+    _srvChart.data.datasets[0].backgroundColor = cfg.color.replace(')',', .1)').replace('rgb','rgba');
+    _srvChart.update('none');
+  }
+
+  // Update label
+  const lbl = document.getElementById('srvChartLabel');
+  const cur  = document.getElementById('srvChartCurrent');
+  if (lbl) lbl.innerHTML = cfg.label + ' — <span id="srvChartCurrent" style="font-weight:700;color:'+cfg.color+';">'+_lastSrvVal(tab)+'</span>';
+
+  // Update card borders
+  ['cpu','ram','disk'].forEach(t => {
+    const card = document.getElementById('srvCard-'+t);
+    if (!card) return;
+    if (t === tab) {
+      card.style.border = _srvTabConfig[t].borderColor;
+    } else {
+      card.style.border = '1px solid var(--border)';
+    }
+  });
+}
+
+function _lastSrvVal(tab) {
+  const hist = tab==='cpu'?_cpuHist:tab==='ram'?_ramHist:_diskHist;
+  return (hist[hist.length-1] || 0) + '%';
+}
 
 function srvGetColor(pct) {
   if (pct >= 85) return '#ef4444';
@@ -581,9 +624,23 @@ async function srvFetch() {
 
     document.getElementById('srvUptime').textContent = 'Uptime: ' + srvFmtUptime(d.uptime);
 
-    _cpuHist.shift(); _cpuHist.push(cpu);
-    _ramHist.shift(); _ramHist.push(ram);
-    if (_srvChart) _srvChart.update('none');
+    _cpuHist.shift();  _cpuHist.push(cpu);
+    _ramHist.shift();  _ramHist.push(ram);
+    _diskHist.shift(); _diskHist.push(disk);
+
+    // Update active chart
+    if (_srvChart) {
+      const activeHist = _srvActiveTab==='cpu'?_cpuHist:_srvActiveTab==='ram'?_ramHist:_diskHist;
+      _srvChart.data.datasets[0].data = activeHist;
+      _srvChart.update('none');
+    }
+
+    // Update current value label
+    const curEl = document.getElementById('srvChartCurrent');
+    if (curEl) {
+      const val = _srvActiveTab==='cpu'?cpu:_srvActiveTab==='ram'?ram:disk;
+      curEl.textContent = val + '%';
+    }
 
     const badges = [];
     if (cpu  >= 85) badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#450a0a;color:#f87171;">CPU Critical</span>');
@@ -614,8 +671,7 @@ function srvInitChart() {
     data: {
       labels: Array(30).fill(''),
       datasets: [
-        {label:'CPU', data:_cpuHist, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.1)', borderWidth:2, pointRadius:0, fill:true, tension:.4},
-        {label:'RAM', data:_ramHist, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.1)', borderWidth:2, pointRadius:0, fill:true, tension:.4}
+        {label:'Value', data:_cpuHist, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.1)', borderWidth:2, pointRadius:0, fill:true, tension:.4}
       ]
     },
     options: {
@@ -1780,7 +1836,7 @@ init();
           <div id="srvUptime" style="font-size:12px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:4px 12px;">Uptime: --</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px;">
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+          <div id="srvCard-cpu" onclick="srvSetTab('cpu')" style="background:var(--bg2);border:2px solid #22c55e;border-radius:10px;padding:16px;cursor:pointer;transition:border .2s;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">CPU</div>
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
               <div id="srvCpuPct" style="font-size:28px;font-weight:700;color:var(--green);">--</div>
@@ -1791,7 +1847,7 @@ init();
             </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);"><span>0%</span><span>100%</span></div>
           </div>
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+          <div id="srvCard-ram" onclick="srvSetTab('ram')" style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;transition:border .2s;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">RAM</div>
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
               <div id="srvRamPct" style="font-size:28px;font-weight:700;color:var(--accent);">--</div>
@@ -1802,7 +1858,7 @@ init();
             </div>
             <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);"><span>0%</span><span>100%</span></div>
           </div>
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+          <div id="srvCard-disk" onclick="srvSetTab('disk')" style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;transition:border .2s;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">DISK</div>
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
               <div id="srvDiskPct" style="font-size:28px;font-weight:700;color:var(--yellow);">--</div>
@@ -1815,15 +1871,16 @@ init();
           </div>
         </div>
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
             <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);">Live History (5s interval)</div>
-            <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);">
-              <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:3px;background:#22c55e;display:inline-block;border-radius:2px;"></span>CPU</span>
-              <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:3px;background:#3b82f6;display:inline-block;border-radius:2px;"></span>RAM</span>
-            </div>
+            <div id="srvChartLabel" style="font-size:11px;color:var(--muted);">CPU Usage — <span id="srvChartCurrent" style="font-weight:700;color:#22c55e;">--</span></div>
           </div>
-          <div style="position:relative;width:100%;height:140px;">
-            <canvas id="srvChart" role="img" aria-label="Live CPU and RAM history">CPU and RAM live chart</canvas>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <div id="srvChartLabel" style="font-size:11px;color:var(--muted);">CPU Usage</div>
+            <div id="srvChartCurrent" style="font-size:13px;font-weight:700;color:#22c55e;">--</div>
+          </div>
+          <div style="position:relative;width:100%;height:160px;">
+            <canvas id="srvChart" role="img" aria-label="Live server metric history">Server metric live chart</canvas>
           </div>
         </div>
         <div id="srvBadges" style="display:flex;gap:8px;flex-wrap:wrap;">

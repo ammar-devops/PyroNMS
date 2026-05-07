@@ -266,6 +266,10 @@
       </div>
 
       <div class="nav-section">System</div>
+      <div class="nav-item" id="nav-server" onclick="switchSection('server')">
+        <span class="nav-icon">🖥</span>
+        <span class="nav-label">Server Monitor</span>
+      </div>
       <div class="nav-item" id="nav-settings" onclick="switchSection('settings')">
         <span class="nav-icon">⚙</span>
         <span class="nav-label">Settings</span>
@@ -525,6 +529,118 @@ function applyBranding(){
 loadTheme();
 applyFavicon();
 
+
+// ── Server Monitor ────────────────────────────────────────────────────────
+let _srvChart = null;
+let _srvInterval = null;
+const _cpuHist = Array(30).fill(0);
+const _ramHist = Array(30).fill(0);
+
+function srvGetColor(pct) {
+  if (pct >= 85) return '#ef4444';
+  if (pct >= 65) return '#f59e0b';
+  return null;
+}
+
+function srvFmtUptime(secs) {
+  const d=Math.floor(secs/86400), h=Math.floor((secs%86400)/3600), m=Math.floor((secs%3600)/60);
+  if (d>0) return d+'d '+h+'h '+m+'m';
+  if (h>0) return h+'h '+m+'m';
+  return m+'m '+Math.floor(secs%60)+'s';
+}
+
+function srvUpdateBar(id, pct, defColor) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.width = pct + '%';
+  el.style.background = srvGetColor(pct) || defColor;
+}
+
+async function srvFetch() {
+  try {
+    const r = await fetch(API+'/server/stats', {headers: authHeaders()});
+    const d = await r.json();
+    const cpu  = Math.round(d.cpu.percent);
+    const ram  = Math.round(d.ram.percent);
+    const disk = Math.round(d.disk.percent);
+
+    document.getElementById('srvCpuPct').textContent  = cpu  + '%';
+    document.getElementById('srvCpuPct').style.color  = srvGetColor(cpu)  || 'var(--green)';
+    document.getElementById('srvCpuCores').textContent = d.cpu.count + ' cores';
+    srvUpdateBar('srvCpuBar', cpu, '#22c55e');
+
+    document.getElementById('srvRamPct').textContent    = ram  + '%';
+    document.getElementById('srvRamPct').style.color    = srvGetColor(ram)  || 'var(--accent)';
+    document.getElementById('srvRamDetail').textContent = d.ram.used_gb + ' / ' + d.ram.total_gb + ' GB';
+    srvUpdateBar('srvRamBar', ram, '#3b82f6');
+
+    document.getElementById('srvDiskPct').textContent    = disk + '%';
+    document.getElementById('srvDiskPct').style.color    = srvGetColor(disk) || 'var(--yellow)';
+    document.getElementById('srvDiskDetail').textContent = d.disk.used_gb + ' / ' + d.disk.total_gb + ' GB';
+    srvUpdateBar('srvDiskBar', disk, '#f59e0b');
+
+    document.getElementById('srvUptime').textContent = 'Uptime: ' + srvFmtUptime(d.uptime);
+
+    _cpuHist.shift(); _cpuHist.push(cpu);
+    _ramHist.shift(); _ramHist.push(ram);
+    if (_srvChart) _srvChart.update('none');
+
+    const badges = [];
+    if (cpu  >= 85) badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#450a0a;color:#f87171;">CPU Critical</span>');
+    else if (cpu >= 65) badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#451a03;color:#fbbf24;">CPU High</span>');
+    else badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#14532d;color:#4ade80;">CPU OK</span>');
+
+    if (ram  >= 85) badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#450a0a;color:#f87171;">RAM Critical</span>');
+    else if (ram >= 65) badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#451a03;color:#fbbf24;">RAM High</span>');
+    else badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#14532d;color:#4ade80;">RAM OK</span>');
+
+    if (disk >= 85) badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#450a0a;color:#f87171;">Disk Critical</span>');
+    else if (disk >= 65) badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#451a03;color:#fbbf24;">Disk Warning</span>');
+    else badges.push('<span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#14532d;color:#4ade80;">Disk OK</span>');
+
+    const el = document.getElementById('srvBadges');
+    if (el) el.innerHTML = badges.join('');
+  } catch(e) {
+    console.error('Server stats error:', e);
+  }
+}
+
+function srvInitChart() {
+  const canvas = document.getElementById('srvChart');
+  if (!canvas || _srvChart) return;
+  const ctx = canvas.getContext('2d');
+  _srvChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: Array(30).fill(''),
+      datasets: [
+        {label:'CPU', data:_cpuHist, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.1)', borderWidth:2, pointRadius:0, fill:true, tension:.4},
+        {label:'RAM', data:_ramHist, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.1)', borderWidth:2, pointRadius:0, fill:true, tension:.4}
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      animation:{duration:300},
+      plugins:{legend:{display:false}, tooltip:{enabled:false}},
+      scales:{
+        x:{display:false},
+        y:{min:0,max:100,ticks:{color:'#7a8099',font:{size:10},stepSize:25,callback:v=>v+'%'},grid:{color:'rgba(42,47,69,.5)'},border:{display:false}}
+      }
+    }
+  });
+}
+
+function srvStart() {
+  srvInitChart();
+  srvFetch();
+  if (_srvInterval) clearInterval(_srvInterval);
+  _srvInterval = setInterval(srvFetch, 5000);
+}
+
+function srvStop() {
+  if (_srvInterval) { clearInterval(_srvInterval); _srvInterval = null; }
+}
+
 // ── Sort ──────────────────────────────────────────────────────────────────
 let sortCol=null, sortDir=1;
 function sortTable(col){
@@ -582,6 +698,8 @@ function switchSection(name) {
   if (nav) nav.classList.add('active');
   // Load data for section
   if (name === 'unreg') { unregLoading = false; loadUnregistered(); }
+  if (name === 'server') { srvStart(); }
+  else { srvStop(); }
   if (name === 'olt') loadOLTList();
   // Re-apply sticky positions after layout change
   setTimeout(updateStickyPositions, 100);
@@ -1651,6 +1769,69 @@ init();
     </div>
 
 
+    <!-- Section: Server Monitor -->
+    <div class="main-section" id="section-server" style="overflow-y:auto;">
+      <div style="padding:20px;max-width:800px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:var(--text);">Server Monitor</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px;">billing · Ubuntu 22.04 · 172.20.101.160</div>
+          </div>
+          <div id="srvUptime" style="font-size:12px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:4px 12px;">Uptime: --</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px;">
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">CPU</div>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
+              <div id="srvCpuPct" style="font-size:28px;font-weight:700;color:var(--green);">--</div>
+              <div id="srvCpuCores" style="font-size:11px;color:var(--muted);">-- cores</div>
+            </div>
+            <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px;">
+              <div id="srvCpuBar" style="height:100%;width:0%;background:var(--green);border-radius:3px;transition:width .8s ease,background .3s;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);"><span>0%</span><span>100%</span></div>
+          </div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">RAM</div>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
+              <div id="srvRamPct" style="font-size:28px;font-weight:700;color:var(--accent);">--</div>
+              <div id="srvRamDetail" style="font-size:11px;color:var(--muted);">-- / -- GB</div>
+            </div>
+            <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px;">
+              <div id="srvRamBar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width .8s ease;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);"><span>0%</span><span>100%</span></div>
+          </div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">DISK</div>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
+              <div id="srvDiskPct" style="font-size:28px;font-weight:700;color:var(--yellow);">--</div>
+              <div id="srvDiskDetail" style="font-size:11px;color:var(--muted);">-- / -- GB</div>
+            </div>
+            <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px;">
+              <div id="srvDiskBar" style="height:100%;width:0%;background:var(--yellow);border-radius:3px;transition:width .8s ease;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);"><span>0%</span><span>100%</span></div>
+          </div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);">Live History (5s interval)</div>
+            <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);">
+              <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:3px;background:#22c55e;display:inline-block;border-radius:2px;"></span>CPU</span>
+              <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:3px;background:#3b82f6;display:inline-block;border-radius:2px;"></span>RAM</span>
+            </div>
+          </div>
+          <div style="position:relative;width:100%;height:140px;">
+            <canvas id="srvChart" role="img" aria-label="Live CPU and RAM history">CPU and RAM live chart</canvas>
+          </div>
+        </div>
+        <div id="srvBadges" style="display:flex;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:11px;padding:4px 10px;border-radius:4px;background:#1e3a5f;color:#60a5fa;">Loading...</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Section: Settings -->
     <div class="main-section" id="section-settings" style="overflow-y:auto;">
       <div id="settingsIframeContainer" style="width:100%;height:100%;">
@@ -1717,5 +1898,6 @@ init();
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 </body>
 </html>

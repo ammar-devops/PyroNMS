@@ -558,6 +558,20 @@ class Handler(BaseHTTPRequestHandler):
             ok, sysname = olt_helpers.test_olt_snmp(ip, snmp) if hasattr(olt_helpers, "test_olt_snmp") else olt.test_olt_snmp(ip, snmp)
             return self.send_json(200, {"snmp": ok, "sysname": sysname})
 
+        elif parsed.path == "/server/stats":
+            import psutil, time
+            cpu = psutil.cpu_percent(interval=1)
+            ram = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            net = psutil.net_io_counters()
+            return self.send_json(200, {
+                'cpu': {'percent': cpu, 'count': psutil.cpu_count()},
+                'ram': {'percent': ram.percent, 'used_gb': round(ram.used/1024**3,1), 'total_gb': round(ram.total/1024**3,1)},
+                'disk': {'percent': disk.percent, 'used_gb': round(disk.used/1024**3,1), 'total_gb': round(disk.total/1024**3,1)},
+                'uptime': int(time.time() - psutil.boot_time()),
+                'ts': int(time.time())
+            })
+
         elif parsed.path == "/olt/profiles":
             user = require_auth(self)
             if not user: return

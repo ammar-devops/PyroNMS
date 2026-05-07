@@ -53,6 +53,33 @@
   /* ── Main content ── */
   .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   .main-section { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
+  @media (max-width: 640px) {
+    .sidebar { width: 44px !important; min-width: 44px !important; }
+    .sidebar .nav-label { display: none !important; }
+    .sidebar .nav-section { display: none !important; }
+    .sidebar .olt-item { justify-content: center; }
+    .sidebar .olt-item span { display: none !important; }
+    .sidebar-toggle { display: none !important; }
+
+    .header { padding: 6px 8px !important; gap: 4px !important; flex-wrap: wrap; }
+    .header-title { font-size: 12px !important; }
+    .header-subtitle { display: none; }
+    .stats { gap: 3px !important; flex-wrap: nowrap; }
+    .stat { min-width: 46px !important; padding: 3px 5px !important; }
+    .stat-val { font-size: 14px !important; }
+    .stat-label { font-size: 9px !important; }
+    .toolbar { padding: 6px 8px !important; }
+    .search-input { font-size: 12px !important; }
+
+    .ont-table th, .ont-table td { font-size: 11px !important; padding: 6px 4px !important; }
+    .ont-table th:nth-child(1),
+    .ont-table td:nth-child(1) { display: none; }
+    .refresh-btn-sm { font-size: 10px !important; padding: 2px 5px !important; }
+
+    #section-server .main-content-inner,
+    #section-server > div > div { padding: 10px !important; }
+    #section-server h2 { font-size: 15px !important; }
+  }
   .main-section.active { display: flex; }
 
   /* ── Header ── */
@@ -165,6 +192,57 @@
   /* WLAN band section */
   .wlan-band { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
   .wlan-band-title { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+
+  @media (max-width: 640px) {
+    .ont-table th:nth-child(4),
+    .ont-table td:nth-child(4),
+    .ont-table th:nth-child(5),
+    .ont-table td:nth-child(5),
+    .ont-table th:nth-child(6),
+    .ont-table td:nth-child(6) { display: none !important; }
+
+    .ont-table th:nth-child(3),
+    .ont-table td:nth-child(3) { white-space: nowrap; }
+
+    .signal-badge { font-size: 10px !important; padding: 2px 5px !important; white-space: nowrap; }
+
+    .ont-table { min-width: unset !important; width: 100% !important; }
+
+    .profile-btn { display: none !important; }
+    .header-right { gap: 4px !important; }
+  }
+
+  @media (max-width: 640px) {
+    #fth-temp, #fth-sn,
+    #th-temp, #th-sn,
+    [id="fth-temp"], [id="fth-sn"],
+    [id="th-temp"], [id="th-sn"] { display: none !important; }
+
+    .ont-table td:nth-child(5),
+    .ont-table td:nth-child(6),
+    .ont-table td:nth-child(7) { display: none !important; }
+
+    .ont-table { width: 100% !important; min-width: unset !important; }
+    .ont-table td, .ont-table th { font-size: 11px !important; padding: 6px 6px !important; }
+    .signal-badge { font-size: 10px !important; padding: 2px 6px !important; white-space: nowrap; }
+    .refresh-btn { font-size: 10px !important; padding: 2px 5px !important; }
+  }
+
+  @media (max-width: 640px) {
+    #profileWrap { display: none !important; }
+    #sidebarAvatar { display: flex !important; }
+  }
+  @media (min-width: 641px) {
+    #sidebarAvatar { display: none !important; }
+  }
+
+  @media (max-width: 640px) {
+    #fth-rx { width: 80px !important; }
+    #fth-refresh, #th-refresh,
+    .ont-table th:last-child,
+    .ont-table td:last-child { display: none !important; }
+    .signal-badge { font-size: 9px !important; padding: 2px 4px !important; max-width: 70px; overflow: hidden; }
+  }
 </style>
 </head>
 <body>
@@ -194,7 +272,7 @@
       </div>
       <span style="color:var(--muted);font-size:10px;margin-left:2px;">▼</span>
     </button>
-    <div id="profileMenu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--bg2);border:1px solid var(--border);border-radius:10px;width:200px;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:999;overflow:hidden;">
+    <div id="profileMenu" style="display:none;position:fixed;background:var(--bg2);border:1px solid var(--border);border-radius:10px;width:200px;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:9999;overflow:hidden;">
       <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
         <div style="font-size:13px;font-weight:600;color:var(--text)" id="menuName">—</div>
         <div style="font-size:11px;color:var(--muted)" id="menuUsername">—</div>
@@ -224,7 +302,7 @@
       <th onclick="sortTable('rx')"   id="fth-rx"   style="width:140px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">RX Signal</th>
       <th onclick="sortTable('temp')" id="fth-temp" style="width:80px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Temp</th>
       <th onclick="sortTable('sn')"   id="fth-sn"   style="width:175px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Serial Number</th>
-      <th style="width:100px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;">Refresh</th>
+      <th id="fth-refresh" style="width:100px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;">Refresh</th>
     </tr>
   </table>
 </div>
@@ -274,6 +352,10 @@
         <span class="nav-icon">⚙</span>
         <span class="nav-label">Settings</span>
       </div>
+      <div style="margin-top:auto;border-top:1px solid var(--border);padding:10px 14px;display:flex;justify-content:center;">
+        <div id="sidebarAvatar" onclick="toggleProfile()" style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#1a5c2e,#0d2e4a);border:1.5px solid #26d97f55;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--green);cursor:pointer;flex-shrink:0;">A</div>
+      </div>
+
       <div class="nav-item" id="nav-admin" onclick="switchSection('admin')" style="display:none">
         <span class="nav-icon">👥</span>
         <span class="nav-label">User Management</span>
@@ -306,7 +388,7 @@
         <th style="width:140px" onclick="sortTable('rx')"  id="th-rx">RX Signal</th>
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
-        <th style="width:100px">Refresh</th>
+        <th id="th-refresh" style="width:100px">Refresh</th>
       </tr>
     </thead>
     <tbody id="ontTable"></tbody>
@@ -370,6 +452,21 @@ let currentTab = 'summary';
 // ── Boot ─────────────────────────────────────────────────────────────────────
 // ── Profile dropdown ──────────────────────────────────────────────────────
 function toggleProfile() {
+  const menu = document.getElementById('profileMenu');
+  const isMobile = window.innerWidth <= 640;
+  if (isMobile) {
+    menu.style.left = '50px';
+    menu.style.bottom = '60px';
+    menu.style.right = 'auto';
+    menu.style.top = 'auto';
+  } else {
+    const btn = document.getElementById('profileBtn');
+    const rect = btn ? btn.getBoundingClientRect() : {right: window.innerWidth, bottom: 50};
+    menu.style.right = (window.innerWidth - rect.right) + 'px';
+    menu.style.top = (rect.bottom + 6) + 'px';
+    menu.style.left = 'auto';
+    menu.style.bottom = 'auto';
+  }
   const m = document.getElementById('profileMenu');
   m.style.display = m.style.display==='none' ? 'block' : 'none';
 }
@@ -1827,19 +1924,19 @@ init();
 
     <!-- Section: Server Monitor -->
     <div class="main-section" id="section-server" style="overflow-y:auto;">
-      <div style="padding:20px;max-width:800px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div style="padding:16px;max-width:800px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
           <div>
             <div style="font-size:18px;font-weight:700;color:var(--text);">Server Monitor</div>
             <div style="font-size:12px;color:var(--muted);margin-top:2px;">billing · Ubuntu 22.04 · 172.20.101.160</div>
           </div>
           <div id="srvUptime" style="font-size:12px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:4px 12px;">Uptime: --</div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;">
           <div id="srvCard-cpu" onclick="srvSetTab('cpu')" style="background:var(--bg2);border:2px solid #22c55e;border-radius:10px;padding:16px;cursor:pointer;transition:border .2s;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">CPU</div>
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
-              <div id="srvCpuPct" style="font-size:28px;font-weight:700;color:var(--green);">--</div>
+              <div id="srvCpuPct" style="font-size:clamp(20px,4vw,28px);font-weight:700;color:var(--green);">--</div>
               <div id="srvCpuCores" style="font-size:11px;color:var(--muted);">-- cores</div>
             </div>
             <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px;">
@@ -1850,7 +1947,7 @@ init();
           <div id="srvCard-ram" onclick="srvSetTab('ram')" style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;transition:border .2s;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">RAM</div>
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
-              <div id="srvRamPct" style="font-size:28px;font-weight:700;color:var(--accent);">--</div>
+              <div id="srvRamPct" style="font-size:clamp(20px,4vw,28px);font-weight:700;color:var(--accent);">--</div>
               <div id="srvRamDetail" style="font-size:11px;color:var(--muted);">-- / -- GB</div>
             </div>
             <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px;">
@@ -1861,7 +1958,7 @@ init();
           <div id="srvCard-disk" onclick="srvSetTab('disk')" style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;transition:border .2s;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:10px;">DISK</div>
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;">
-              <div id="srvDiskPct" style="font-size:28px;font-weight:700;color:var(--yellow);">--</div>
+              <div id="srvDiskPct" style="font-size:clamp(20px,4vw,28px);font-weight:700;color:var(--yellow);">--</div>
               <div id="srvDiskDetail" style="font-size:11px;color:var(--muted);">-- / -- GB</div>
             </div>
             <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px;">

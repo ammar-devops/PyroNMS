@@ -1,0 +1,897 @@
+#!/usr/bin/env python3
+"""
+ONT Monitor API Server — port 8088
+Endpoints:
+  GET  /onts                          — all ONTs from InfluxDB (main table)
+  GET  /ont/live?sn=SN               — live SSH refresh for one ONT row
+  GET  /device?sn=SERIALNUMBER        — full ONT detail from GenieACS (modal)
+  POST /device/set                    — push TR-069 param change, verify after
+  GET  /health                        — health check
+"""
+
+import json
+import sys
+sys.path.insert(0, "/opt/ont-monitor/api")
+import olt_helpers as olt
+import re
+import time
+import subprocess
+import sys
+sys.path.insert(0, '/opt/ont-monitor/auth')
+try:
+    import auth_db
+    auth_db.init_db()
+    AUTH_ENABLED = True
+    print("[API] Auth system loaded OK")
+except Exception as e:
+    AUTH_ENABLED = False
+    print(f"[API] Auth disabled: {e}")
+import urllib.parse
+import urllib.request
+import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# ─── Config ───────────────────────────────────────────────────────────────────
+GENIEACS_NBI   = "http://localhost:7557"
+API_PORT       = 8088
+TASK_TIMEOUT   = 30   # seconds to wait for ONT to apply change
+VERIFY_RETRIES = 5    # how many times to re-fetch after task completes
+VERIFY_DELAY   = 3    # seconds between verify retries
+
+# InfluxDB (Docker on localhost)
+INFLUX_URL    = "http://localhost:8086"
+INFLUX_TOKEN  = "my-super-secret-token"
+INFLUX_ORG    = "myisp"
+INFLUX_BUCKET = "olt_monitoring"
+
+# ─── InfluxDB helpers ─────────────────────────────────────────────────────────
+
+def influx_query(flux):
+    """Run a Flux query against InfluxDB, return list of row dicts."""
+    url  = f"{INFLUX_URL}/api/v2/query?org={urllib.parse.quote(INFLUX_ORG)}"
+    body = flux.encode()
+    req  = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Authorization", f"Token {INFLUX_TOKEN}")
+    req.add_header("Content-Type",  "application/vnd.flux")
+    req.add_header("Accept",        "application/csv")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return parse_influx_csv(resp.read().decode())
+    except Exception as ex:
+        print(f"[InfluxDB] query error: {ex}")
+        return []
+
+
+def parse_influx_csv(csv_text):
+    """Parse InfluxDB annotated CSV into list of dicts."""
+    rows = []
+    headers = []
+    for line in csv_text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(",")
+        if not headers:
+            headers = parts
+            continue
+        if len(parts) < len(headers):
+            continue
+        row = dict(zip(headers, parts))
+        rows.append(row)
+    return rows
+
+
+def get_all_onts():
+    """
+    Read latest ONT status + optical from InfluxDB.
+    Schema:
+      ont_status  tags: sn, pon, description (customer name), olt, ont_id
+                  fields: online (1/0), state ("online"/"offline")
+      ont_optical tags: sn, pon, olt, ont_id
+                  fields: rx_power (or rx_signal), temperature (or temp)
+    Returns list of dicts: {pon, name, sn, status, rx, temp}
+    """
+    # Get latest 'state' field per ONT — one row per ONT with all tags
+    flux_status = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -48h)
+  |> filter(fn: (r) => r._measurement == "ont_status" and r._field == "online")
+  |> last()
+  |> keep(columns: ["sn", "pon", "description", "_value"])
+'''
+
+    # Latest optical per ONT — only rx_power and temp fields
+    flux_optical = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -48h)
+  |> filter(fn: (r) => r._measurement == "ont_optical" and
+      (r._field == "rx_power" or r._field == "temp"))
+  |> last()
+  |> keep(columns: ["sn", "_field", "_value"])
+'''
+
+    status_rows  = influx_query(flux_status)
+    optical_rows = influx_query(flux_optical)
+
+    # Index optical by sn — collect all fields
+    optical = {}
+    for r in optical_rows:
+        sn    = r.get("sn", "").strip()
+        field = r.get("_field", "").strip()
+        val   = r.get("_value", "").strip()
+        if not sn:
+            continue
+        if sn not in optical:
+            optical[sn] = {}
+        optical[sn][field] = val
+
+    onts = []
+    seen = set()
+    for r in status_rows:
+        sn   = r.get("sn",          "").strip()
+        pon  = r.get("pon",         "").strip()
+        name = r.get("description", "").strip()
+        val  = r.get("_value",      "0").strip()
+        if not sn or sn in seen:
+            continue
+        seen.add(sn)
+
+        opt  = optical.get(sn, {})
+        # Try common field name variants for rx and temp
+        rx   = (opt.get("rx_power")   or opt.get("rx_signal") or
+                opt.get("rx")         or "-")
+        temp = (opt.get("temperature") or opt.get("temp") or "-")
+
+        onts.append({
+            "pon":    pon,
+            "name":   name,
+            "sn":     sn,
+            "status": "online" if val in ("1", "online", "true") else "offline",
+            "rx":     rx,
+            "temp":   temp,
+        })
+
+    return onts
+
+
+def live_check_ont(sn):
+    """
+    Run live_check.py for a single ONT via subprocess.
+    Returns updated ont dict or None.
+    """
+    try:
+        result = subprocess.run(
+            ["python3", "/opt/ont-monitor/workers/live_check.py", "--sn", sn],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout.strip())
+    except Exception as ex:
+        print(f"[live_check] error for {sn}: {ex}")
+    return None
+
+
+# ─── GenieACS helpers ─────────────────────────────────────────────────────────
+
+def genie_request(method, path, body=None):
+    url = GENIEACS_NBI + path
+    data = json.dumps(body).encode() if body is not None else None
+    headers = {"Content-Type": "application/json"}
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode()
+            return resp.status, json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        return e.code, raw
+    except Exception as ex:
+        return 0, str(ex)
+
+
+def find_device_id(sn):
+    """Find GenieACS _id by matching SN suffix in _id field."""
+    sn_encoded = urllib.parse.quote(sn, safe="")
+    path = f"/devices/?projection=_id"
+    status, data = genie_request("GET", path)
+    if status != 200 or not isinstance(data, list):
+        return None
+    sn_upper = sn.upper()
+    for dev in data:
+        dev_id = dev.get("_id", "")
+        # GenieACS stores: OUI-ProductClass-SerialNumber (URL-encoded)
+        decoded = urllib.parse.unquote(dev_id).upper()
+        if decoded.endswith(sn_upper) or dev_id.upper().endswith(sn_upper):
+            return dev_id
+    return None
+
+
+def fetch_device_data(device_id):
+    """Fetch full parameter projection for a device."""
+    projection = ",".join([
+        "_id",
+        "_lastInform",
+        "DeviceID",
+        "summary",
+        # Summary
+        "InternetGatewayDevice.DeviceInfo.SerialNumber",
+        "InternetGatewayDevice.DeviceInfo.Manufacturer",
+        "InternetGatewayDevice.DeviceInfo.ModelName",
+        "InternetGatewayDevice.DeviceInfo.HardwareVersion",
+        "InternetGatewayDevice.DeviceInfo.SoftwareVersion",
+        "InternetGatewayDevice.DeviceInfo.UpTime",
+        "InternetGatewayDevice.ManagementServer.URL",
+        "InternetGatewayDevice.ManagementServer.PeriodicInformInterval",
+        "InternetGatewayDevice.ManagementServer.ConnectionRequestURL",
+        # WAN
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress",
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.DefaultGateway",
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.DNSServers",
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Uptime",
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress",
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.DefaultGateway",
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.DNSServers",
+        # LAN
+        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress",
+        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPRouters",
+        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DNSServers",
+        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MinAddress",
+        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MaxAddress",
+        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.SubnetMask",
+        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DHCPLeaseTime",
+        # WLAN (bands 1-5)
+        "InternetGatewayDevice.LANDevice.1.WLANConfiguration",
+        # TR-069
+        "InternetGatewayDevice.ManagementServer.Username",
+        "InternetGatewayDevice.ManagementServer.Password",
+    ])
+    # Use query filter to avoid URL double-encoding issues with device _id
+    query = json.dumps({"_id": device_id})
+    path = f"/devices/?query={urllib.parse.quote(query)}&projection={urllib.parse.quote(projection)}"
+    status, data = genie_request("GET", path)
+    if status != 200:
+        return None
+    if isinstance(data, list):
+        return data[0] if data else None
+    return data
+
+
+def extract_val(obj, *keys):
+    """Safely extract nested GenieACS value: obj['key1']['key2']['_value']"""
+    cur = obj
+    for k in keys:
+        if not isinstance(cur, dict):
+            return "-"
+        cur = cur.get(k, {})
+    if isinstance(cur, dict):
+        v = cur.get("_value")
+        return str(v) if v is not None and str(v).strip() not in ("","None") else "-"
+    return str(cur) if cur is not None and str(cur).strip() not in ("","None") else "-"
+
+
+def parse_device(raw):
+    """Parse raw GenieACS device doc into clean structured dict."""
+    igd = raw.get("InternetGatewayDevice", {})
+    dev_info = igd.get("DeviceInfo", {})
+    mgmt     = igd.get("ManagementServer", {})
+    wan_dev  = igd.get("WANDevice", {}).get("1", {})
+    wan_conn = wan_dev.get("WANConnectionDevice", {}).get("1", {})
+    ppp      = wan_conn.get("WANPPPConnection", {}).get("1", {})
+    ip_conn  = wan_conn.get("WANIPConnection", {}).get("1", {})
+    lan_dev  = igd.get("LANDevice", {}).get("1", {})
+    lan_cfg  = lan_dev.get("LANHostConfigManagement", {})
+    wlan_all = lan_dev.get("WLANConfiguration", {})
+
+    def v(node, key):
+        return extract_val(node, key)
+
+    # Last inform from _lastInform field
+    _li_raw = raw.get("_lastInform", "")
+    if _li_raw:
+        try:
+            # Convert "2026-05-06T17:25:09.582Z" to "06/05/2026, 17:25:09"
+            from datetime import datetime
+            _li_dt = datetime.strptime(_li_raw[:19], "%Y-%m-%dT%H:%M:%S")
+            last_inform = _li_dt.strftime("%d/%m/%Y, %H:%M:%S")
+        except Exception:
+            last_inform = _li_raw
+    else:
+        last_inform = "-"
+    # Parse OUI/Model/SN from _id: "OUI-ProductClass-SN"
+    dev_id_str = raw.get("_id", "")
+    if dev_id_str:
+        _decoded = urllib.parse.unquote(dev_id_str)
+        _parts   = _decoded.split("-")
+        id_oui   = _parts[0] if _parts else "-"
+        id_sn    = _parts[-1] if len(_parts) > 1 else "-"
+        id_model = "-".join(_parts[1:-1]) if len(_parts) > 2 else (_parts[1] if len(_parts)>1 else "-")
+    else:
+        id_oui = id_sn = id_model = "-"
+
+    # Uptime seconds → human
+    uptime_sec = v(dev_info, "UpTime")
+    try:
+        secs = int(uptime_sec)
+        h = secs // 3600
+        uptime_str = f"{h} hours" if h < 48 else f"{h//24} days"
+    except Exception:
+        uptime_str = uptime_sec
+
+    # WLAN bands
+    wlan_bands = []
+    for band_num in sorted(wlan_all.keys(), key=lambda x: int(x) if x.isdigit() else 99):
+        band = wlan_all[band_num]
+        if not isinstance(band, dict):
+            continue
+        ssid = extract_val(band, "SSID")
+        if ssid == "-":
+            continue
+        wlan_bands.append({
+            "band_index": band_num,
+            "ssid":       ssid,
+            "password":   extract_val(band, "KeyPassphrase") or extract_val(band, "PreSharedKey"),
+            "band":       extract_val(band, "OperatingFrequencyBand") or extract_val(band, "Standard"),
+            "channel":    extract_val(band, "Channel"),
+            "security":   extract_val(band, "BeaconType") or extract_val(band, "BasicAuthenticationMode"),
+            "enabled":    extract_val(band, "Enable"),
+            "clients":    extract_val(band, "TotalAssociations"),
+        })
+
+    # WAN — prefer PPP over IP
+    wan_ip   = v(ppp, "ExternalIPAddress") or v(ip_conn, "ExternalIPAddress")
+    wan_gw   = v(ppp, "DefaultGateway")    or v(ip_conn, "DefaultGateway")
+    wan_dns  = v(ppp, "DNSServers")        or v(ip_conn, "DNSServers")
+    wan_user = v(ppp, "Username")
+    wan_up   = v(ppp, "Uptime")
+
+    # LAN IP from IPInterface sub-object
+    ip_iface = lan_cfg.get("IPInterface", {}).get("1", {})
+    lan_ip   = extract_val(ip_iface, "IPInterfaceIPAddress") if ip_iface else v(lan_cfg, "IPRouters")
+
+    conn_req_url = v(mgmt, "ConnectionRequestURL")
+
+    return {
+        "summary": {
+            "serial_number": id_sn,
+            "manufacturer":  (dev_info.get("Manufacturer",{}).get("_value") or "Huawei Technologies") if isinstance(dev_info.get("Manufacturer",{}),dict) else "Huawei Technologies",
+            "model":         (dev_info.get("ModelName",{}).get("_value") or id_model) if isinstance(dev_info.get("ModelName",{}),dict) else id_model,
+            "oui":           id_oui,
+            "hw_version":    v(dev_info, "HardwareVersion"),
+            "sw_version":    v(dev_info, "SoftwareVersion"),
+            "uptime":        uptime_str,
+            "last_inform":   last_inform,
+            "conn_req_url":  conn_req_url,
+            "periodic_interval": v(mgmt, "PeriodicInformInterval"),
+        },
+        "wan": {
+            "ip":          wan_ip,
+            "gateway":     wan_gw,
+            "dns":         wan_dns,
+            "pppoe_user":  wan_user,
+            "uptime":      wan_up,
+        },
+        "lan": {
+            "gateway_ip":   v(lan_cfg, "IPRouters"),
+            "dhcp_min":     v(lan_cfg, "MinAddress"),
+            "dhcp_max":     v(lan_cfg, "MaxAddress"),
+            "subnet_mask":  v(lan_cfg, "SubnetMask"),
+            "lease_time":   v(lan_cfg, "DHCPLeaseTime"),
+            "dns":          v(lan_cfg, "DNSServers"),
+        },
+        "wlan": wlan_bands,
+        "tr069": {
+            "acs_url":      v(mgmt, "URL"),
+            "username":     v(mgmt, "Username"),
+            "password":     v(mgmt, "Password"),
+            "conn_req_url": conn_req_url,
+            "interval":     v(mgmt, "PeriodicInformInterval"),
+        },
+    }
+
+
+# ─── Parameter path resolver ──────────────────────────────────────────────────
+# Maps our logical field names to TR-069 parameter paths.
+# band_index is substituted at runtime for WLAN params.
+
+PARAM_MAP = {
+    # WLAN — band_index placeholder = {b}
+    "wlan.{b}.ssid":     "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.SSID",
+    "wlan.{b}.password": "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.KeyPassphrase",
+    "wlan.{b}.channel":  "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.Channel",
+    "wlan.{b}.enabled":  "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.Enable",
+    "wlan.{b}.security": "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.BeaconType",
+    # WAN PPPoE
+    "wan.pppoe_user":    "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
+    "wan.pppoe_pass":    "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password",
+    # LAN
+    "lan.gateway_ip":    "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPRouters",
+    "lan.dhcp_min":      "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MinAddress",
+    "lan.dhcp_max":      "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MaxAddress",
+    "lan.subnet_mask":   "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.SubnetMask",
+    "lan.lease_time":    "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DHCPLeaseTime",
+    # TR-069
+    "tr069.acs_url":     "InternetGatewayDevice.ManagementServer.URL",
+    "tr069.interval":    "InternetGatewayDevice.ManagementServer.PeriodicInformInterval",
+    "tr069.username":    "InternetGatewayDevice.ManagementServer.Username",
+    "tr069.password":    "InternetGatewayDevice.ManagementServer.Password",
+}
+
+
+def resolve_param_path(field, band_index=None):
+    """Resolve logical field name to TR-069 parameter path."""
+    # Try direct match first
+    if field in PARAM_MAP:
+        path = PARAM_MAP[field]
+        if band_index:
+            path = path.replace("{b}", str(band_index))
+        return path
+    # Try with band placeholder
+    if band_index:
+        templ = field  # e.g. "wlan.1.ssid" → try "wlan.{b}.ssid"
+        parts = field.split(".")
+        if len(parts) >= 3 and parts[0] == "wlan":
+            generic = f"wlan.{{b}}.{parts[2]}"
+            if generic in PARAM_MAP:
+                return PARAM_MAP[generic].replace("{b}", parts[1])
+    return None
+
+
+def push_parameter(device_id, tr069_path, value):
+    """
+    Push a SetParameterValues task to GenieACS NBI.
+    Uses connection request with timeout to wait for ONT to apply.
+    Returns (success: bool, message: str)
+    """
+    enc_id = urllib.parse.quote(device_id, safe="")
+
+    # Determine value type
+    val_type = "xsd:string"
+    try:
+        int(value)
+        val_type = "xsd:unsignedInt"
+    except (ValueError, TypeError):
+        pass
+    if str(value).lower() in ("true", "false"):
+        val_type = "xsd:boolean"
+        value = str(value).lower()
+
+    task_body = {
+        "name": "setParameterValues",
+        "parameterValues": [
+            [tr069_path, value, val_type]
+        ]
+    }
+
+    # POST task with connection request + timeout
+    path = f"/devices/{enc_id}/tasks?timeout={TASK_TIMEOUT}&connection_request"
+    status, resp = genie_request("POST", path, task_body)
+
+    if status in (200, 202):
+        return True, "Task accepted and applied"
+    elif status == 504:
+        return False, "ONT did not respond within timeout (device may be offline)"
+    else:
+        return False, f"GenieACS returned {status}: {resp}"
+
+
+# ─── HTTP Handler ─────────────────────────────────────────────────────────────
+
+def get_token(handler):
+    auth = handler.headers.get("Authorization","")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    return None
+
+def require_auth(handler):
+    if not AUTH_ENABLED:
+        return {"id":0,"username":"admin","role":"superadmin","can_edit":1,"pon_access":"*"}
+    token = get_token(handler)
+    user = auth_db.validate_token(token)
+    if not user:
+        handler.send_json(401, {"error": "Unauthorized — please login"})
+        return None
+    return user
+
+class Handler(BaseHTTPRequestHandler):
+
+    def log_message(self, format, *args):
+        print(f"[API] {self.address_string()} - {format % args}")
+
+    def send_json(self, code, obj):
+        body = json.dumps(obj, default=str).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(body))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+
+        # ── GET /auth/me ──────────────────────────────────────────────────────
+        if parsed.path == "/auth/me":
+            user = require_auth(self)
+            if not user: return
+            return self.send_json(200, user)
+
+        # ── GET /auth/profile — full profile with extra fields ────────────────
+        elif parsed.path == "/auth/profile":
+            user = require_auth(self)
+            if not user: return
+            conn = auth_db.get_db()
+            row = conn.execute("SELECT id,username,full_name,role,pon_access,can_edit,email,phone,cnic,address,avatar,last_login,created_at FROM users WHERE id=?", (user["id"],)).fetchone()
+            conn.close()
+            if not row: return self.send_json(404,{"error":"User not found"})
+            result = dict(row)
+            result['active'] = int(result.get('active', 0))
+            result['can_edit'] = int(result.get('can_edit', 0))
+            return self.send_json(200, result)
+
+        # ── GET /admin/users ──────────────────────────────────────────────────
+        elif parsed.path == "/admin/users":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") != "superadmin":
+                return self.send_json(403, {"error": "Superadmin only"})
+            return self.send_json(200, {"users": auth_db.get_all_users()})
+
+        # ── GET /onts — full ONT list from InfluxDB ───────────────────────────
+        elif parsed.path == "/olts":
+            user = require_auth(self)
+            if not user: return
+            return self.send_json(200, {"olts": olt.get_olts()})
+
+        elif parsed.path == "/olt/test":
+            user = require_auth(self)
+            if not user: return
+            ip = params.get("ip",[""]) [0]
+            snmp = params.get("snmp",["public"])[0]
+            ok, sysname = olt_helpers.test_olt_snmp(ip, snmp) if hasattr(olt_helpers, "test_olt_snmp") else olt.test_olt_snmp(ip, snmp)
+            return self.send_json(200, {"snmp": ok, "sysname": sysname})
+
+        elif parsed.path == "/olt/profiles":
+            user = require_auth(self)
+            if not user: return
+            return self.send_json(200, olt.get_olt_profiles())
+
+        elif parsed.path == "/olt/unregistered":
+            user = require_auth(self)
+            if not user: return
+            olts = olt.get_olts()
+            if not olts: return self.send_json(404, {"error": "No OLTs"})
+            o = olts[0]
+            try:
+                onts = olt.get_unregistered_onts(o["ip"], o["username"], o["password"])
+                return self.send_json(200, {"onts": onts, "count": len(onts)})
+            except Exception as e:
+                return self.send_json(500, {"error": str(e)})
+
+        elif parsed.path == "/onts":
+            onts = get_all_onts()
+            return self.send_json(200, {"onts": onts, "count": len(onts)})
+
+        # ── GET /ont/live?sn=XXXX — live SSH refresh for one ONT row ──────────
+        elif parsed.path == "/ont/live":
+            sn = params.get("sn", [None])[0]
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+            ont = live_check_ont(sn)
+            if ont:
+                return self.send_json(200, {"ont": ont})
+            return self.send_json(502, {"error": "Live check failed or timed out"})
+
+        # ── GET /device?sn=XXXX ──────────────────────────────────────────────
+        elif parsed.path == "/device":
+            sn = params.get("sn", [None])[0]
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+
+            device_id = find_device_id(sn)
+            if not device_id:
+                return self.send_json(404, {"error": f"Device with SN {sn} not found in GenieACS"})
+
+            raw = fetch_device_data(device_id)
+            if not raw:
+                return self.send_json(500, {"error": "Failed to fetch device data"})
+
+            result = parse_device(raw)
+            result["_device_id"] = device_id
+            return self.send_json(200, result)
+
+        # ── GET /health ───────────────────────────────────────────────────────
+        elif parsed.path == "/health":
+            return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})
+
+        else:
+            return self.send_json(404, {"error": "Not found"})
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+
+        # ── POST /auth/login ──────────────────────────────────────────────────
+        if parsed.path == "/olts":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") != "superadmin":
+                return self.send_json(403, {"error": "Superadmin only"})
+            length = int(self.headers.get("Content-Length",0))
+            body = self.rfile.read(length)
+            try: payload = json.loads(body)
+            except: return self.send_json(400, {"error":"Invalid JSON"})
+            if not payload.get("name") or not payload.get("ip"):
+                return self.send_json(400, {"error":"Name and IP required"})
+            olt.add_olt(payload.get("name"),payload.get("ip"),
+                payload.get("username",""),payload.get("password",""),
+                payload.get("snmp_community","public"),payload.get("model","MA5603T"))
+            return self.send_json(200, {"ok": True})
+
+        elif parsed.path == "/olt/provision":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin","admin","pon_operator"):
+                return self.send_json(403, {"error":"Not allowed"})
+            length = int(self.headers.get("Content-Length",0))
+            body = self.rfile.read(length)
+            try: payload = json.loads(body)
+            except: return self.send_json(400, {"error":"Invalid JSON"})
+            sn = payload.get("sn","").strip()
+            desc = payload.get("description","").strip()
+            if not sn or not desc:
+                return self.send_json(400, {"error":"SN and description required"})
+            olts = olt.get_olts()
+            if not olts: return self.send_json(404, {"error":"No OLTs"})
+            o = olts[0]
+            try:
+                ok, ont_id, output = olt.provision_ont(
+                    o["ip"],o["username"],o["password"],
+                    sn,payload.get("slot_port","0/1"),
+                    int(payload.get("port",0)),
+                    payload.get("line_profile_id","8"),
+                    payload.get("srv_profile_id","10"),desc)
+                if ok: return self.send_json(200, {"ok":True,"ont_id":ont_id})
+                return self.send_json(500, {"error":"Failed","output":output})
+            except Exception as e:
+                return self.send_json(500, {"error":str(e)})
+
+        elif parsed.path == "/auth/login":
+            length = int(self.headers.get("Content-Length",0))
+            body = self.rfile.read(length)
+            try: payload = json.loads(body)
+            except: return self.send_json(400,{"error":"Invalid JSON"})
+            result, err = auth_db.login(payload.get("username",""), payload.get("password",""))
+            if err: return self.send_json(401,{"error":err})
+            return self.send_json(200, result)
+
+        # ── POST /auth/logout ─────────────────────────────────────────────────
+        elif parsed.path == "/auth/logout":
+            token = get_token(self)
+            if token: auth_db.logout(token)
+            return self.send_json(200,{"ok":True})
+
+        # ── POST /admin/users — create user ───────────────────────────────────
+        elif parsed.path == "/admin/users":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") != "superadmin":
+                return self.send_json(403,{"error":"Superadmin only"})
+            length = int(self.headers.get("Content-Length",0))
+            body = self.rfile.read(length)
+            try: payload = json.loads(body)
+            except: return self.send_json(400,{"error":"Invalid JSON"})
+            ok, msg = auth_db.create_user(
+                payload.get("username",""), payload.get("password",""),
+                payload.get("full_name",""), payload.get("role","viewer"),
+                payload.get("pon_access","*"), bool(payload.get("can_edit",0))
+            )
+            if ok: return self.send_json(200,{"ok":True,"message":msg})
+            return self.send_json(400,{"error":msg})
+
+        # ── POST /auth/avatar — upload avatar image ───────────────────────────
+        elif parsed.path == "/auth/avatar":
+            user = require_auth(self)
+            if not user: return
+            length = int(self.headers.get("Content-Length",0))
+            if length > 5 * 1024 * 1024:
+                return self.send_json(400,{"error":"File too large (max 5MB)"})
+            body = self.rfile.read(length)
+            try: payload = json.loads(body)
+            except: return self.send_json(400,{"error":"Invalid JSON"})
+
+            import base64, os, re
+            avatar_data = payload.get("avatar","")
+            if not avatar_data:
+                return self.send_json(400,{"error":"No avatar data"})
+
+            # Parse base64 data URL
+            match = re.match(r"data:image/(\w+);base64,(.+)", avatar_data)
+            if not match:
+                return self.send_json(400,{"error":"Invalid image format"})
+
+            ext = match.group(1).lower()
+            if ext not in ("png","jpg","jpeg","gif","webp"):
+                return self.send_json(400,{"error":"Unsupported format"})
+            if ext == "jpeg": ext = "jpg"
+
+            img_data = base64.b64decode(match.group(2))
+            avatar_dir = "/var/www/html/avatars"
+            user_id = user["id"]
+
+            # Delete old avatar files for this user
+            for old_file in os.listdir(avatar_dir):
+                if old_file.startswith(f"user_{user_id}."):
+                    os.remove(os.path.join(avatar_dir, old_file))
+                    print(f"[Avatar] Deleted old: {old_file}")
+
+            # Save new avatar
+            filename = f"user_{user_id}.{ext}"
+            filepath = os.path.join(avatar_dir, filename)
+            with open(filepath, "wb") as fh:
+                fh.write(img_data)
+
+            avatar_url = f"/avatars/{filename}"
+
+            # Save URL to DB (not base64)
+            auth_db.update_user(user_id, {"avatar": avatar_url})
+            print(f"[Avatar] Saved: {filepath}")
+
+            return self.send_json(200, {"ok": True, "avatar_url": avatar_url})
+
+        # ── POST /device/set ─────────────────────────────────────────────────
+        elif parsed.path == "/device/set":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            try:
+                payload = json.loads(body)
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON body"})
+
+            sn         = payload.get("sn")
+            field      = payload.get("field")       # e.g. "wlan.1.ssid"
+            value      = payload.get("value")       # new value string
+            band_index = payload.get("band_index")  # e.g. "1" or "5" (for WLAN)
+
+            if not sn or not field or value is None:
+                return self.send_json(400, {"error": "Required: sn, field, value"})
+
+            # Find device
+            device_id = find_device_id(sn)
+            if not device_id:
+                return self.send_json(404, {"error": f"Device {sn} not found"})
+
+            # Resolve TR-069 path
+            tr069_path = resolve_param_path(field, band_index)
+            if not tr069_path:
+                return self.send_json(400, {"error": f"Unknown field: {field}"})
+
+            print(f"[SET] device={device_id} path={tr069_path} value={value}")
+
+            # Push change
+            success, message = push_parameter(device_id, tr069_path, value)
+            if not success:
+                return self.send_json(502, {"success": False, "error": message})
+
+            # Re-fetch to verify
+            verified_value = None
+            for attempt in range(VERIFY_RETRIES):
+                time.sleep(VERIFY_DELAY)
+                raw = fetch_device_data(device_id)
+                if raw:
+                    parsed_data = parse_device(raw)
+                    verified_value = _extract_field(parsed_data, field, band_index)
+                    if verified_value and verified_value != "-":
+                        break
+                print(f"[SET] Verify attempt {attempt+1}/{VERIFY_RETRIES}...")
+
+            return self.send_json(200, {
+                "success":        True,
+                "message":        message,
+                "field":          field,
+                "tr069_path":     tr069_path,
+                "value_sent":     value,
+                "value_verified": verified_value,
+                "verified":       str(verified_value) == str(value) if verified_value else None,
+            })
+
+        else:
+            return self.send_json(404, {"error": "Not found"})
+
+
+    def do_PUT(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+
+        if parsed.path == "/auth/profile":
+            user = require_auth(self)
+            if not user: return
+            length = int(self.headers.get("Content-Length",0))
+            if length > 10 * 1024 * 1024:  # 10MB limit
+                return self.send_json(400,{"error":"Request too large"})
+            body = self.rfile.read(length) if length > 0 else b'{}'
+            try: payload = json.loads(body)
+            except: return self.send_json(400,{"error":"Invalid JSON"})
+            allowed = ["full_name","email","phone","cnic","address","avatar"]
+            data = {k:v for k,v in payload.items() if k in allowed}
+            if payload.get("new_password"):
+                if not payload.get("current_password"):
+                    return self.send_json(400,{"error":"Current password required"})
+                conn = auth_db.get_db()
+                row = conn.execute("SELECT password FROM users WHERE id=?",(user["id"],)).fetchone()
+                conn.close()
+                if not row or not auth_db.verify_password(payload["current_password"],row["password"]):
+                    return self.send_json(401,{"error":"Current password incorrect"})
+                data["password"] = payload["new_password"]
+            ok,msg = auth_db.update_user(user["id"],data)
+            if ok: return self.send_json(200,{"ok":True})
+            return self.send_json(400,{"error":msg})
+
+        elif parsed.path == "/admin/user":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") != "superadmin":
+                return self.send_json(403,{"error":"Superadmin only"})
+            uid = int(params.get("id",[0])[0])
+            length = int(self.headers.get("Content-Length",0))
+            body = self.rfile.read(length)
+            try: payload = json.loads(body)
+            except: return self.send_json(400,{"error":"Invalid JSON"})
+            ok, msg = auth_db.update_user(uid, payload)
+            if ok: return self.send_json(200,{"ok":True})
+            return self.send_json(400,{"error":msg})
+        return self.send_json(404,{"error":"Not found"})
+
+    def do_DELETE(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == "/olts":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") != "superadmin":
+                return self.send_json(403, {"error":"Superadmin only"})
+            olt_id = params.get("id",[0])[0]
+            ok, msg = olt.delete_olt(olt_id)
+            if ok: return self.send_json(200, {"ok":True})
+            return self.send_json(400, {"error":msg})
+        elif parsed.path == "/admin/user":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") != "superadmin":
+                return self.send_json(403,{"error":"Superadmin only"})
+            uid = int(params.get("id",[0])[0])
+            ok, msg = auth_db.delete_user(uid)
+            return self.send_json(200,{"ok":True})
+        return self.send_json(404,{"error":"Not found"})
+
+def _extract_field(parsed_data, field, band_index=None):
+    """Extract a field from already-parsed device data for verification."""
+    parts = field.split(".")
+    if parts[0] == "wlan" and len(parts) >= 3:
+        idx = parts[1] if len(parts) > 2 else band_index
+        key = parts[2]
+        for band in parsed_data.get("wlan", []):
+            if str(band.get("band_index")) == str(idx):
+                return band.get(key)
+    elif parts[0] in ("wan", "lan", "tr069", "summary"):
+        section = parsed_data.get(parts[0], {})
+        return section.get(parts[1]) if len(parts) > 1 else None
+    return None
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    server = HTTPServer(("0.0.0.0", API_PORT), Handler)
+    print(f"[API] ONT Monitor API running on port {API_PORT}")
+    print(f"[API] GenieACS NBI: {GENIEACS_NBI}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[API] Stopped.")

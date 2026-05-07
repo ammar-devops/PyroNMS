@@ -1,0 +1,165 @@
+{
+  "updated_at": "20260507_171229",
+  "line_profiles": [
+    {
+      "id": "0",
+      "name": "line-profile_default_0"
+    },
+    {
+      "id": "1",
+      "name": "PPPoE-444-Line"
+    },
+    {
+      "id": "2",
+      "name": "Slamat-200"
+    },
+    {
+      "id": "3",
+      "name": "PPPoE-555-Line"
+    },
+    {
+      "id": "4",
+      "name": "PPPoE-666-Line"
+    },
+    {
+      "id": "7",
+      "name": "line-profile-196"
+    },
+    {
+      "id": "8",
+      "name": "line-profile-10-20-30-40"
+    },
+    {
+      "id": "9",
+      "name": "HP-PPPoE-888-Line"
+    },
+    {
+      "id": "10",
+      "name": "line-profile_10"
+    },
+    {
+      "id": "12",
+      "name": "Line-Profile-192"
+    },
+    {
+      "id": "13",
+      "name": "line-profile_304_CIR"
+    },
+    {
+      "id": "14",
+      "name": "line-profile_304-CIR"
+    },
+    {
+      "id": "15",
+      "name": "line-profile-190"
+    },
+    {
+      "id": "16",
+      "name": "INFINITY-PANEL-2086"
+    },
+    {
+      "id": "17",
+      "name": "PPPoE-777-Line"
+    },
+    {
+      "id": "18",
+      "name": "PPPoE-999-Line"
+    },
+    {
+      "id": "101",
+      "name": "kk-PPPoE"
+    },
+    {
+      "id": "304",
+      "name": "line-profile_304"
+    }
+  ],
+  "srv_profiles": [
+    {
+      "id": "1",
+      "name": "HM-srv-profile"
+    },
+    {
+      "id": "2",
+      "name": "srv-profile_10-20-30-40-simple"
+    },
+    {
+      "id": "3",
+      "name": "srv-profile_10-20-30-40"
+    },
+    {
+      "id": "4",
+      "name": "srv-profile_10-20-30-40-Trunk"
+    },
+    {
+      "id": "10",
+      "name": "srv-profile_10"
+    },
+    {
+      "id": "101",
+      "name": "srv-profile_101"
+    }
+  ],
+  "dba_profiles": [
+    {
+      "id": "10",
+      "name": "dba-profile_10",
+      "type": "type4",
+      "max": "1024000"
+    },
+    {
+      "id": "11",
+      "name": "dba-all",
+      "type": "type4",
+      "max": "1024000"
+    },
+    {
+      "id": "12",
+      "name": "KK-CIR-INTERNET",
+      "type": "type4",
+      "max": "1024000"
+    },
+    {
+      "id": "101",
+      "name": "PPPOE",
+      "type": "type4",
+      "max": "1024000"
+    }
+  ],
+  "vlans": [
+    "40",
+    "111",
+    "164",
+    "167",
+    "192",
+    "222",
+    "333",
+    "444",
+    "555",
+    "666",
+    "700",
+    "777",
+    "888",
+    "900",
+    "999",
+    "2062",
+    "2066",
+    "2068",
+    "2080",
+    "2086",
+    "2091",
+    "2096",
+    "2340",
+    "2445",
+    "2460",
+    "4075"
+  ],
+  "gpon_interfaces": [
+    "0/0",
+    "0/1",
+    "0/2",
+    "0/4",
+    "0/5"
+  ],
+  "ont_count": 1890
+}

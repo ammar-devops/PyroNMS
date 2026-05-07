@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link id="favicon" rel="icon" type="image/png" href="/favicon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PyroNMS — Indus Broadband</title>
+<style>
+  :root {
+    --bg:       #0f1117;
+    --bg2:      #181b24;
+    --bg3:      #1e2130;
+    --border:   #2a2f45;
+    --text:     #e2e6f0;
+    --muted:    #7a8099;
+    --accent:   #3b82f6;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --yellow:   #f59e0b;
+    --orange:   #f97316;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  .app-body { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  .sidebar { width: 220px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: width .2s ease; flex-shrink: 0; overflow: hidden; }
+  .sidebar.collapsed { width: 52px; }
+  .sidebar-toggle { display: flex; align-items: center; justify-content: flex-end; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .sidebar-toggle button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 4px 6px; border-radius: 4px; line-height: 1; }
+  .sidebar-toggle button:hover { background: var(--bg3); color: var(--text); }
+  .sidebar-nav { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 0; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; border-radius: 0; transition: background .15s; white-space: nowrap; border-left: 3px solid transparent; color: var(--muted); font-size: 13px; font-weight: 500; }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active { background: var(--bg3); color: var(--accent); border-left-color: var(--accent); }
+  .nav-item .nav-icon { font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
+  .nav-item .nav-label { transition: opacity .15s; }
+  .sidebar.collapsed .nav-label { opacity: 0; pointer-events: none; width: 0; overflow: hidden; }
+  .sidebar.collapsed .nav-item { padding: 10px 14px; justify-content: center; }
+  .sidebar.collapsed .sidebar-toggle { justify-content: center; }
+  .nav-section { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; padding: 12px 14px 4px; white-space: nowrap; }
+  .sidebar.collapsed .nav-section { opacity: 0; }
+
+  /* ── OLT List in sidebar ── */
+  .olt-item { display: flex; align-items: center; gap: 8px; padding: 8px 14px 8px 28px; cursor: pointer; font-size: 12px; color: var(--muted); transition: background .15s; white-space: nowrap; }
+  .olt-item:hover { background: var(--bg3); color: var(--text); }
+  .olt-item.active { color: var(--green); }
+  .olt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .olt-dot.offline { background: var(--red); }
+  .sidebar.collapsed .olt-item { padding: 8px 14px; justify-content: center; }
+  .sidebar.collapsed .olt-item span { display: none; }
+
+  /* ── Main content ── */
+  .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  .main-section { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
+  .main-section.active { display: flex; }
+
+  /* ── Header ── */
+  .header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+  .header-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .header-title { font-size: 16px; font-weight: 600; color: var(--text); }
+  .pon-select { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  .btn-refresh-all { margin-left: 0; background: var(--green); color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-refresh-all:hover { opacity: .85; }
+
+  /* ── Stat boxes ── */
+  .stats { display: flex; gap: 8px; margin-left: 8px; }
+  .stat { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; text-align: center; cursor: pointer; transition: border-color .15s; min-width: 72px; }
+  .stat:hover { border-color: var(--accent); }
+  .stat.active-filter { border-color: var(--accent); }
+  .stat-label { font-size: 11px; color: var(--muted); }
+  .stat-val { font-size: 20px; font-weight: 700; }
+  .stat.s-total  .stat-val { color: var(--accent); }
+  .stat.s-active .stat-val { color: var(--green); }
+  .stat.s-offline .stat-val { color: var(--red); }
+  .stat.s-weak .stat-val { color: var(--yellow); }
+  .stat.s-bad .stat-val { color: var(--orange); }
+
+  /* ── Toolbar ── */
+  .toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); position: sticky; top: 99px; z-index: 90; }
+  .search-box { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 12px; width: 280px; font-size: 13px; }
+  .search-box:focus { outline: none; border-color: var(--accent); }
+  .update-info { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+  /* ── Table ── */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  th { background: var(--bg2); color: var(--muted); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border); position: sticky; top: 0; position: sticky; top: var(--th-top, 151px); z-index: 10; cursor: pointer; user-select: none; }
+  td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .real-thead { visibility: hidden; height: 0; line-height: 0; padding: 0; border: none; }
+  .real-thead th { height: 0; padding: 0; border: none; }
+  th.sort-asc::after  { content: ' ▲'; font-size: 9px; color: var(--accent); }
+  th.sort-desc::after { content: ' ▼'; font-size: 9px; color: var(--accent); }
+  th:hover { color: var(--text); }
+  tr.ont-row { cursor: pointer; }
+  tr.ont-row:hover td { background: var(--bg3); }
+  tr.ont-row:hover td:first-child { border-left: 3px solid var(--accent); padding-left: 13px; }
+  .row-num { color: var(--muted); width: 36px; }
+  .pon-tag { display: inline-block; background: #1e3a5f; color: #60a5fa; border-radius: 4px; padding: 2px 8px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .customer-name { font-weight: 500; }
+  .customer-link { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
+  .signal-badge { display: inline-block; border-radius: 5px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+  .sig-good    { background: #14532d; color: #4ade80; }
+  .sig-weak    { background: #451a03; color: #fbbf24; }
+  .sig-bad     { background: #450a0a; color: #f87171; }
+  .sig-offline { background: #450a0a; color: #f87171; }
+  .temp-cell { color: var(--muted); }
+  .serial-cell { font-family: monospace; font-size: 12px; color: var(--muted); }
+  .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+  .btn-row-refresh:hover { border-color: var(--accent); }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Modal ── */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 500; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; width: 760px; max-width: 95vw; max-height: 88vh; display: flex; flex-direction: column; }
+  .modal-header { padding: 18px 22px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; }
+  .modal-title { font-size: 20px; font-weight: 700; color: var(--accent); }
+  .modal-sn { font-size: 12px; color: var(--muted); margin-top: 3px; font-family: monospace; }
+  .modal-close { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 4px; }
+  .modal-close:hover { color: var(--text); }
+
+  /* ── Tabs ── */
+  .modal-tabs { display: flex; gap: 4px; padding: 0 22px; border-bottom: 1px solid var(--border); }
+  .tab-btn { background: none; border: none; color: var(--muted); padding: 11px 14px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+  /* ── Tab content ── */
+  .modal-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Field rows ── */
+  .field-section { margin-bottom: 20px; }
+  .field-section-title { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field-row { display: flex; flex-direction: column; gap: 6px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 13px 16px; }
+  .field-label { font-size: 11px; color: #8899bb; text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+  .field-value-wrap { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+  .field-value { font-size: 16px; font-weight: 600; color: var(--text); flex: 1; word-break: break-all; }
+  .field-value.muted { color: var(--muted); font-weight: 400; }
+
+  /* Edit controls */
+      .edit-btn { background: #0d2e1a; border: 1px solid #26d97f88; color: #26d97f; border-radius: 5px; padding: 5px 13px; font-size: 12px; font-weight: 700; cursor: pointer; flex-shrink: 0; transition: all .15s; } .edit-btn:hover { border-color: #26d97f; background: #1a4a2a; color: #4dffaa; }
+  .edit-input-wrap { display: none; flex: 1; gap: 6px; align-items: center; }
+  .edit-input-wrap.visible { display: flex; }
+  .edit-input { background: var(--bg3); border: 1px solid var(--accent); color: var(--text); border-radius: 5px; padding: 5px 9px; font-size: 13px; flex: 1; min-width: 0; }
+  .edit-input:focus { outline: none; }
+  .edit-input.select { cursor: pointer; }
+  .btn-save { background: #1a5c2e; color: #26d97f; border: 1px solid #26d97f66; border-radius: 5px; padding: 5px 14px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: all .15s; }
+  .btn-save:hover { opacity: .85; }
+  .btn-cancel-edit { background: #2a1515; border: 1px solid #66222244; color: #f07070; border-radius: 5px; padding: 5px 8px; font-size: 12px; cursor: pointer; }
+  .save-status { font-size: 11px; margin-top: 3px; height: 14px; }
+  .save-status.saving { color: var(--muted); }
+  .save-status.ok     { color: var(--green); }
+  .save-status.fail   { color: var(--red); }
+
+  /* Loading state in modal */
+  .modal-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 48px; color: var(--muted); }
+  .modal-error { padding: 32px; text-align: center; color: var(--red); }
+
+  /* WLAN band section */
+  .wlan-band { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+  .wlan-band-title { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-dot"></div>
+  <img src="/logo.png" alt="Logo" style="height:32px;object-fit:contain;opacity:.9;filter:brightness(1.1);">
+  <div style="line-height:1.2;"><div class="header-title">Indus Broadband</div><div style="font-size:10px;color:var(--muted);letter-spacing:.3px;">PyroNMS by PyroNet Solutions</div></div>
+  <select class="pon-select" id="ponFilter" onchange="applyFilters()">
+    <option value="">All PONs</option>
+  </select>
+  <button class="btn-refresh-all" onclick="refreshAll()">⟳ Refresh All</button>
+  <div class="stats">
+    <div class="stat s-total  active-filter" onclick="setStatFilter('all')"  id="stat-total">  <div class="stat-label">Total</div>  <div class="stat-val" id="v-total">-</div></div>
+    <div class="stat s-active"  onclick="setStatFilter('active')"  id="stat-active"> <div class="stat-label">Active</div>  <div class="stat-val" id="v-active">-</div></div>
+    <div class="stat s-offline" onclick="setStatFilter('offline')" id="stat-offline"><div class="stat-label">Offline</div> <div class="stat-val" id="v-offline">-</div></div>
+    <div class="stat s-weak"    onclick="setStatFilter('weak')"    id="stat-weak">   <div class="stat-label">-26 se -28</div><div class="stat-val" id="v-weak">-</div></div>
+    <div class="stat s-bad"     onclick="setStatFilter('bad')"     id="stat-bad">    <div class="stat-label">-29 se kam</div><div class="stat-val" id="v-bad">-</div></div>
+  </div>
+  <div style="position:relative;margin-left:auto;" id="profileWrap">
+    <button onclick="toggleProfile()" style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:5px 12px 5px 6px;cursor:pointer;transition:all .15s;" id="profileBtn">
+      <div id="profileAvatar" style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#1a5c2e,#0d2e4a);border:1.5px solid #26d97f55;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--green);flex-shrink:0;">A</div>
+      <div style="text-align:left;">
+        <div id="hUser" style="font-size:12px;font-weight:600;color:var(--text);line-height:1.2;"></div>
+        <div id="hRole" style="font-size:10px;color:var(--muted);line-height:1.2;"></div>
+      </div>
+      <span style="color:var(--muted);font-size:10px;margin-left:2px;">▼</span>
+    </button>
+    <div id="profileMenu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--bg2);border:1px solid var(--border);border-radius:10px;width:200px;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:999;overflow:hidden;">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:600;color:var(--text)" id="menuName">—</div>
+        <div style="font-size:11px;color:var(--muted)" id="menuUsername">—</div>
+      </div>
+      <a onclick="openProfileModal();toggleProfile()" style="display:flex;align-items:center;gap:10px;padding:10px 14px;color:var(--text);text-decoration:none;cursor:pointer;font-size:13px;transition:background .1s;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">👤 My Profile</a>
+      <a href="/admin.html" id="hAdmin" style="display:none;align-items:center;gap:10px;padding:10px 14px;color:var(--text);text-decoration:none;font-size:13px;transition:background .1s;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">⚙ User Management</a>
+      <a href="/settings.html" onclick="toggleProfile()" style="display:flex;align-items:center;gap:10px;padding:10px 14px;color:var(--text);text-decoration:none;cursor:pointer;font-size:13px;transition:background .1s;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">🔧 Settings</a>
+      <div style="border-top:1px solid var(--border);margin-top:4px;"></div>
+      <a onclick="doLogout()" style="display:flex;align-items:center;gap:10px;padding:10px 14px;color:var(--red);text-decoration:none;cursor:pointer;font-size:13px;transition:background .1s;" onmouseover="this.style.background='#2d0e0e'" onmouseout="this.style.background=''">⏻ Logout</a>
+    </div>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <input class="search-box" id="searchBox" type="text" placeholder="Search customer name or serial number…" oninput="applyFilters()">
+  <div class="update-info" id="updateInfo">Loading…</div>
+</div>
+
+<!-- Fixed column header bar -->
+<div id="fixedHeader" style="position:sticky;top:151px;z-index:89;background:var(--bg2);border-bottom:2px solid var(--border);padding:0;display:block;">
+  <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+    <tr>
+      <th onclick="sortTable('num')"  id="fth-num"  style="width:44px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">#</th>
+      <th onclick="sortTable('pon')"  id="fth-pon"  style="width:90px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">PON</th>
+      <th onclick="sortTable('name')" id="fth-name" style="padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Customer Name</th>
+      <th onclick="sortTable('rx')"   id="fth-rx"   style="width:140px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">RX Signal</th>
+      <th onclick="sortTable('temp')" id="fth-temp" style="width:80px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Temp</th>
+      <th onclick="sortTable('sn')"   id="fth-sn"   style="width:175px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Serial Number</th>
+      <th style="width:100px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;">Refresh</th>
+    </tr>
+  </table>
+</div>
+
+
+<!-- App Body with Sidebar -->
+<div class="app-body">
+
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-toggle">
+      <button onclick="toggleSidebar()" id="sidebarBtn" title="Toggle sidebar">◀</button>
+    </div>
+    <div class="sidebar-nav">
+
+      <!-- ONT List section -->
+      <div class="nav-section" id="navSectionLabel">Navigation</div>
+      <div class="nav-item active" id="nav-ont" onclick="switchSection('ont')">
+        <span class="nav-icon">📡</span>
+        <span class="nav-label">ONT List</span>
+      </div>
+      <div class="nav-item" id="nav-unreg" onclick="switchSection('unreg')">
+        <span class="nav-icon">➕</span>
+        <span class="nav-label">Unregistered ONTs</span>
+      </div>
+
+      <div class="nav-section">OLT Management</div>
+      <div class="nav-item" id="nav-olt" onclick="switchSection('olt')">
+        <span class="nav-icon">🖥</span>
+        <span class="nav-label">OLT List</span>
+      </div>
+
+      <!-- OLT devices list -->
+      <div id="oltDevicesList">
+        <div class="olt-item active" id="olt-haji" onclick="selectOLT('haji')" title="HAJI-PARK-OLT">
+          <div class="olt-dot" id="olt-haji-dot"></div>
+          <span>HAJI-PARK-OLT</span>
+        </div>
+      </div>
+
+      <div class="nav-section">System</div>
+      <div class="nav-item" id="nav-settings" onclick="switchSection('settings')">
+        <span class="nav-icon">⚙</span>
+        <span class="nav-label">Settings</span>
+      </div>
+      <div class="nav-item" id="nav-admin" onclick="switchSection('admin')" style="display:none">
+        <span class="nav-icon">👥</span>
+        <span class="nav-label">User Management</span>
+      </div>
+
+    </div>
+
+    <!-- Sidebar footer -->
+    <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;">
+      <div id="sidebarFooter">
+        <img src="/pyronet-logo.png" style="height:18px;opacity:.5;vertical-align:middle;"> 
+        <span style="vertical-align:middle;">PyroNMS v2.4</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-content">
+
+    <!-- Section: ONT List -->
+    <div class="main-section active" id="section-ont" style="overflow-y:auto;">
+<!-- Table -->
+<div class="table-wrap">
+  <table>
+    <thead class="real-thead">
+      <tr>
+        <th style="width:44px" onclick="sortTable('num')"  id="th-num">#</th>
+        <th style="width:90px" onclick="sortTable('pon')"  id="th-pon">PON</th>
+        <th                    onclick="sortTable('name')" id="th-name">Customer Name</th>
+        <th style="width:140px" onclick="sortTable('rx')"  id="th-rx">RX Signal</th>
+        <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
+        <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
+        <th style="width:100px">Refresh</th>
+      </tr>
+    </thead>
+    <tbody id="ontTable"></tbody>
+  </table>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modalTitle">—</div>
+        <div class="modal-sn"   id="modalSN">—</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button onclick="reloadModalData()" style="background:#0d2e1a;border:1px solid #26d97f55;color:var(--green);border-radius:6px;padding:5px 13px;font-size:12px;font-weight:600;cursor:pointer" id="modalRefreshBtn">⟳ Refresh</button>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+    </div>
+    <div class="modal-tabs">
+      <button class="tab-btn active" onclick="switchTab('summary')">Summary</button>
+      <button class="tab-btn"        onclick="switchTab('wan')">WAN</button>
+      <button class="tab-btn"        onclick="switchTab('lan')">LAN</button>
+      <button class="tab-btn"        onclick="switchTab('wlan')">WLAN</button>
+      <button class="tab-btn"        onclick="switchTab('tr069')">TR069</button>
+    </div>
+    <div class="modal-body" id="modalBody">
+      <div class="modal-loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Config ───────────────────────────────────────────────────────────────────
+const API = 'http://172.20.101.160:8088';
+
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+let currentUser = null;
+function getToken() { return localStorage.getItem('ont_token'); }
+function authHeaders() { return {'Authorization':'Bearer '+getToken()}; }
+function checkAuth() {
+  const token = getToken();
+  if (!token) { window.location.href='/login.html'; return false; }
+  const exp = parseInt(localStorage.getItem('ont_expires')||0);
+  if (Date.now()/1000 > exp) { localStorage.clear(); window.location.href='/login.html'; return false; }
+  try { currentUser = JSON.parse(localStorage.getItem('ont_user')||'{}'); } catch(e){}
+  return true;
+}
+function doLogout() {
+  fetch(API+'/auth/logout',{method:'POST',headers:authHeaders()});
+  localStorage.clear(); window.location.href='/login.html';
+}
+
+// ── State ────────────────────────────────────────────────────────────────────
+let allONTs = [];
+let statFilter = 'all';
+let currentDevice = null;   // { sn, name, deviceData }
+let currentTab = 'summary';
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+// ── Profile dropdown ──────────────────────────────────────────────────────
+function toggleProfile() {
+  const m = document.getElementById('profileMenu');
+  m.style.display = m.style.display==='none' ? 'block' : 'none';
+}
+document.addEventListener('click', e => {
+  if (!document.getElementById('profileWrap')?.contains(e.target))
+    document.getElementById('profileMenu').style.display = 'none';
+});
+
+
+
+// ── Profile Modal ──────────────────────────────────────────────────────────
+function openProfileModal() {
+  fetch(API+'/auth/profile',{headers:authHeaders()})
+    .then(r=>r.json())
+    .then(p=>{
+      document.getElementById('pm-fullname').value = p.full_name||'';
+      document.getElementById('pm-email').value    = p.email||'';
+      document.getElementById('pm-phone').value    = p.phone||'';
+      document.getElementById('pm-cnic').value     = p.cnic||'';
+      document.getElementById('pm-address').value  = p.address||'';
+      document.getElementById('pm-username').textContent = p.username;
+      document.getElementById('pm-role').textContent     = p.role;
+      document.getElementById('pm-status').textContent   = (parseInt(p.active)===1 || p.role==='superadmin') ? '● Active' : '○ Disabled';
+      window._pendingAvatar = '';
+      // Load avatar
+      const avatarImg = document.getElementById('pmAvatarImg');
+      const avatarInitials = document.getElementById('pmAvatarInitials');
+      if (p.avatar) {
+        avatarImg.src = p.avatar;
+        avatarImg.style.display = 'block';
+        avatarInitials.style.display = 'none';
+      } else {
+        avatarImg.style.display = 'none';
+        avatarInitials.style.display = 'block';
+        const name = p.full_name||p.username||'U';
+        avatarInitials.textContent = name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+      }
+      document.getElementById('pm-curpass').value = '';
+      document.getElementById('pm-newpass').value = '';
+      document.getElementById('pm-msg').textContent = '';
+      document.getElementById('pm-msg').className = 'save-status';
+      document.getElementById('profileModal').style.display='flex';
+    });
+}
+
+function closeProfileModal() {
+  document.getElementById('profileModal').style.display='none';
+}
+
+function previewAvatarUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { alert('Image too large — max 5MB'); return; }
+
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const data = e.target.result;
+    // Show preview immediately
+    document.getElementById('pmAvatarImg').src = data;
+    document.getElementById('pmAvatarImg').style.display = 'block';
+    document.getElementById('pmAvatarInitials').style.display = 'none';
+
+    // Upload to server immediately
+    try {
+      const r = await fetch(API+'/auth/avatar', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+getToken()},
+        body: JSON.stringify({avatar: data})
+      });
+      const result = await r.json();
+      if (result.ok) {
+        window._savedAvatarUrl = result.avatar_url;
+        window._pendingAvatar = '';
+        // Update header avatar with server URL
+        updateAvatar(currentUser.full_name||currentUser.username, result.avatar_url+'?t='+Date.now());
+        console.log('Avatar uploaded:', result.avatar_url);
+      } else {
+        alert('Avatar upload failed: ' + result.error);
+      }
+    } catch(e) {
+      alert('Avatar upload error: ' + e.message);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function saveProfile() {
+  const payload = {
+    full_name: document.getElementById('pm-fullname').value.trim(),
+    email:     document.getElementById('pm-email').value.trim(),
+    phone:     document.getElementById('pm-phone').value.trim(),
+    cnic:      document.getElementById('pm-cnic').value.trim(),
+    address:   document.getElementById('pm-address').value.trim(),
+  };
+  const curpass = document.getElementById('pm-curpass').value;
+  const newpass = document.getElementById('pm-newpass').value;
+  if (newpass) { payload.current_password=curpass; payload.new_password=newpass; }
+
+  const msg = document.getElementById('pm-msg');
+  msg.textContent='Saving…'; msg.className='save-status saving';
+
+  try {
+    const r = await fetch(API+'/auth/profile',{
+      method:'PUT',
+      headers:{...authHeaders(),'Content-Type':'application/json'},
+      body:JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      msg.textContent='✓ Profile saved — reloading…'; msg.className='save-status ok';
+      setTimeout(()=>window.location.reload(), 1200);
+      // Update localStorage
+      const u = JSON.parse(localStorage.getItem('ont_user')||'{}');
+      u.full_name = payload.full_name;
+      localStorage.setItem('ont_user', JSON.stringify(u));
+      document.getElementById('hUser').textContent = payload.full_name||u.username;
+      document.getElementById('menuName').textContent = payload.full_name||u.username;
+      updateAvatar(payload.full_name||u.username);
+    } else {
+      msg.textContent='✗ '+d.error; msg.className='save-status fail';
+    }
+  } catch(e) { msg.textContent='✗ Network error'; msg.className='save-status fail'; }
+}
+
+function updateAvatar(name, avatarUrl) {
+  const el = document.getElementById('profileAvatar');
+  if (avatarUrl) {
+    el.innerHTML = `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+  } else {
+    const initials = name ? name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase() : 'U';
+    el.textContent = initials;
+  }
+}
+
+// ── Theme engine ──────────────────────────────────────────────────────────
+const THEMES = {
+  pyro: {'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'},
+  dark: {'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--bg4':'#1a1a1a','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444','--yellow':'#f59e0b'},
+  light: {'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--bg4':'#dde2e8','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626','--yellow':'#d97706'},
+};
+function applyTheme(name){const t=THEMES[name]||THEMES.pyro;Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));}
+function loadTheme(){applyTheme(localStorage.getItem('pyronms_theme')||'pyro');}
+
+// ── Dynamic Favicon (from branding) ──────────────────────────────────────
+function applyFavicon() {
+  const b = JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
+  const favicon = document.getElementById('favicon');
+  if (!favicon) return;
+  if (b.favicon) favicon.href = b.favicon;
+  else if (b.clientLogo) favicon.href = b.clientLogo;
+}
+function applyBranding(){
+  const b=JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
+  if(b.clientLogo) document.querySelectorAll('img[data-client-logo]').forEach(el=>el.src=b.clientLogo);
+  if(b.company) document.querySelectorAll('[data-company]').forEach(el=>el.textContent=b.company);
+}
+loadTheme();
+applyFavicon();
+
+// ── Sort ──────────────────────────────────────────────────────────────────
+let sortCol=null, sortDir=1;
+function sortTable(col){
+  sortDir = sortCol===col ? sortDir*-1 : 1;
+  sortCol = col;
+  document.querySelectorAll('th[id^="th-"],th[id^="fth-"]').forEach(th=>th.classList.remove('sort-asc','sort-desc'));
+  document.getElementById('th-'+col)?.classList.add(sortDir===1?'sort-asc':'sort-desc');
+  document.getElementById('fth-'+col)?.classList.add(sortDir===1?'sort-asc':'sort-desc');
+  renderTable();
+}
+function getSortedFiltered(){
+  let rows=[...getFiltered()];
+  if(!sortCol) return rows;
+  return rows.sort((a,b)=>{
+    let va,vb;
+    if(sortCol==='rx'){
+      va=a.status==='online'?parseFloat(a.rx)||0:-999;
+      vb=b.status==='online'?parseFloat(b.rx)||0:-999;
+      return (va-vb)*sortDir;
+    }
+    if(sortCol==='temp'){va=parseFloat(a.temp)||0;vb=parseFloat(b.temp)||0;return(va-vb)*sortDir;}
+    if(sortCol==='pon'){va=a.pon||'';vb=b.pon||'';}
+    else if(sortCol==='name'){va=(a.name||'').toLowerCase();vb=(b.name||'').toLowerCase();}
+    else if(sortCol==='sn'){va=a.sn||'';vb=b.sn||'';}
+    else return 0;
+    return va<vb?-sortDir:va>vb?sortDir:0;
+  });
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────
+let sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
+
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed;
+  localStorage.setItem('sidebar_collapsed', sidebarCollapsed);
+  const sb = document.getElementById('sidebar');
+  const btn = document.getElementById('sidebarBtn');
+  if (sidebarCollapsed) {
+    sb.classList.add('collapsed');
+    btn.textContent = '▶';
+  } else {
+    sb.classList.remove('collapsed');
+    btn.textContent = '◀';
+  }
+}
+
+function switchSection(name) {
+  // Hide all sections
+  document.querySelectorAll('.main-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  // Show selected
+  const sec = document.getElementById('section-' + name);
+  const nav = document.getElementById('nav-' + name);
+  if (sec) sec.classList.add('active');
+  if (nav) nav.classList.add('active');
+  // Load data for section
+  if (name === 'unreg') { unregLoading = false; loadUnregistered(); }
+  if (name === 'olt') loadOLTList();
+  // Re-apply sticky positions after layout change
+  setTimeout(updateStickyPositions, 100);
+}
+
+function selectOLT(id) {
+  document.querySelectorAll('.olt-item').forEach(o => o.classList.remove('active'));
+  const el = document.getElementById('olt-' + id);
+  if (el) el.classList.add('active');
+  switchSection('ont');
+}
+
+// ── Unregistered ONTs ─────────────────────────────────────────────────────
+let unregLoading = false;
+async function loadUnregistered() {
+  if (unregLoading) return;
+  unregLoading = true;
+  const tbl = document.getElementById('unregTable');
+  tbl.innerHTML = `<div style="text-align:center;padding:60px 20px;">
+    <div style="font-size:28px;margin-bottom:12px;">🔄</div>
+    <div style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:6px;">Scanning OLT for unregistered ONTs...</div>
+    <div style="font-size:12px;color:var(--muted);">Checking all GPON ports via SSH — may take 30-60 seconds</div>
+  </div>`;
+  try {
+    const r = await fetch(API+'/olt/unregistered', {headers: authHeaders()});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed');
+    renderUnregistered(d.onts || []);
+  } catch(e) {
+    tbl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--red);">✗ Error: ${e.message}</div>`;
+  }
+  unregLoading = false;
+}
+
+function renderUnregistered(onts) {
+  const tbl = document.getElementById('unregTable');
+  if (!onts.length) {
+    tbl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">✓ No unregistered ONTs found</div>';
+    return;
+  }
+  let html = `<div style="margin-bottom:12px;font-size:13px;color:var(--muted);">${onts.length} unregistered ONT(s) found</div>`;
+  html += `<table style="width:100%;border-collapse:collapse;">
+    <thead><tr style="background:var(--bg2);">
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">PON Port</th>
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Serial Number</th>
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Vendor</th>
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Model</th>
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Found At</th>
+      <th style="padding:10px 12px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Action</th>
+    </tr></thead><tbody>`;
+  onts.forEach(o => {
+    html += `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:10px 12px;"><span style="background:var(--accent);color:#fff;border-radius:5px;padding:2px 8px;font-size:12px;font-family:monospace;">${o.pon}</span></td>
+      <td style="padding:10px 12px;font-family:monospace;font-size:13px;">${o.sn}</td>
+      <td style="padding:10px 12px;font-size:13px;">${o.vendor}</td>
+      <td style="padding:10px 12px;font-size:13px;">${o.model}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${o.time}</td>
+      <td style="padding:10px 12px;text-align:center;">
+        <button onclick="openProvisionModal(${JSON.stringify(o).replace(/"/g,'&quot;')})"
+          style="background:#1a5c2e;color:var(--green);border:1px solid #26d97f55;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">
+          ✓ Provision
+        </button>
+      </td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  tbl.innerHTML = html;
+}
+
+// ── Provision Modal ───────────────────────────────────────────────────────
+let _provisionONT = null;
+
+async function openProvisionModal(ont) {
+  _provisionONT = ont;
+  // Load profiles
+  const r = await fetch(API+'/olt/profiles', {headers: authHeaders()});
+  const profiles = await r.json();
+
+  const lp = profiles.line_profiles || [];
+  const sp = profiles.srv_profiles || [];
+
+  const lineOpts = lp.map(p => `<option value="${p.id}" ${p.id==='8'?'selected':''}>${p.name} (ID:${p.id})</option>`).join('');
+  const srvOpts = sp.map(p => `<option value="${p.id}" ${p.id==='10'?'selected':''}>${p.name} (ID:${p.id})</option>`).join('');
+
+  document.getElementById('provModal').style.display = 'flex';
+  document.getElementById('prov-sn').textContent = ont.sn;
+  document.getElementById('prov-pon').textContent = ont.pon;
+  document.getElementById('prov-vendor').textContent = `${ont.vendor} ${ont.model}`;
+  document.getElementById('prov-lineprofile').innerHTML = lineOpts;
+  document.getElementById('prov-srvprofile').innerHTML = srvOpts;
+  document.getElementById('prov-desc').value = '';
+  document.getElementById('prov-msg').textContent = '';
+  document.getElementById('prov-msg').className = '';
+}
+
+function closeProvisionModal() {
+  document.getElementById('provModal').style.display = 'none';
+}
+
+async function submitProvision() {
+  const desc = document.getElementById('prov-desc').value.trim();
+  if (!desc) { alert('Customer name / description is required!'); return; }
+
+  const btn = document.getElementById('prov-submit-btn');
+  const msg = document.getElementById('prov-msg');
+  btn.disabled = true;
+  btn.textContent = 'Provisioning...';
+  msg.textContent = '⏳ Sending to OLT...';
+  msg.style.color = 'var(--muted)';
+
+  try {
+    const payload = {
+      sn: _provisionONT.sn,
+      slot_port: _provisionONT.slot,
+      port: _provisionONT.port,
+      line_profile_id: document.getElementById('prov-lineprofile').value,
+      srv_profile_id: document.getElementById('prov-srvprofile').value,
+      description: desc,
+    };
+    const r = await fetch(API+'/olt/provision', {
+      method: 'POST',
+      headers: {...authHeaders(), 'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      msg.textContent = `✓ ONT provisioned! ONT ID: ${d.ont_id}`;
+      msg.style.color = 'var(--green)';
+      btn.textContent = '✓ Done';
+      // Refresh unregistered list after 2s
+      setTimeout(() => { closeProvisionModal(); loadUnregistered(); }, 2000);
+    } else {
+      msg.textContent = '✗ ' + (d.error || 'Failed');
+      msg.style.color = 'var(--red)';
+      btn.disabled = false;
+      btn.textContent = 'Provision';
+    }
+  } catch(e) {
+    msg.textContent = '✗ Network error: ' + e.message;
+    msg.style.color = 'var(--red)';
+    btn.disabled = false;
+    btn.textContent = 'Provision';
+  }
+}
+
+function loadOLTCount() {
+  // deprecated - now handled by loadOLTList
+}
+
+async function loadOLTList() {
+  const r = await fetch(API+'/olts', {headers: authHeaders()});
+  const d = await r.json();
+  const olts = d.olts || [];
+
+  // Update sidebar
+  const sidebar = document.getElementById('oltDevicesList');
+  sidebar.innerHTML = olts.map(o => `
+    <div class="olt-item ${o.active?'active':''}" onclick="selectOLT(${o.id})" title="${o.name}">
+      <div class="olt-dot ${o.active?'':'offline'}"></div>
+      <span>${o.name}</span>
+    </div>`).join('');
+
+  // Update OLT cards
+  const cards = document.getElementById('oltListCards');
+  if (!cards) return;
+  const profiles = await fetch(API+'/olt/profiles',{headers:authHeaders()}).then(r=>r.json());
+  _oltCache = {}; olts.forEach(o => _oltCache[o.id] = o);
+  cards.innerHTML = olts.map(o => `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <div style="width:10px;height:10px;border-radius:50%;background:${o.active?'var(--green)':'var(--red)'};box-shadow:0 0 6px ${o.active?'var(--green)':'var(--red)'};flex-shrink:0;"></div>
+        <div style="font-size:15px;font-weight:700;">${o.name}</div>
+        <div style="margin-left:auto;font-size:11px;background:${o.active?'#0d2e1a':'#2d0e0e'};color:${o.active?'var(--green)':'var(--red)'};border:1px solid ${o.active?'#26d97f44':'#f25c5c44'};border-radius:4px;padding:2px 8px;">${o.active?'Active':'Disabled'}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-bottom:14px;">
+        <div><span style="color:var(--muted);">IP:</span> <strong>${o.ip}</strong></div>
+        <div><span style="color:var(--muted);">Model:</span> <strong>${o.model}</strong></div>
+        <div><span style="color:var(--muted);">SSH User:</span> <strong>${o.username||'—'}</strong></div>
+        <div><span style="color:var(--muted);">SNMP:</span> <strong>${o.snmp_community||'—'}</strong></div>
+        <div><span style="color:var(--muted);">ONTs in config:</span> <strong>${profiles.ont_count||'—'}</strong></div>
+        <div><span style="color:var(--muted);">GPON Slots:</span> <strong>${(profiles.gpon_interfaces||[]).length}</strong></div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="switchSection('ont')" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px;font-size:12px;cursor:pointer;">📡 ONT List</button>
+        <button onclick="switchSection('unreg')" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px;font-size:12px;cursor:pointer;">➕ Unregistered</button>
+        <button onclick="editOLTById(${o.id})" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:7px 12px;font-size:12px;cursor:pointer;">✏ Edit</button>
+        ${o.id > 1 ? `<button onclick="deleteOLT(${o.id})" style="background:#2d0e0e;border:1px solid #f25c5c44;color:var(--red);border-radius:6px;padding:7px 12px;font-size:12px;cursor:pointer;">✕ Delete</button>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function openAddOLTModal() {
+  const m = document.getElementById('addOLTModal');
+  m.style.display = 'flex';
+  m._editId = null;
+  document.querySelector('#addOLTModal [style*="font-weight:700"]').textContent = '🖥 Add New OLT';
+  document.getElementById('olt-save-btn').textContent = 'Save OLT';
+  document.getElementById('olt-name').value = '';
+  document.getElementById('olt-ip').value = '';
+  document.getElementById('olt-user').value = '';
+  document.getElementById('olt-pass').value = '';
+  document.getElementById('olt-snmp').value = 'public';
+  document.getElementById('olt-test-result').textContent = '';
+}
+
+function closeAddOLTModal() {
+  document.getElementById('addOLTModal').style.display = 'none';
+}
+
+async function testOLTConnection() {
+  const ip = document.getElementById('olt-ip').value.trim();
+  const snmp = document.getElementById('olt-snmp').value.trim();
+  const el = document.getElementById('olt-test-result');
+  el.textContent = '🔌 Testing...'; el.style.color = 'var(--muted)';
+  try {
+    const r = await fetch(`${API}/olt/test?ip=${ip}&snmp=${snmp}`, {headers: authHeaders()});
+    const d = await r.json();
+    if (d.snmp) {
+      el.textContent = `✓ SNMP OK — ${d.sysname}`; el.style.color = 'var(--green)';
+    } else {
+      el.textContent = '✗ SNMP failed — check IP and community'; el.style.color = 'var(--red)';
+    }
+  } catch(e) { el.textContent = '✗ Error: '+e.message; el.style.color = 'var(--red)'; }
+}
+
+// Cache OLT list for edit
+let _oltCache = {};
+
+function editOLTById(id) {
+  const o = _oltCache[id];
+  if (!o) return;
+  editOLT(o);
+}
+
+function editOLT(o) {
+  const m = document.getElementById('addOLTModal');
+  m.style.display = 'flex';
+  m._editId = o.id;
+  document.querySelector('#addOLTModal div[style*="font-weight:700;color:var(--accent)"]').textContent = '✏ Edit OLT';
+  document.getElementById('olt-save-btn').textContent = 'Update OLT';
+  document.getElementById('olt-name').value = o.name || '';
+  document.getElementById('olt-ip').value = o.ip || '';
+  document.getElementById('olt-user').value = o.username || '';
+  document.getElementById('olt-pass').value = '';
+  document.getElementById('olt-snmp').value = o.snmp_community || 'public';
+  document.getElementById('olt-model').value = o.model || 'MA5603T';
+  document.getElementById('olt-test-result').textContent = '';
+}
+
+async function saveOLT() {
+  const m = document.getElementById('addOLTModal');
+  const editId = m._editId;
+  const payload = {
+    name: document.getElementById('olt-name').value.trim(),
+    ip: document.getElementById('olt-ip').value.trim(),
+    username: document.getElementById('olt-user').value.trim(),
+    snmp_community: document.getElementById('olt-snmp').value.trim(),
+    model: document.getElementById('olt-model').value,
+  };
+  const pass = document.getElementById('olt-pass').value.trim();
+  if (pass) payload.password = pass;
+  if (!payload.name || !payload.ip) { alert('Name and IP required'); return; }
+  const btn = document.getElementById('olt-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    let r;
+    if (editId) {
+      r = await fetch(`${API}/olts?id=${editId}`, {method:'PUT',
+        headers:{...authHeaders(),'Content-Type':'application/json'},
+        body: JSON.stringify(payload)});
+    } else {
+      if (pass) payload.password = pass;
+      r = await fetch(API+'/olts', {method:'POST',
+        headers:{...authHeaders(),'Content-Type':'application/json'},
+        body: JSON.stringify(payload)});
+    }
+    const d = await r.json();
+    if (d.ok) { closeAddOLTModal(); loadOLTList(); }
+    else { alert('Error: '+(d.error||'Failed')); }
+  } catch(e) { alert('Error: '+e.message); }
+  btn.disabled = false; btn.textContent = editId ? 'Update OLT' : 'Save OLT';
+}
+
+async function deleteOLT(id) {
+  if (!confirm('Delete this OLT?')) return;
+  await fetch(`${API}/olts?id=${id}`, {method:'DELETE', headers:authHeaders()});
+  loadOLTList();
+}
+
+async function init() {
+  if (!checkAuth()) return;
+  if (currentUser) {
+    document.getElementById('hUser').textContent = currentUser.full_name||currentUser.username;
+    document.getElementById('hRole').textContent = currentUser.role;
+    document.getElementById('menuName').textContent = currentUser.full_name||currentUser.username;
+    document.getElementById('menuUsername').textContent = '@'+currentUser.username;
+    updateAvatar(currentUser.full_name||currentUser.username);
+    if (['superadmin','admin'].includes(currentUser.role))
+      document.getElementById('hAdmin').style.display = 'flex';
+    if (!currentUser.can_edit) {
+      const s = document.createElement('style');
+      s.textContent = '.edit-btn{display:none!important}';
+      document.head.appendChild(s);
+    }
+  }
+  if(!checkAuth()) return;
+  applyBranding();
+  // Apply sidebar state
+  if (sidebarCollapsed) {
+    document.getElementById('sidebar').classList.add('collapsed');
+    document.getElementById('sidebarBtn').textContent = '▶';
+  }
+  // Show admin nav if admin
+  if (currentUser && ['superadmin','admin'].includes(currentUser.role)) {
+    document.getElementById('nav-admin').style.display = '';
+  }
+  if(currentUser){
+    document.getElementById('hUser').textContent=currentUser.full_name||currentUser.username;
+    document.getElementById('hRole').textContent=currentUser.role;
+    document.getElementById('menuName').textContent=currentUser.full_name||currentUser.username;
+    document.getElementById('menuUsername').textContent='@'+currentUser.username;
+    updateAvatar(currentUser.full_name||currentUser.username);
+    // Load avatar from profile
+    fetch(API+'/auth/profile',{headers:authHeaders()})
+      .then(r=>r.json())
+      .then(p=>{
+        if(p.avatar) updateAvatar(p.full_name||p.username, p.avatar+'?t='+Date.now());
+        // Fix active status in localStorage
+        currentUser.active = p.active;
+      }).catch(()=>{});
+    if(['superadmin','admin'].includes(currentUser.role)) document.getElementById('hAdmin').style.display='flex';
+    if(!currentUser.can_edit){const s=document.createElement('style');s.textContent='.edit-btn{display:none!important}';document.head.appendChild(s);}
+  }
+  // Calculate sticky positions dynamically
+  function updateStickyPositions() {
+    // In new layout: header is fixed at top, toolbar is inside scrollable section
+    // Toolbar sticks at top:0 of main-section
+    // fixedHeader (column headers) sticks below toolbar
+    const tb = document.querySelector('.toolbar');
+    const fh = document.getElementById('fixedHeader');
+    if (tb) {
+      tb.style.top = '0px';
+      const tbh = tb.offsetHeight || 52;
+      if (fh) fh.style.top = tbh + 'px';
+      document.documentElement.style.setProperty('--th-top', tbh + 'px');
+    }
+  }
+  updateStickyPositions();
+  window.addEventListener('resize', updateStickyPositions);
+
+  loadOLTList();
+  await loadONTs();
+  setInterval(loadONTs, 3600_000);
+}
+
+async function loadONTs() {
+  try {
+    const r = await fetch(`${API}/onts`,{headers:authHeaders()});
+    const data = await r.json();
+    allONTs = data.onts || [];
+    updateStats();
+    buildPONFilter();
+    renderTable();
+    document.getElementById('updateInfo').textContent =
+      `Updated: ${new Date().toLocaleTimeString()} — ${allONTs.length} ONTs`;
+  } catch(e) {
+    document.getElementById('updateInfo').textContent = 'Error loading data';
+  }
+}
+
+// ── Stats ────────────────────────────────────────────────────────────────────
+function updateStats() {
+  const active  = allONTs.filter(o => o.status === 'online').length;
+  const offline = allONTs.filter(o => o.status !== 'online').length;
+  const weak    = allONTs.filter(o => o.status==='online' && parseFloat(o.rx) >= -28 && parseFloat(o.rx) < -26).length;
+  const bad     = allONTs.filter(o => o.status==='online' && parseFloat(o.rx) < -29).length;
+  document.getElementById('v-total').textContent   = allONTs.length;
+  document.getElementById('v-active').textContent  = active;
+  document.getElementById('v-offline').textContent = offline;
+  document.getElementById('v-weak').textContent    = weak;
+  document.getElementById('v-bad').textContent     = bad;
+}
+
+function setStatFilter(f) {
+  statFilter = f;
+  document.querySelectorAll('.stat').forEach(s => s.classList.remove('active-filter'));
+  const map = { all:'stat-total', active:'stat-active', offline:'stat-offline', weak:'stat-weak', bad:'stat-bad' };
+  document.getElementById(map[f])?.classList.add('active-filter');
+  renderTable();
+}
+
+// ── PON filter ───────────────────────────────────────────────────────────────
+function buildPONFilter() {
+  const pons = [...new Set(allONTs.map(o => o.pon || ''))].filter(Boolean).sort();
+  const sel = document.getElementById('ponFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All PONs</option>' +
+    pons.map(p => `<option value="${p}" ${p===cur?'selected':''}>${p}</option>`).join('');
+}
+
+// ── Filters ──────────────────────────────────────────────────────────────────
+function applyFilters() { renderTable(); }
+
+function getFiltered() {
+  const search = document.getElementById('searchBox').value.toLowerCase();
+  const pon    = document.getElementById('ponFilter').value;
+
+  return allONTs.filter(o => {
+    if (pon  && !o.pon?.startsWith(pon)) return false;
+    if (search) {
+      const hay = (o.name || '') + ' ' + (o.sn || '');
+      if (!hay.toLowerCase().includes(search)) return false;
+    }
+    if (statFilter === 'active'  && o.status !== 'online') return false;
+    if (statFilter === 'offline' && o.status === 'online') return false;
+    if (statFilter === 'weak'    && !(o.status==='online' && parseFloat(o.rx)>=-28 && parseFloat(o.rx)<-26)) return false;
+    if (statFilter === 'bad'     && !(o.status==='online' && parseFloat(o.rx) < -29)) return false;
+    return true;
+  });
+}
+
+// ── Table ────────────────────────────────────────────────────────────────────
+function renderTable() {
+  const rows = getSortedFiltered();
+  const tbody = document.getElementById('ontTable');
+  tbody.innerHTML = rows.map((o, i) => {
+    const sig  = signalBadge(o);
+    const temp = o.temp ? `${o.temp} C` : '-';
+    return `<tr class="ont-row" onclick="openModal('${o.sn}','${escHtml(o.name)}')">
+      <td class="row-num">${i+1}</td>
+      <td><span class="pon-tag">${o.pon || '-'}</span></td>
+      <td class="customer-name">${escHtml(o.name || '-')}</td>
+      <td><span class="signal-badge ${sig.cls}">${sig.text}</span></td>
+      <td class="temp-cell">${temp}</td>
+      <td class="serial-cell">${o.sn || '-'}</td>
+      <td onclick="event.stopPropagation()"><button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>⟳</span> Refresh</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function signalBadge(o) {
+  if (o.status !== 'online') return { cls:'sig-offline', text:'OFFLINE' };
+  const rx = parseFloat(o.rx);
+  if (isNaN(rx))        return { cls:'sig-bad',  text: o.rx || '-' };
+  if (rx >= -26)        return { cls:'sig-good',  text: `${rx} dBm` };
+  if (rx >= -28)        return { cls:'sig-weak',  text: `${rx} dBm` };
+  return                       { cls:'sig-bad',   text: `${rx} dBm` };
+}
+
+async function refreshRow(sn, btn) {
+  const span = btn.querySelector('span');
+  span.classList.add('spin');
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/ont/live?sn=${sn}`,{headers:authHeaders()});
+    const d = await r.json();
+    const idx = allONTs.findIndex(o => o.sn === sn);
+    if (idx >= 0 && d.ont) Object.assign(allONTs[idx], d.ont);
+    updateStats();
+    renderTable();
+  } finally {
+    span?.classList.remove('spin');
+    btn.disabled = false;
+  }
+}
+
+function refreshAll() {
+  document.getElementById('updateInfo').textContent = 'Refreshing…';
+  loadONTs();
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────────
+async function openModal(sn, name) {
+  currentDevice = { sn, name, data: null };
+  document.getElementById('modalTitle').textContent = name || sn;
+  document.getElementById('modalSN').textContent    = sn;
+  document.getElementById('modalBody').innerHTML    = '<div class="modal-loading"><span class="spin" style="display:inline-block">⟳</span> Loading from GenieACS…</div>';
+  switchTab('summary', false);
+  document.getElementById('modalOverlay').classList.add('open');
+  await loadDeviceData(sn);
+}
+
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modalOverlay')) return;
+  document.getElementById('modalOverlay').classList.remove('open');
+  currentDevice = null;
+}
+
+function switchTab(tab, render=true) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach((b,i) => {
+    const tabs = ['summary','wan','lan','wlan','tr069'];
+    b.classList.toggle('active', tabs[i] === tab);
+  });
+  if (render && currentDevice?.data) renderModalTab(tab, currentDevice.data);
+}
+
+async function reloadModalData() {
+  if (!currentDevice) return;
+  const btn = document.getElementById('modalRefreshBtn');
+  if (btn) { btn.textContent = '⟳ …'; btn.disabled=true; }
+  document.getElementById('modalBody').innerHTML = '<div class="modal-loading"><span class="spin" style="display:inline-block;font-size:18px">⟳</span>&nbsp; Refreshing from GenieACS…</div>';
+  await loadDeviceData(currentDevice.sn);
+  if (btn) { btn.textContent = '⟳ Refresh'; btn.disabled=false; }
+}
+
+async function loadDeviceData(sn) {
+  try {
+    const r = await fetch(`${API}/device?sn=${sn}`,{headers:authHeaders()});
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    currentDevice.data = data;
+    renderModalTab(currentTab, data);
+  } catch(e) {
+    document.getElementById('modalBody').innerHTML =
+      `<div class="modal-error">Failed to load: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── Modal rendering ───────────────────────────────────────────────────────────
+function renderModalTab(tab, data) {
+  const body = document.getElementById('modalBody');
+  body.innerHTML = '';
+
+  if (tab === 'summary') body.appendChild(renderSummary(data.summary, data._device_id));
+  if (tab === 'wan')     body.appendChild(renderWAN(data.wan));
+  if (tab === 'lan')     body.appendChild(renderLAN(data.lan));
+  if (tab === 'wlan')    body.appendChild(renderWLAN(data.wlan));
+  if (tab === 'tr069')   body.appendChild(renderTR069(data.tr069));
+}
+
+// ── Field builder ─────────────────────────────────────────────────────────────
+function makeField(label, value, fieldKey, opts={}) {
+  /*
+    opts.type: 'text'|'number'|'select'|'readonly'
+    opts.choices: [{val, label}] for select
+    opts.bandIndex: for WLAN fields
+  */
+  const wrap = document.createElement('div');
+  wrap.className = 'field-row';
+
+  const lbl = document.createElement('div');
+  lbl.className = 'field-label';
+  lbl.textContent = label;
+
+  const valueWrap = document.createElement('div');
+  valueWrap.className = 'field-value-wrap';
+
+  const valSpan = document.createElement('div');
+  valSpan.className = `field-value${value === '-' || !value ? ' muted' : ''}`;
+  valSpan.textContent = value || '-';
+
+  const statusDiv = document.createElement('div');
+  statusDiv.className = 'save-status';
+
+  valueWrap.appendChild(valSpan);
+
+  if (fieldKey && opts.type !== 'readonly') {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-btn';
+    editBtn.textContent = '✎ Edit';
+
+    const inputWrap = document.createElement('div');
+    inputWrap.className = 'edit-input-wrap';
+
+    let input;
+    if (opts.type === 'select' && opts.choices) {
+      input = document.createElement('select');
+      input.className = 'edit-input select';
+      opts.choices.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.val;
+        opt.textContent = c.label;
+        if (String(c.val) === String(value)) opt.selected = true;
+        input.appendChild(opt);
+      });
+    } else {
+      input = document.createElement('input');
+      input.className = 'edit-input';
+      input.type = opts.type === 'number' ? 'number' : 'text';
+      input.value = value === '-' ? '' : value;
+    }
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn-save';
+    saveBtn.textContent = 'Save';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-cancel-edit';
+    cancelBtn.textContent = '✕';
+
+    inputWrap.append(input, saveBtn, cancelBtn);
+    valueWrap.append(editBtn, inputWrap);
+
+    // Edit toggle
+    editBtn.onclick = () => {
+      editBtn.style.display = 'none';
+      inputWrap.classList.add('visible');
+      input.focus();
+    };
+
+    cancelBtn.onclick = () => {
+      inputWrap.classList.remove('visible');
+      editBtn.style.display = '';
+      statusDiv.textContent = '';
+      statusDiv.className = 'save-status';
+    };
+
+    saveBtn.onclick = async () => {
+      const newVal = input.value.trim();
+      if (!newVal) return;
+      saveBtn.textContent = '…';
+      saveBtn.disabled = true;
+      statusDiv.className = 'save-status saving';
+      statusDiv.textContent = 'Sending to ONT…';
+
+      try {
+        const payload = {
+          sn:    currentDevice.sn,
+          field: fieldKey,
+          value: newVal,
+        };
+        if (opts.bandIndex != null) payload.band_index = String(opts.bandIndex);
+
+        const r = await fetch(`${API}/device/set`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await r.json();
+
+        if (result.success) {
+          const verified = result.value_verified;
+          valSpan.textContent = verified || newVal;
+          valSpan.className = 'field-value';
+          statusDiv.className = 'save-status ok';
+          statusDiv.textContent = result.verified
+            ? `✓ Verified: ${verified}`
+            : `✓ Applied (verify: ${verified || '?'})`;
+          // Update local cache
+          if (currentDevice.data) updateCachedField(fieldKey, newVal, opts.bandIndex);
+          inputWrap.classList.remove('visible');
+          editBtn.style.display = '';
+        } else {
+          statusDiv.className = 'save-status fail';
+          statusDiv.textContent = `✗ ${result.error || 'Failed'}`;
+        }
+      } catch(e) {
+        statusDiv.className = 'save-status fail';
+        statusDiv.textContent = `✗ Network error`;
+      } finally {
+        saveBtn.textContent = 'Save';
+        saveBtn.disabled = false;
+      }
+    };
+  }
+
+  wrap.append(lbl, valueWrap, statusDiv);
+  return wrap;
+}
+
+function updateCachedField(fieldKey, value, bandIndex) {
+  const d = currentDevice.data;
+  if (!d) return;
+  const parts = fieldKey.split('.');
+  if (parts[0] === 'wlan' && bandIndex != null) {
+    const band = d.wlan?.find(b => String(b.band_index) === String(bandIndex));
+    if (band && parts[2]) band[parts[2]] = value;
+  } else if (parts.length === 2 && d[parts[0]]) {
+    d[parts[0]][parts[1]] = value;
+  }
+}
+
+// ── Tab renderers ─────────────────────────────────────────────────────────────
+
+function renderSummary(s, deviceId) {
+  const div = document.createElement('div');
+  const grid = document.createElement('div');
+  grid.className = 'field-grid';
+
+  [
+    ['Serial Number', s.serial_number, null, {}],
+    ['Manufacturer',  s.manufacturer,  null, {}],
+    ['Model',         s.model,         null, {}],
+    ['OUI',           s.oui,           null, {}],
+    ['HW Version',    s.hw_version,    null, {}],
+    ['SW Version',    s.sw_version,    null, {}],
+    ['Uptime',        s.uptime,        null, {}],
+    ['Last Inform',   s.last_inform,   null, {}],
+    ['Periodic Interval', s.periodic_interval, 'tr069.interval', { type:'number' }],
+    ['Conn. Req. URL', s.conn_req_url, null, { type:'readonly' }],
+  ].forEach(([lbl, val, key, opts]) => grid.appendChild(makeField(lbl, val, key, opts)));
+
+  div.appendChild(grid);
+  return div;
+}
+
+function fmtUptime(sec) {
+  const s = parseInt(sec);
+  if (isNaN(s) || s<=0) return sec||'-';
+  const d = Math.floor(s/86400);
+  const h = Math.floor((s%86400)/3600);
+  const m = Math.floor((s%3600)/60);
+  const sc = s%60;
+  if (d>0) return d+'d '+h+'h '+m+'m';
+  if (h>0) return h+'h '+m+'m '+sc+'s';
+  if (m>0) return m+'m '+sc+'s';
+  return sc+'s';
+}
+
+function renderWAN(w) {
+  const div = document.createElement('div');
+  const sec = document.createElement('div');
+  sec.className = 'field-section';
+  const title = document.createElement('div');
+  title.className = 'field-section-title';
+  title.textContent = 'WAN Connection';
+  sec.appendChild(title);
+
+  const grid = document.createElement('div');
+  grid.className = 'field-grid';
+
+  [
+    ['IP Address',    w.ip,         null,             {}],
+    ['WAN Uptime', fmtUptime(w.uptime), null, {}],
+  ].forEach(([lbl, val, key, opts]) => grid.appendChild(makeField(lbl, val, key, opts)));
+
+  // PPPoE username+password as paired edit
+  const pppoeSec = document.createElement('div');
+  pppoeSec.className = 'field-section';
+  const pppoeTitle = document.createElement('div');
+  pppoeTitle.className = 'field-section-title';
+  pppoeTitle.textContent = 'PPPoE Credentials';
+  pppoeSec.appendChild(pppoeTitle);
+
+  const pppoeCard = document.createElement('div');
+  pppoeCard.style.cssText = 'background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;';
+
+  const pppoeGrid = document.createElement('div');
+  pppoeGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;';
+
+  const userDiv = document.createElement('div');
+  userDiv.innerHTML = '<div style="font-size:11px;color:#8899bb;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">PPPoE Username</div><div style="font-size:16px;font-weight:600;color:var(--text)" id="pppoe-user-val">'+(w.pppoe_user||'-')+'</div>';
+
+  const passDiv = document.createElement('div');
+  passDiv.innerHTML = '<div style="font-size:11px;color:#8899bb;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">PPPoE Password</div><div style="font-size:16px;font-weight:600;color:var(--text)" id="pppoe-pass-val">'+(w.pppoe_pass||'-')+'</div>';
+
+  pppoeGrid.append(userDiv, passDiv);
+
+  const pppoeInputGrid = document.createElement('div');
+  pppoeInputGrid.style.cssText = 'display:none;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;';
+  pppoeInputGrid.id = 'pppoe-edit-row';
+
+  const userInput = document.createElement('input');
+  userInput.className = 'edit-input'; userInput.placeholder = 'New username';
+  userInput.value = w.pppoe_user||'';
+
+  const passInput = document.createElement('input');
+  passInput.className = 'edit-input'; passInput.placeholder = 'New password'; passInput.type = 'text';
+  passInput.value = w.pppoe_pass||'';
+
+  pppoeInputGrid.append(userInput, passInput);
+
+  const pppoeStatus = document.createElement('div');
+  pppoeStatus.className = 'save-status'; pppoeStatus.style.marginBottom = '8px';
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;';
+
+  const editPppoeBtn = document.createElement('button');
+  editPppoeBtn.className = 'edit-btn'; editPppoeBtn.textContent = '✎ Edit PPPoE Credentials';
+
+  const savePppoeBtn = document.createElement('button');
+  savePppoeBtn.className = 'btn-save'; savePppoeBtn.textContent = 'Save Both';
+  savePppoeBtn.style.display = 'none';
+
+  const cancelPppoeBtn = document.createElement('button');
+  cancelPppoeBtn.className = 'btn-cancel-edit'; cancelPppoeBtn.textContent = '✕';
+  cancelPppoeBtn.style.display = 'none';
+
+  editPppoeBtn.onclick = () => {
+    editPppoeBtn.style.display = 'none';
+    pppoeInputGrid.style.display = 'grid';
+    savePppoeBtn.style.display = ''; cancelPppoeBtn.style.display = '';
+    userInput.focus();
+  };
+
+  cancelPppoeBtn.onclick = () => {
+    pppoeInputGrid.style.display = 'none';
+    editPppoeBtn.style.display = ''; savePppoeBtn.style.display = 'none'; cancelPppoeBtn.style.display = 'none';
+    pppoeStatus.textContent = ''; pppoeStatus.className = 'save-status';
+  };
+
+  savePppoeBtn.onclick = async () => {
+    const newUser = userInput.value.trim();
+    const newPass = passInput.value.trim();
+    if (!newUser || !newPass) { pppoeStatus.className='save-status fail'; pppoeStatus.textContent='✗ Both username and password required'; return; }
+    savePppoeBtn.textContent = '…'; savePppoeBtn.disabled = true;
+    pppoeStatus.className = 'save-status saving'; pppoeStatus.textContent = 'Sending to ONT…';
+    try {
+      const r1 = await fetch(API+'/device/set',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+getToken()},body:JSON.stringify({sn:currentDevice.sn,field:'wan.pppoe_user',value:newUser})});
+      const r2 = await fetch(API+'/device/set',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+getToken()},body:JSON.stringify({sn:currentDevice.sn,field:'wan.pppoe_pass',value:newPass})});
+      const d1 = await r1.json(); const d2 = await r2.json();
+      if (d1.success && d2.success) {
+        document.getElementById('pppoe-user-val').textContent = newUser;
+        document.getElementById('pppoe-pass-val').textContent = newPass;
+        pppoeStatus.className='save-status ok'; pppoeStatus.textContent='✓ Username & password updated';
+        pppoeInputGrid.style.display='none'; editPppoeBtn.style.display='';
+        savePppoeBtn.style.display='none'; cancelPppoeBtn.style.display='none';
+      } else {
+        pppoeStatus.className='save-status fail';
+        pppoeStatus.textContent='✗ '+(d1.error||d2.error||'Failed');
+      }
+    } catch(e) { pppoeStatus.className='save-status fail'; pppoeStatus.textContent='✗ Network error'; }
+    finally { savePppoeBtn.textContent='Save Both'; savePppoeBtn.disabled=false; }
+  };
+
+  btnRow.append(editPppoeBtn, savePppoeBtn, cancelPppoeBtn);
+  pppoeCard.append(pppoeGrid, pppoeInputGrid, pppoeStatus, btnRow);
+  pppoeSec.appendChild(pppoeCard);
+  div.appendChild(pppoeSec);
+
+  sec.appendChild(grid);
+  div.appendChild(sec);
+  return div;
+}
+
+function renderLAN(l) {
+  const div = document.createElement('div');
+  const sec = document.createElement('div');
+  sec.className = 'field-section';
+  const title = document.createElement('div');
+  title.className = 'field-section-title';
+  title.textContent = 'LAN / DHCP';
+  sec.appendChild(title);
+
+  const grid = document.createElement('div');
+  grid.className = 'field-grid';
+
+  const leaseChoices = [
+    {val:'86400',label:'24 hours'},{val:'43200',label:'12 hours'},
+    {val:'3600', label:'1 hour'}, {val:'300',  label:'5 minutes'},
+    {val:'-1',   label:'Forever'},
+  ];
+
+  [
+    ['Gateway IP',   l.gateway_ip,  'lan.gateway_ip',  { type:'text'   }],
+    ['Subnet Mask',  l.subnet_mask, 'lan.subnet_mask',  { type:'text'   }],
+    ['DHCP Min',     l.dhcp_min,    'lan.dhcp_min',     { type:'text'   }],
+    ['DHCP Max',     l.dhcp_max,    'lan.dhcp_max',     { type:'text'   }],
+    ['Lease Time',   l.lease_time,  'lan.lease_time',   { type:'select', choices: leaseChoices }],
+  ].forEach(([lbl, val, key, opts]) => grid.appendChild(makeField(lbl, val, key, opts)));
+
+  sec.appendChild(grid);
+  div.appendChild(sec);
+  return div;
+}
+
+function renderWLAN(bands) {
+  const div = document.createElement('div');
+  if (!bands || bands.length === 0) {
+    div.innerHTML = '<div class="modal-error" style="color:var(--muted)">No WLAN data from GenieACS</div>';
+    return div;
+  }
+
+  const channelChoices2G = [1,2,3,4,5,6,7,8,9,10,11,12,13].map(c=>({val:String(c),label:`Channel ${c}`}));
+  const channelChoices5G = [36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,149,153,157,161,165]
+    .map(c=>({val:String(c),label:`Channel ${c}`}));
+
+  bands.forEach(b => {
+    const is5G = parseInt(b.channel) > 13;
+    const chChoices = is5G ? channelChoices5G : channelChoices2G;
+
+    const sec = document.createElement('div');
+    sec.className = 'wlan-band';
+    const title = document.createElement('div');
+    title.className = 'wlan-band-title';
+    title.textContent = `Band ${b.band_index} — ${b.ssid}`;
+    sec.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'field-grid';
+    const bi = b.band_index;
+
+    [
+      ['SSID',        b.ssid,     `wlan.${bi}.ssid`,     { type:'text',   bandIndex:bi }],
+      ['Password',    b.password, `wlan.${bi}.password`,  { type:'text',   bandIndex:bi }],
+      ['Channel',     b.channel,  `wlan.${bi}.channel`,   { type:'select', bandIndex:bi, choices: chChoices }],
+      ['Security',    b.security, `wlan.${bi}.security`,  { type:'select', bandIndex:bi, choices:[
+        {val:'None',      label:'None (Open)'},
+        {val:'WEP',       label:'WEP'},
+        {val:'WPAand11i', label:'WPA+WPA2 Mixed'},
+        {val:'11i',       label:'WPA2 Only'},
+        {val:'WPA',       label:'WPA Only'},
+      ]}],
+      ['Enabled',     b.enabled,  `wlan.${bi}.enabled`,   { type:'select', bandIndex:bi, choices:[{val:'true',label:'Enabled'},{val:'false',label:'Disabled'}] }],
+      ['Clients',     b.clients,  null,                    {}],
+    ].forEach(([lbl, val, key, opts]) => grid.appendChild(makeField(lbl, val, key, opts)));
+
+    sec.appendChild(grid);
+    div.appendChild(sec);
+  });
+
+  return div;
+}
+
+function renderTR069(t) {
+  const div = document.createElement('div');
+  const sec = document.createElement('div');
+  sec.className = 'field-section';
+  const title = document.createElement('div');
+  title.className = 'field-section-title';
+  title.textContent = 'TR-069 / ACS Settings';
+  sec.appendChild(title);
+
+  const grid = document.createElement('div');
+  grid.className = 'field-grid';
+
+  const intervalChoices = [
+    {val:'60',  label:'1 minute'},
+    {val:'120', label:'2 minutes'},
+    {val:'200', label:'200 seconds'},
+    {val:'300', label:'5 minutes'},
+    {val:'600', label:'10 minutes'},
+    {val:'3600',label:'1 hour'},
+  ];
+
+  [
+    ['ACS URL',     t.acs_url,  'tr069.acs_url',  { type:'text'   }],
+    ['ACS Username',t.username, 'tr069.username',  { type:'text'   }],
+    ['ACS Password',t.password, 'tr069.password',  { type:'text'   }],
+    ['Conn. Req. URL', t.conn_req_url, null,        { type:'readonly'}],
+    ['Inform Interval', t.interval,'tr069.interval',{ type:'select', choices: intervalChoices }],
+  ].forEach(([lbl, val, key, opts]) => grid.appendChild(makeField(lbl, val, key, opts)));
+
+  sec.appendChild(grid);
+  div.appendChild(sec);
+  return div;
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+init();
+</script>
+
+<!-- Profile Modal -->
+<div id="profileModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:600;align-items:center;justify-content:center;backdrop-filter:blur(2px);" onclick="if(event.target===this)closeProfileModal()">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;width:520px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.6);">
+    <div style="padding:20px 24px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;">
+      <!-- Avatar upload -->
+      <div style="position:relative;flex-shrink:0;">
+        <div id="pmAvatarCircle" onclick="document.getElementById('pmAvatarInput').click()"
+          style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#1a5c2e,#0d2e4a);border:2px solid #26d97f55;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--green);cursor:pointer;overflow:hidden;position:relative;">
+          <span id="pmAvatarInitials">A</span>
+          <img id="pmAvatarImg" src="" style="display:none;width:100%;height:100%;object-fit:cover;position:absolute;inset:0;">
+        </div>
+        <div onclick="document.getElementById('pmAvatarInput').click()"
+          style="position:absolute;bottom:0;right:0;width:20px;height:20px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;cursor:pointer;border:2px solid var(--bg2);">✎</div>
+        <input type="file" id="pmAvatarInput" accept="image/*" style="display:none" onchange="previewAvatarUpload(this)">
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:17px;font-weight:700;color:var(--accent)">My Profile</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;font-family:monospace" id="pm-username">—</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;" id="pm-role">—</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:var(--green)" id="pm-status">—</div>
+      </div>
+    </div>
+    <div style="padding:20px 24px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div style="grid-column:1/-1;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:5px;">Full Name</div>
+          <input id="pm-fullname" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 12px;font-size:14px;font-weight:500;" placeholder="Your full name">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:5px;">Email</div>
+          <input id="pm-email" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 12px;font-size:13px;" placeholder="email@example.com">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:5px;">Phone</div>
+          <input id="pm-phone" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 12px;font-size:13px;" placeholder="03xx-xxxxxxx">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:5px;">CNIC</div>
+          <input id="pm-cnic" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 12px;font-size:13px;" placeholder="xxxxx-xxxxxxx-x">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:5px;">Address</div>
+          <input id="pm-address" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 12px;font-size:13px;" placeholder="Your address">
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:10px;">Change Password (optional)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px;">Current Password</div>
+            <input id="pm-curpass" type="password" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="Current password">
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px;">New Password</div>
+            <input id="pm-newpass" type="password" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="New password">
+          </div>
+        </div>
+      </div>
+      <div id="pm-msg" class="save-status" style="margin-bottom:10px;height:16px;"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button onclick="closeProfileModal()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:9px 18px;font-size:13px;cursor:pointer;">Cancel</button>
+        <button onclick="saveProfile()" style="background:#1a5c2e;color:var(--green);border:1px solid #26d97f55;border-radius:7px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;">Save Profile</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+    </div>
+
+    <!-- Section: Unregistered ONTs -->
+    <div class="main-section" id="section-unreg" style="overflow-y:auto;">
+      <div style="padding:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:var(--text);">➕ Unregistered ONTs</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px;">ONTs waiting to be provisioned on OLT</div>
+          </div>
+          <button onclick="unregLoading=false;loadUnregistered()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 16px;font-size:13px;cursor:pointer;">🔄 Refresh</button>
+        </div>
+        <div id="unregTable">
+          <div style="text-align:center;padding:40px;color:var(--muted);">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section: OLT List -->
+    <div class="main-section" id="section-olt" style="overflow-y:auto;">
+      <div style="padding:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:var(--text);">🖥 OLT List</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px;">Manage your OLT devices</div>
+          </div>
+          <button onclick="showAddOLT()" style="background:#1a5c2e;color:var(--green);border:1px solid #26d97f55;border-radius:7px;padding:8px 16px;font-size:13px;cursor:pointer;">+ Add OLT</button>
+        </div>
+        <div id="oltListCards">
+          <!-- OLT cards rendered here -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:400px;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+              <div style="width:12px;height:12px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);"></div>
+              <div style="font-size:16px;font-weight:700;">HAJI-PARK-OLT</div>
+              <div style="margin-left:auto;font-size:11px;background:#0d2e1a;color:var(--green);border:1px solid #26d97f44;border-radius:4px;padding:2px 8px;">Online</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;">
+              <div><span style="color:var(--muted);">IP:</span> <strong>172.20.101.101</strong></div>
+              <div><span style="color:var(--muted);">Model:</span> <strong>MA5603T</strong></div>
+              <div><span style="color:var(--muted);">ONTs:</span> <strong id="oltOntCount">—</strong></div>
+              <div><span style="color:var(--muted);">PONs:</span> <strong>5 slots</strong></div>
+            </div>
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:8px;">
+              <button onclick="switchSection('ont')" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px;font-size:12px;cursor:pointer;">📡 View ONTs</button>
+              <button onclick="switchSection('unreg')" style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px;font-size:12px;cursor:pointer;">➕ Unregistered</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- Section: Settings -->
+    <div class="main-section" id="section-settings" style="overflow-y:auto;">
+      <div id="settingsIframeContainer" style="width:100%;height:100%;">
+        <iframe id="settingsFrame" src="/settings.html?embedded=1" style="width:100%;height:100%;border:none;background:var(--bg);" onload="this.style.opacity=1" ></iframe>
+      </div>
+    </div>
+
+    <!-- Section: User Management -->
+    <div class="main-section" id="section-admin" style="overflow-y:auto;">
+      <div id="adminIframeContainer" style="width:100%;height:100%;">
+        <iframe id="adminFrame" src="/admin.html?embedded=1" style="width:100%;height:100%;border:none;background:var(--bg);opacity:0;" onload="this.style.opacity=1"></iframe>
+      </div>
+    </div>
+
+  </div><!-- end main-content -->
+</div><!-- end app-body -->
+
+<!-- Add OLT Modal -->
+<div id="addOLTModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:700;align-items:center;justify-content:center;backdrop-filter:blur(2px);" onclick="if(event.target===this)closeAddOLTModal()">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;width:480px;max-width:95vw;box-shadow:0 24px 80px rgba(0,0,0,.6);">
+    <div style="padding:18px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:16px;font-weight:700;color:var(--accent);">🖥 Add New OLT</div>
+      <button onclick="closeAddOLTModal()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:20px 24px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
+        <div style="grid-column:1/-1;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">OLT Name *</div>
+          <input id="olt-name" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="e.g. HAJI-PARK-OLT">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">IP Address *</div>
+          <input id="olt-ip" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="172.20.101.101">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Model</div>
+          <select id="olt-model" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+            <option>MA5603T</option>
+            <option>MA5608T</option>
+            <option>MA5683T</option>
+            <option>MA5800</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">SSH Username</div>
+          <input id="olt-user" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="collectolt">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">SSH Password</div>
+          <input id="olt-pass" type="password" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="••••••••">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">SNMP v2c Community</div>
+          <input id="olt-snmp" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="public">
+        </div>
+      </div>
+      <div id="olt-test-result" style="margin-bottom:12px;font-size:12px;min-height:18px;"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button onclick="testOLTConnection()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;">🔌 Test Connection</button>
+        <button onclick="closeAddOLTModal()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;">Cancel</button>
+        <button id="olt-save-btn" onclick="saveOLT()" style="background:#1a5c2e;color:var(--green);border:1px solid #26d97f55;border-radius:7px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;">Save OLT</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

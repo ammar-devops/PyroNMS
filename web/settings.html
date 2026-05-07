@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link id="favicon" rel="icon" type="image/png" href="/favicon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PyroNMS — Settings</title>
+<style>
+:root{--bg:#0b0e18;--bg2:#12151f;--bg3:#1a1e2e;--bg4:#222638;--border:#2c3150;--text:#dde3f5;--muted:#6b7394;--accent:#4f8ef7;--green:#26d97f;--red:#f25c5c;--yellow:#f5b83a;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;min-height:100vh;}
+.header{display:flex;align-items:center;gap:14px;padding:10px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;}
+.header-title{font-size:15px;font-weight:700;}
+.btn-back{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 14px;font-size:13px;cursor:pointer;text-decoration:none;}
+.btn-back:hover{border-color:var(--accent);}
+.user-info{margin-left:auto;font-size:13px;color:var(--muted);}
+.btn-logout{background:none;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;margin-left:10px;}
+.btn-logout:hover{border-color:var(--red);color:var(--red);}
+.container{max-width:860px;margin:0 auto;padding:28px 24px;}
+.settings-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:20px;}
+.card-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;}
+.card-sub{font-size:12px;color:var(--muted);margin-bottom:20px;}
+.card-divider{border:none;border-top:1px solid var(--border);margin:18px 0;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.form-group{display:flex;flex-direction:column;gap:6px;}
+.form-group.full{grid-column:1/-1;}
+.form-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+.form-input{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;width:100%;}
+.form-input:focus{outline:none;border-color:var(--accent);}
+.theme-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+.theme-card{border:2px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:all .15s;text-align:center;}
+.theme-card:hover{border-color:var(--accent);}
+.theme-card.active{border-color:var(--green);background:var(--bg3);}
+.theme-preview{width:100%;height:60px;border-radius:6px;margin-bottom:10px;overflow:hidden;display:flex;flex-direction:column;gap:3px;padding:6px;}
+.tp-bar{height:8px;border-radius:3px;}
+.tp-content{display:flex;gap:3px;flex:1;}
+.tp-side{width:30%;border-radius:3px;}
+.tp-main{flex:1;border-radius:3px;}
+.theme-name{font-size:13px;font-weight:600;color:var(--text);}
+.theme-desc{font-size:11px;color:var(--muted);margin-top:2px;}
+.theme-badge{display:inline-block;font-size:10px;background:#0d2e1a;color:var(--green);border:1px solid #26d97f44;border-radius:4px;padding:1px 7px;margin-top:4px;}
+.logo-upload-area{border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;cursor:pointer;transition:all .15s;position:relative;margin-bottom:12px;}
+.logo-upload-area:hover{border-color:var(--accent);background:var(--bg3);}
+.logo-upload-area input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.logo-preview-box{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;}
+.logo-preview-box img{max-height:60px;max-width:100%;object-fit:contain;}
+.logo-preview-label{font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
+.btn-save{background:#1a5c2e;color:var(--green);border:1px solid #26d97f55;border-radius:7px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;}
+.btn-save:hover{background:#1f7035;}
+.btn-danger{background:#2d0e0e;color:var(--red);border:1px solid #f25c5c44;border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;}
+.msg{padding:8px 12px;border-radius:6px;font-size:13px;margin-top:12px;display:none;}
+.msg.ok{background:#0d2e1a;border:1px solid #26d97f44;color:var(--green);display:block;}
+.msg.err{background:#2d0e0e;border:1px solid #f25c5c44;color:var(--red);display:block;}
+</style>
+</head>
+<body>
+<script>
+  // If embedded in sidebar iframe, hide the top nav
+  if (window.location.search.includes('embedded=1')) {
+    document.addEventListener('DOMContentLoaded', function() {
+      const header = document.querySelector('.settings-header') || document.querySelector('.header');
+      if (header) header.style.display = 'none';
+      const backBtn = document.querySelector('a[href*="index"]') || document.querySelector('.back-btn');
+      if (backBtn) backBtn.style.display = 'none';
+    });
+    // Override logout to parent
+    window.addEventListener('message', function(e) {
+      if (e.data === 'logout') window.parent.postMessage('logout', '*');
+    });
+  }
+</script>
+<div class="header">
+  <img src="/logo.png" data-client-logo alt="Logo" style="height:30px;object-fit:contain;opacity:.9;">
+  <div style="line-height:1.2;">
+    <div class="header-title">🔧 Settings</div>
+    <div style="font-size:10px;color:var(--muted);">PyroNMS v2.4</div>
+  </div>
+  <a href="/index.html" class="btn-back">← Dashboard</a>
+  <div class="user-info"><span id="hUser">—</span><button class="btn-logout" onclick="doLogout()">Logout</button></div>
+</div>
+<div class="container">
+
+  <!-- Theme -->
+  <div class="settings-card">
+    <div class="card-title">🎨 Theme</div>
+    <div class="card-sub">Your personal display theme — saved to your browser only</div>
+    <div class="theme-grid">
+      <div class="theme-card" id="theme-pyro" onclick="selectTheme('pyro')">
+        <div class="theme-preview" style="background:#0b0e18;">
+          <div class="tp-bar" style="background:#12151f;"></div>
+          <div class="tp-content"><div class="tp-side" style="background:#1a1e2e;"></div><div class="tp-main" style="background:#12151f;"></div></div>
+        </div>
+        <div class="theme-name">PyroTheme</div>
+        <div class="theme-desc">Deep navy · Green accents</div>
+        <div class="theme-badge">Default</div>
+      </div>
+      <div class="theme-card" id="theme-dark" onclick="selectTheme('dark')">
+        <div class="theme-preview" style="background:#000000;">
+          <div class="tp-bar" style="background:#0d0d0d;"></div>
+          <div class="tp-content"><div class="tp-side" style="background:#111111;"></div><div class="tp-main" style="background:#0d0d0d;"></div></div>
+        </div>
+        <div class="theme-name">Dark</div>
+        <div class="theme-desc">Pure black · Blue accents</div>
+      </div>
+      <div class="theme-card" id="theme-light" onclick="selectTheme('light')">
+        <div class="theme-preview" style="background:#f0f2f5;">
+          <div class="tp-bar" style="background:#ffffff;"></div>
+          <div class="tp-content"><div class="tp-side" style="background:#e2e6ed;"></div><div class="tp-main" style="background:#ffffff;"></div></div>
+        </div>
+        <div class="theme-name">Light</div>
+        <div class="theme-desc">Clean white · Professional</div>
+      </div>
+    </div>
+    <div id="themeMsg" class="msg"></div>
+  </div>
+
+  <!-- Branding (superadmin only) -->
+  <div class="settings-card" id="brandingCard" style="display:none;">
+    <div class="card-title">🏢 Branding <span style="font-size:11px;color:var(--muted);font-weight:400;">(Superadmin only)</span></div>
+    <div class="card-sub">Customize company name, logos — applies to all pages for all users</div>
+    <div class="form-grid" style="margin-bottom:20px;">
+      <div class="form-group"><label class="form-label">Company Name</label><input class="form-input" id="b-company" placeholder="Indus Broadband Pvt Ltd"></div>
+
+      <div class="form-group" style="grid-column:1/-1;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:10px 14px;">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:4px;">Powered By (Permanent)</div>
+        <div style="font-size:14px;font-weight:600;color:var(--accent);">PyroNMS by PyroNet Solutions</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">This cannot be changed — product identity is protected</div>
+      </div>
+      <div class="form-group"><label class="form-label">Support Email</label><input class="form-input" id="b-email" placeholder="support@pyronet.pk"></div>
+
+    </div>
+    <hr class="card-divider">
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:14px;">Logo Upload</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div>
+        <div class="logo-preview-label">Client Logo (header + login page)</div>
+        <div class="logo-upload-area">
+          <input type="file" accept="image/*" onchange="previewLogo(this,'clientPreview','client')">
+          <div style="font-size:28px;margin-bottom:8px;">🖼</div>
+          <div style="font-size:13px;color:var(--muted);">Click to upload client logo</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">PNG · transparent background recommended</div>
+        </div>
+        <div class="logo-preview-box"><div class="logo-preview-label">Preview</div><img id="clientPreview" src="/logo.png" alt="Client"></div>
+      </div>
+
+    </div>
+    <hr class="card-divider">
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:14px;">Favicon</div>
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:16px;align-items:start;">
+      <div>
+        <div class="logo-upload-area" style="padding:16px;">
+          <input type="file" accept="image/png,image/ico,image/jpeg,image/webp" onchange="previewLogo(this,'faviconPreview','favicon')">
+          <div style="font-size:22px;margin-bottom:6px;">🌐</div>
+          <div style="font-size:12px;color:var(--muted);">Click to upload favicon</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">PNG · 32×32px recommended</div>
+        </div>
+      </div>
+      <div class="logo-preview-box">
+        <div class="logo-preview-label">Favicon Preview</div>
+        <img id="faviconPreview" src="/favicon.png" alt="Favicon" style="max-height:32px;">
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">Shows in browser tab</div>
+      </div>
+    </div>
+    <div id="brandMsg" class="msg"></div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn-save" onclick="saveBranding()">💾 Save Branding</button>
+      <button class="btn-danger" onclick="resetBranding()">↺ Reset Defaults</button>
+    </div>
+  </div>
+
+  <!-- About -->
+  <div class="settings-card">
+    <div class="card-title">ℹ About PyroNMS</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;color:var(--text);">
+      <div><span style="color:var(--muted);">Product:</span> <strong>PyroNMS</strong></div>
+      <div><span style="color:var(--muted);">Version:</span> <strong>v2.3</strong></div>
+      <div><span style="color:var(--muted);">Developer:</span> <strong style="color:var(--accent);">PyroNet Solutions 🔒</strong></div>
+      <div><span style="color:var(--muted);">License:</span> <strong>Proprietary</strong></div>
+      <div><span style="color:var(--muted);">Client:</span> <strong id="aboutClient">Indus Broadband</strong></div>
+      <div><span style="color:var(--muted);">Build:</span> <strong>2026.05.06</strong></div>
+    </div>
+  </div>
+
+</div>
+<script>
+const API = 'http://172.20.101.160:8088';
+let currentUser = null;
+let logoData = {client:null, dev:null};
+
+const THEMES = {
+  pyro: {'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'},
+  dark: {'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--bg4':'#1a1a1a','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444','--yellow':'#f59e0b'},
+  light: {'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--bg4':'#dde2e8','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626','--yellow':'#d97706'},
+};
+
+function getToken(){return localStorage.getItem('ont_token');}
+function authHeaders(){return{'Authorization':'Bearer '+getToken()};}
+function doLogout(){fetch(API+'/auth/logout',{method:'POST',headers:authHeaders()});localStorage.clear();window.location.href='/login.html';}
+
+function applyTheme(name){
+  const t=THEMES[name]||THEMES.pyro;
+  Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));
+}
+
+function selectTheme(name){
+  localStorage.setItem('pyronms_theme',name);
+  applyTheme(name);
+  document.querySelectorAll('.theme-card').forEach(c=>c.classList.remove('active'));
+  document.getElementById('theme-'+name)?.classList.add('active');
+  const msg=document.getElementById('themeMsg');
+  msg.textContent='✓ Theme saved — applies to all pages'; msg.className='msg ok';
+  setTimeout(()=>msg.className='msg',3000);
+}
+
+function loadBranding(){
+  const b=JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
+  document.getElementById('b-company').value = b.company||'Indus Broadband Pvt Ltd';
+
+  document.getElementById('b-email').value   = b.email||'';
+  document.getElementById('aboutClient').textContent = b.company||'Indus Broadband Pvt Ltd';
+  if(b.clientLogo){document.getElementById('clientPreview').src=b.clientLogo;document.querySelector('img[data-client-logo]').src=b.clientLogo;}
+  if(b.favicon) document.getElementById('faviconPreview').src=b.favicon;
+}
+
+function saveBranding(){
+  const existing=JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
+  const b={
+    company:  document.getElementById('b-company').value.trim(),
+
+    email:    document.getElementById('b-email').value.trim(),
+    clientLogo: logoData.client || existing.clientLogo || null,
+    favicon:    logoData.favicon || existing.favicon || null,
+  };
+  localStorage.setItem('pyronms_branding',JSON.stringify(b));
+  document.getElementById('aboutClient').textContent=b.company;
+  const msg=document.getElementById('brandMsg');
+  msg.textContent='✓ Branding saved — reload dashboard to apply'; msg.className='msg ok';
+}
+
+function resetBranding(){
+  if(!confirm('Reset all branding to PyroNMS defaults?'))return;
+  localStorage.removeItem('pyronms_branding');
+  loadBranding();
+  const msg=document.getElementById('brandMsg');
+  msg.textContent='✓ Reset to defaults'; msg.className='msg ok';
+}
+
+function previewLogo(input,previewId,type){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    document.getElementById(previewId).src=e.target.result;
+    logoData[type]=e.target.result;
+    // Live favicon preview
+    if(type==='favicon'){
+      document.getElementById('favicon').href=e.target.result;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function init(){
+  const token=getToken();
+  if(!token){window.location.href='/login.html';return;}
+  const r=await fetch(API+'/auth/me',{headers:authHeaders()});
+  if(!r.ok){window.location.href='/login.html';return;}
+  currentUser=await r.json();
+  document.getElementById('hUser').textContent=currentUser.full_name||currentUser.username;
+  if(currentUser.role==='superadmin') document.getElementById('brandingCard').style.display='block';
+  const saved=localStorage.getItem('pyronms_theme')||'pyro';
+  applyTheme(saved);
+  document.getElementById('theme-'+saved)?.classList.add('active');
+  loadBranding();
+}
+init();
+</script>
+</body>
+</html>

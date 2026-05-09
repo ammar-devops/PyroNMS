@@ -2668,6 +2668,7 @@ function openOntSettings(sn, name, pon, vlan) {
   switchOntSettingsTab('wan');
   document.getElementById('ontSettingsOverlay').classList.add('open');
   loadOntSettingsTemplates();
+  updateWanModeFields();
 }
 
 function closeOntSettings(e) {
@@ -2695,7 +2696,7 @@ async function loadOntSettingsTemplates() {
       const r = await fetch(`${API}/ont/settings/templates`, {headers: authHeaders()});
       ontSettingsTemplates = await r.json();
     }
-    const models = Object.keys((ontSettingsTemplates && ontSettingsTemplates.models) || {});
+  const models = Object.keys((ontSettingsTemplates && ontSettingsTemplates.models) || {});
     const profiles = Object.keys((ontSettingsTemplates && ontSettingsTemplates.profiles) || {});
     const vasProfiles = ((ontSettingsTemplates && ontSettingsTemplates.vas_profiles) || []).length;
     applyOntSettingsTemplateDefaults();
@@ -2703,6 +2704,38 @@ async function loadOntSettingsTemplates() {
   } catch (e) {
     box.textContent = 'Template map unavailable. SSH service-port and ONT alias controls still work.';
   }
+}
+
+function updateWanModeFields() {
+  const mode = document.getElementById('os-wan-mode')?.value || 'pppoe';
+  document.querySelectorAll('.wan-pppoe-field').forEach(el => el.style.display = mode === 'pppoe' ? '' : 'none');
+  document.querySelectorAll('.wan-static-field').forEach(el => el.style.display = mode === 'static' ? '' : 'none');
+  document.querySelectorAll('.wan-bridge-field').forEach(el => el.style.display = mode === 'bridge' ? '' : 'none');
+}
+
+function populateOntSettingsFromOutput(output) {
+  if (!output) return;
+  const detailsMatch = output.match(/\[ONT_DETAILS_JSON\]\s*(\{[^\n]+\})/);
+  if (detailsMatch) {
+    try {
+      const details = JSON.parse(detailsMatch[1]);
+      if (details.wan) {
+        if (details.wan.network_vlan && document.getElementById('os-vlan')) document.getElementById('os-vlan').value = details.wan.network_vlan;
+        if (details.wan.user_vlan && document.getElementById('os-user-vlan')) document.getElementById('os-user-vlan').value = details.wan.user_vlan;
+      }
+      if (details.wifi && details.wifi.ssid && document.getElementById('os-ssid')) {
+        document.getElementById('os-ssid').value = details.wifi.ssid;
+      }
+    } catch (_) {}
+  }
+  const ssid = output.match(/SSID\s*(?:Name)?\s*:\s*([^\n\r]+)/i);
+  const channel = output.match(/Channel\s*:\s*([^\n\r]+)/i);
+  const width = output.match(/Channel\s*Width\s*:\s*([^\n\r]+)/i);
+  const country = output.match(/Country(?:\s*Code)?\s*:\s*([^\n\r]+)/i);
+  if (ssid && document.getElementById('os-ssid')) document.getElementById('os-ssid').value = ssid[1].trim();
+  if (channel && document.getElementById('os-wifi-channel')) document.getElementById('os-wifi-channel').value = channel[1].trim();
+  if (width && document.getElementById('os-wifi-width')) document.getElementById('os-wifi-width').value = width[1].trim();
+  if (country && document.getElementById('os-wifi-country')) document.getElementById('os-wifi-country').value = country[1].trim();
 }
 
 async function submitOntSettings(kind, action='apply') {
@@ -2728,6 +2761,9 @@ async function submitOntSettings(kind, action='apply') {
     payload.ssid = document.getElementById('os-ssid').value.trim();
     payload.password = document.getElementById('os-wifi-pass').value;
     payload.band = document.getElementById('os-wifi-band').value;
+    payload.channel = document.getElementById('os-wifi-channel').value.trim();
+    payload.channel_width = document.getElementById('os-wifi-width').value.trim();
+    payload.country = document.getElementById('os-wifi-country').value.trim();
     payload.enabled = document.getElementById('os-wifi-enabled').checked;
   }
   if (kind === 'lan') {
@@ -2752,6 +2788,7 @@ async function submitOntSettings(kind, action='apply') {
     });
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || d.output || 'Failed');
+    if (kind === 'check') populateOntSettingsFromOutput(d.output || '');
     msg.textContent = d.message || 'Saved';
     if (d.output) {
       msg.innerHTML = `${escHtml(d.message || 'Saved')}<pre style="margin-top:10px;max-height:220px;overflow:auto;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:10px;color:var(--muted);white-space:pre-wrap;">${escHtml(d.output)}</pre>`;
@@ -3352,21 +3389,21 @@ init();
         <div class="ont-settings-grid">
           <div class="ont-settings-field">
             <label>WAN Mode</label>
-            <select id="os-wan-mode">
+            <select id="os-wan-mode" onchange="updateWanModeFields()">
               <option value="pppoe">PPPoE</option>
               <option value="static">Static IP</option>
               <option value="bridge">Bridge</option>
             </select>
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-common-field" style="display:none;">
             <label>Network VLAN</label>
             <input id="os-vlan" type="number" min="1" max="4094" value="10">
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-common-field" style="display:none;">
             <label>User VLAN</label>
             <input id="os-user-vlan" type="number" min="1" max="4094" value="10">
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-common-field" style="display:none;">
             <label>General ONT VAS Profile</label>
             <select id="os-vas-profile">
               <option value="PPP-10-IPV4-IPV6">PPP-10-IPV4-IPV6</option>
@@ -3375,7 +3412,7 @@ init();
               <option value="TEST-ACS">TEST-ACS</option>
             </select>
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-common-field" style="display:none;">
             <label>Service Description</label>
             <select id="os-service-desc">
               <option value="HSI (High-Speed Internet)">HSI (High-Speed Internet)</option>
@@ -3384,25 +3421,29 @@ init();
               <option value="ACS Test">ACS Test</option>
             </select>
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-pppoe-field">
             <label>PPPoE Username</label>
             <input id="os-pppoe-user" placeholder="customer@isp">
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-pppoe-field">
             <label>PPPoE Password</label>
             <input id="os-pppoe-pass" type="password">
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-static-field" style="display:none;">
             <label>Static IP</label>
             <input id="os-static-ip" placeholder="192.0.2.10/24">
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-static-field" style="display:none;">
             <label>Gateway</label>
             <input id="os-gateway" placeholder="192.0.2.1">
           </div>
-          <div class="ont-settings-field">
+          <div class="ont-settings-field wan-static-field" style="display:none;">
             <label>DNS</label>
             <input id="os-dns" placeholder="8.8.8.8, 1.1.1.1">
+          </div>
+          <div class="ont-settings-field wan-bridge-field" style="display:none;grid-column:1 / -1;">
+            <label>Bridge Mode</label>
+            <div style="padding:11px;border:1px solid var(--border);border-radius:7px;background:var(--bg3);color:var(--muted);">Bridge WAN mode selected. PPPoE or static IP will be handled by customer router.</div>
           </div>
         </div>
         <div class="ont-settings-actions">
@@ -3416,6 +3457,9 @@ init();
           <div class="ont-settings-field"><label>Band</label><select id="os-wifi-band"><option value="2.4G">2.4G</option><option value="5G">5G</option></select></div>
           <div class="ont-settings-field"><label>SSID</label><input id="os-ssid" placeholder="WiFi name"></div>
           <div class="ont-settings-field"><label>Password</label><input id="os-wifi-pass" type="password"></div>
+          <div class="ont-settings-field"><label>Channel</label><input id="os-wifi-channel" placeholder="Auto"></div>
+          <div class="ont-settings-field"><label>Channel Width</label><input id="os-wifi-width" placeholder="20/40 MHz"></div>
+          <div class="ont-settings-field"><label>Country</label><input id="os-wifi-country" placeholder="PK"></div>
           <div class="ont-settings-field"><label>Status</label><div style="padding:9px 0;"><input id="os-wifi-enabled" type="checkbox" checked> Enabled</div></div>
         </div>
         <div class="ont-settings-actions"><button class="ont-settings-save" onclick="submitOntSettings('wifi')">Apply WiFi</button></div>

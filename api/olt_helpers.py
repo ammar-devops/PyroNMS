@@ -86,6 +86,16 @@ def _read_until_prompt(conn, delay=2, max_rounds=24):
             break
     return ''.join(chunks)
 
+def _olt_command(conn, command, delay=2, confirm_cr=True):
+    conn.write_channel(command + '\r\n')
+    time.sleep(delay)
+    out = conn.read_channel()
+    if confirm_cr and ('{ <cr>|' in out or '{<cr>|' in out):
+        conn.write_channel('\r\n')
+        time.sleep(delay)
+        out += conn.read_channel()
+    return out
+
 def get_unregistered_onts(ip, username, password):
     conn = olt_ssh(ip, username, password)
     results = []
@@ -149,12 +159,16 @@ def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, 
     return False, -1, out
 
 def find_ont_by_sn(ip, username, password, sn):
-    conn = olt_ssh(ip, username, password)
-    conn.write_channel(f'display ont info by-sn {sn}\r\n')
-    time.sleep(4)
-    out = conn.read_channel()
-    conn.write_channel('quit\r\n'); time.sleep(1)
-    conn.disconnect()
+    out = ''
+    for attempt in range(2):
+        conn = olt_ssh(ip, username, password)
+        conn.write_channel(f'display ont info by-sn {sn}\r\n')
+        out = _read_until_prompt(conn, delay=1, max_rounds=40)
+        conn.write_channel('quit\r\n'); time.sleep(1)
+        conn.disconnect()
+        if re.search(r'F/S/P\s*:\s*(\S+)', out) and re.search(r'ONT-ID\s*:\s*(\d+)', out):
+            break
+        time.sleep(2)
     fsp = re.search(r'F/S/P\s*:\s*(\S+)', out)
     ont_id = re.search(r'ONT-ID\s*:\s*(\d+)', out)
     if not fsp or not ont_id:
@@ -196,6 +210,40 @@ def summarize_ont(ont):
     ]
     return '\n'.join(lines)
 
+def _parse_wlan_info(output):
+    ssids = []
+    current = {}
+    for line in output.splitlines():
+        m = re.search(r'SSID Index\s*:\s*(\d+)', line, re.I)
+        if m:
+            if current:
+                ssids.append(current)
+            current = {'index': m.group(1)}
+            continue
+        m = re.search(r'^\s*SSID\s*:\s*(.+)', line, re.I)
+        if m and current is not None:
+            current['ssid'] = m.group(1).strip()
+            continue
+        m = re.search(r'Administrative state\s*:\s*(\S+)', line, re.I)
+        if m and current is not None:
+            current['enabled'] = m.group(1).strip().lower() == 'enable'
+    if current:
+        ssids.append(current)
+    return {'ssids': ssids, 'ssid': ssids[0].get('ssid', '') if ssids else ''}
+
+def _parse_service_port(output):
+    m = re.search(r'^\s*(\d+)\s+(\d+)\s+\S+\s+gpon\b.*?\bvlan\s+(\d+)', output, re.M)
+    if m:
+        return {'service_port': m.group(1), 'network_vlan': m.group(2), 'user_vlan': m.group(3)}
+    for line in output.splitlines():
+        if ' gpon ' in line and ' vlan ' in line:
+            parts = line.split()
+            try:
+                return {'service_port': parts[0], 'network_vlan': parts[1], 'user_vlan': parts[parts.index('vlan') + 1]}
+            except Exception:
+                return {}
+    return {}
+
 def apply_ont_settings(ip, username, password, payload):
     method = payload.get('method', 'ssh')
     kind = payload.get('kind', '')
@@ -214,11 +262,27 @@ def apply_ont_settings(ip, username, password, payload):
     action = payload.get('action', 'apply')
 
     if kind == 'check':
-        conn.write_channel(f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}\r\n')
-        time.sleep(2); outputs.append(conn.read_channel())
+        details = {"wan": {}, "wifi": {}, "raw_sections": []}
+        commands = [
+            ("SERVICE_PORT", f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}'),
+            ("WAN_INFO", f'display ont wan-info {ont["fsp"]} {ont["ont_id"]}'),
+            ("WLAN_INFO", f'display ont wlan-info {ont["fsp"]} {ont["ont_id"]}'),
+            ("WIFI_INFO", f'display ont wifi-info {ont["fsp"]} {ont["ont_id"]}'),
+            ("ETH_PORT", f'display ont port state {ont["fsp"]} {ont["ont_id"]} eth-port all'),
+        ]
+        for label, cmd in commands:
+            section = _olt_command(conn, cmd, delay=2)
+            if 'Unknown command' in section or 'Parameter error' in section:
+                continue
+            outputs.append(f'[{label}]\n{section}')
+            details["raw_sections"].append(label)
+            if label == 'SERVICE_PORT':
+                details["wan"].update(_parse_service_port(section))
+            if label == 'WLAN_INFO':
+                details["wifi"].update(_parse_wlan_info(section))
         conn.write_channel('quit\r\n'); time.sleep(1)
         conn.disconnect()
-        return True, summarize_ont(ont) + '\n\n' + '\n'.join(outputs)
+        return True, summarize_ont(ont) + '\n[ONT_DETAILS_JSON] ' + json.dumps(details) + '\n\n' + '\n'.join(outputs)
 
     if kind == 'user' and payload.get('alias'):
         alias = str(payload.get('alias', '')).replace('"', '')
@@ -240,22 +304,18 @@ def apply_ont_settings(ip, username, password, payload):
         user_vlan = str(payload.get('user_vlan') or vlan_id)
         vas_profile = str(payload.get('vas_profile') or 'PPP-10-IPV4-IPV6')
         service_description = str(payload.get('service_description') or 'HSI (High-Speed Internet)')
-        conn.write_channel(f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}\r\n')
-        time.sleep(2); sp_out = conn.read_channel()
+        sp_out = _olt_command(conn, f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}', delay=2)
         outputs.append(sp_out)
         existing_service_port = re.search(r'^\s*(\d+)\s+\d+\s+\S+\s+gpon\b', sp_out, re.M)
         if action == 'repair_vlan' and existing_service_port:
             service_port_id = existing_service_port.group(1)
-            conn.write_channel(f'undo service-port {service_port_id}\r\n')
-            time.sleep(3); outputs.append(conn.read_channel())
+            outputs.append(_olt_command(conn, f'undo service-port {service_port_id}', delay=3))
             cmd = f'service-port vlan {vlan_id} gpon {ont["fsp"]} ont {ont["ont_id"]} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
-            conn.write_channel(cmd + '\r\n')
-            time.sleep(3); outputs.append(conn.read_channel())
+            outputs.append(_olt_command(conn, cmd, delay=3))
             outputs.append(f'[SERVICE_PORT] Repaired service-port {service_port_id} with network VLAN {vlan_id}, user VLAN {user_vlan}.')
         elif 'No service virtual port' in sp_out:
             cmd = f'service-port vlan {vlan_id} gpon {ont["fsp"]} ont {ont["ont_id"]} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
-            conn.write_channel(cmd + '\r\n')
-            time.sleep(3); outputs.append(conn.read_channel())
+            outputs.append(_olt_command(conn, cmd, delay=3))
         else:
             outputs.append('[SERVICE_PORT] Existing service-port found; no duplicate created.')
         outputs.append(f"[WAN_PROFILE_CAPTURED] mode={payload.get('mode')} pppoe_user={payload.get('pppoe_username','')} static_ip={payload.get('static_ip','')}")
@@ -263,9 +323,14 @@ def apply_ont_settings(ip, username, password, payload):
         outputs.append(f"[SERVICE_DESCRIPTION] {service_description}")
 
     if kind in ('wifi', 'lan'):
-        outputs.append(f"[{kind.upper()}_CAPTURED] Template pending for terminal model-specific write commands.")
+        if kind == 'wifi':
+            outputs.append(f"[WIFI_CAPTURED] band={payload.get('band','')} ssid={payload.get('ssid','')} channel={payload.get('channel','')} width={payload.get('channel_width','')} country={payload.get('country','')} enabled={payload.get('enabled')}")
+        else:
+            outputs.append(f"[LAN_CAPTURED] lan_ip={payload.get('lan_ip','')} dhcp_start={payload.get('dhcp_start','')} dhcp_end={payload.get('dhcp_end','')} dhcp_enabled={payload.get('dhcp_enabled')}")
+        outputs.append(f"[{kind.upper()}_STATUS] Template pending for terminal model-specific write commands.")
 
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.disconnect()
     output = '\n'.join(outputs)
-    return 'Failure' not in output, output
+    fatal = 'Failure' in output and 'No service virtual port' not in output
+    return not fatal, output

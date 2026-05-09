@@ -110,22 +110,19 @@ for m in re.finditer(r'dba-profile add profile-id (\d+) profile-name "([^"]+)" (
         "max": m.group(4)
     })
 
-# VLANs
+# VLANs - handle single (vlan 40 smart) and ranges (vlan 188 to 190 smart)
 seen_vlans = set()
-for m in re.finditer(r'vlan\s+(\d+)\s+(?:smart|standard|mux)', full_output):
-    vid = m.group(1)
-    if vid not in seen_vlans:
-        seen_vlans.add(vid)
-        profiles["vlans"].append(vid)
+for m in re.finditer(r'vlan\s+(\d+)(?:\s+to\s+(\d+))?\s+(?:smart|standard|mux)', full_output):
+    start_v = int(m.group(1))
+    end_v   = int(m.group(2)) if m.group(2) else start_v
+    for vid in range(start_v, end_v + 1):
+        seen_vlans.add(str(vid))
 
 # Service port VLANs
 for m in re.finditer(r'service-port\s+(?:port\s+\S+\s+)?vlan\s+(\d+)', full_output):
-    vid = m.group(1)
-    if vid not in seen_vlans:
-        seen_vlans.add(vid)
-        profiles["vlans"].append(vid)
+    seen_vlans.add(m.group(1))
 
-profiles["vlans"] = sorted(set(profiles["vlans"]), key=int)
+profiles["vlans"] = sorted(seen_vlans, key=int)
 
 # GPON interfaces
 for m in re.finditer(r'interface gpon (\S+)', full_output):

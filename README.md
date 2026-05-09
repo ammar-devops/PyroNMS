@@ -1,43 +1,57 @@
-# PyroNMS v2.5
-**Network Management System for ISPs using Huawei GPON OLT**
+# PyroNMS v2.5.1
+Network Management System for ISPs using Huawei GPON OLT.
 
-Developed by **PyroNet Solutions**  
+Developed by PyroNet Solutions  
 Client: Indus Broadband Pvt Ltd
 
-## Features
-- Real-time ONT monitoring (2568+ ONTs)
-- ⚡ Power Failure / 🔌 Fiber Issue detection via OLT SSH
-- Dashboard with live stat cards (Total, Active, Power Failure, Fiber Issue, Signal Quality)
-- Advanced ONT filter bar (PON Port, Signal Quality, Search)
-- GenieACS TR-069 device management
-- SSH-based ONT provisioning
-- Multi-theme support (PyroTheme/Dark/Light)
-- Role-based access control
-- OLT management with SNMP/SSH
-- Resource Monitor (Server + OLT stats)
-- InfluxDB time-series data storage
+## Highlights
+- Real-time ONT monitoring and filtering
+- Power failure and fiber issue detection via OLT SSH
+- Mobile-friendly dashboard and ONT list UI
+- OLT management, backup manager, worker manager
+- SSH-based unregistered ONT scan and provisioning
+- Service-port aware provisioning defaults (VLAN 10 flow)
+- GenieACS TR-069 integration
+- InfluxDB time-series monitoring
 
-## Tech Stack
-| Component | Technology |
-|-----------|-----------|
-| Frontend | HTML5, CSS3, Vanilla JS, Chart.js |
-| Backend | Python 3 HTTP Server |
-| Time-Series DB | InfluxDB 2.x |
-| Database | SQLite |
-| OLT SSH | Netmiko |
-| TR-069 | GenieACS |
-| OLT | Huawei MA5603T |
+## Architecture
+- Frontend: HTML5, CSS3, Vanilla JS, Chart.js
+- Backend: Python 3 HTTP server
+- Datastore: SQLite + InfluxDB 2.x
+- OLT Access: Netmiko (Huawei MA5603T)
+
+## Quick Start
+1. Configure API and auth services on the server.
+2. Place web files under `/var/www/html`.
+3. Start API service (`ont-api.service`).
+4. Open dashboard in browser and login.
+
+## Current Release
+- Tag: `v2.5.1`
+- Focus:
+  - unregistered ONT scanner reliability fix
+  - provisioning improvements
+  - VLAN 10 defaults in provisioning flow
+  - General ONT VAS Profile field in UI
 
 ## Version History
-| Version | Features |
-|---------|----------|
-| v2.1 | Base Dashboard |
-| v2.2 | Authentication System |
-| v2.3 | Themes & Branding |
-| v2.4 | Side Panel, OLT Management, Server Monitor |
-| v2.5 | Dashboard cards, Power Failure/Fiber Issue detection, ONT filter bar, Resource Monitor |
+- v2.1: Base dashboard
+- v2.2: Authentication system
+- v2.3: Themes and branding
+- v2.4: Side panel, OLT management, server monitor
+- v2.5: Dashboard cards and resource monitor
+- v2.5.1: Provisioning and unregistered ONT reliability updates
 
-## File Structure
+## Repository Layout
+- `web/` frontend files
+- `api/` backend API and OLT helpers
+- `auth/` authentication database code
+- `workers/` worker scripts and jobs
+- `config/` runtime configuration
+- `olt-config/` OLT profiles and parsed config artifacts
 
-## Developer
-PyroNet Solutions - pyronet.pk
+## Contributing
+Please read `CONTRIBUTING.md` and open issues for bugs or feature requests.
+
+## License
+Private/internal project unless otherwise stated by owner.

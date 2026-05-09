@@ -1757,7 +1757,7 @@ async function openProvisionModal(ont) {
 
   const lineOpts = lp.map(p => `<option value="${p.id}" ${p.id==='8'?'selected':''}>${p.name} (ID:${p.id})</option>`).join('');
   const srvOpts  = sp.map(p => `<option value="${p.id}" ${p.id==='10'?'selected':''}>${p.name} (ID:${p.id})</option>`).join('');
-  const vlanOpts = `<option value="">-- skip --</option>` + vlans.map(v => `<option value="${v}">${v}</option>`).join('');
+  const vlanOpts = vlans.map(v => `<option value="${v}" ${String(v)==='10'?'selected':''}>${v}</option>`).join('');
 
   document.getElementById('provModal').style.display = 'flex';
   document.getElementById('prov-sn').textContent = ont.sn;
@@ -1767,7 +1767,7 @@ async function openProvisionModal(ont) {
   document.getElementById('prov-srvprofile').innerHTML = srvOpts;
   document.getElementById('prov-vlan').innerHTML = vlanOpts;
   document.getElementById('prov-desc').value = '';
-  document.getElementById('prov-uservlan').value = '';
+  document.getElementById('prov-uservlan').value = '10';
   document.getElementById('prov-msg').textContent = '';
   document.getElementById('prov-msg').style.color = '';
   const btn = document.getElementById('prov-submit-btn');
@@ -1796,6 +1796,9 @@ async function submitProvision() {
       port: _provisionONT.port,
       line_profile_id: document.getElementById('prov-lineprofile').value,
       srv_profile_id: document.getElementById('prov-srvprofile').value,
+      vlan_id: document.getElementById('prov-vlan').value || '10',
+      user_vlan: document.getElementById('prov-uservlan').value || document.getElementById('prov-vlan').value || '10',
+      vas_profile: document.getElementById('prov-vasprofile').value || 'PPP-10-IPV4-IPV6',
       description: desc,
     };
     const r = await fetch(API+'/olt/provision', {
@@ -3828,6 +3831,15 @@ init();
             <option value="VOIP">VOIP</option>
             <option value="IPTV">IPTV</option>
             <option value="MANAGEMENT">MANAGEMENT</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">General ONT VAS Profile</div>
+          <select id="prov-vasprofile" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+            <option value="PPP-10-IPV4-IPV6" selected>PPP-10-IPV4-IPV6</option>
+            <option value="STATIC-IP">STATIC-IP</option>
+            <option value="TEST-ACS">TEST-ACS</option>
+            <option value="BRIDGE-MODE">BRIDGE-MODE</option>
           </select>
         </div>
       </div>

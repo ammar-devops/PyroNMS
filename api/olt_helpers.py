@@ -56,50 +56,86 @@ def olt_ssh(ip, username, password):
     conn.write_channel('config\r\n'); time.sleep(2); conn.read_channel()
     return conn
 
+def _read_until_prompt(conn, delay=2, max_rounds=24):
+    chunks = []
+    ansi_re = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+    for _ in range(max_rounds):
+        time.sleep(delay)
+        chunk = conn.read_channel()
+        if not chunk:
+            break
+        chunk = ansi_re.sub('', chunk).replace('\r', '')
+        while '---- More' in chunk:
+            before, _, after = chunk.partition('---- More')
+            chunks.append(before)
+            conn.write_channel(' ')
+            time.sleep(0.8)
+            chunk = ansi_re.sub('', conn.read_channel()).replace('\r', '')
+            chunk = after + chunk
+        chunks.append(chunk)
+        stripped = chunk.strip()
+        if stripped.endswith('#') or stripped.endswith(']'):
+            break
+    return ''.join(chunks)
+
 def get_unregistered_onts(ip, username, password):
     conn = olt_ssh(ip, username, password)
     results = []
-    for slot_port in ['0/0','0/1','0/2','0/4','0/5']:
-        conn.write_channel(f'interface gpon {slot_port}\r\n')
-        time.sleep(2); conn.read_channel()
-        for p in range(8):
-            conn.write_channel(f'display ont autofind {p}\r\n')
-            time.sleep(3)
-            out = conn.read_channel()
-            if 'do not exist' in out or 'Failure' in out: continue
-            # OLT format: "Ont SN              : 48575443143D1067 (HWTC-143D1067)"
-            sn = re.search(r'Ont SN\s*:\s*([0-9A-Fa-f]+)', out)
-            vendor = re.search(r'VendorID\s*:\s*(\S+)', out)
-            model = re.search(r'Ont EquipmentID\s*:\s*(\S+)', out)
-            t = re.search(r'autofind time\s*:\s*([\d]{4}-[\d]{2}-[\d]{2} [\d]{2}:[\d]{2}:[\d]{2}[+\d:]*)', out)
-            fsp = re.search(r'F/S/P\s*:\s*(\S+)', out)
-            if sn:
-                fsp_val = fsp.group(1) if fsp else f'0/{slot_port}/{p}'
-                results.append({
-                    'sn': sn.group(1),
-                    'pon': fsp_val,
-                    'slot': slot_port,
-                    'port': p,
-                    'vendor': vendor.group(1) if vendor else '?',
-                    'model': model.group(1) if model else '?',
-                    'time': t.group(1).strip() if t else '?'
-                })
-        conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+    conn.write_channel('display ont autofind all\r\n')
+    out = _read_until_prompt(conn)
+    if out.strip() and 'Failure' not in out and 'Parameter error' not in out:
+        blocks = re.split(r'-{20,}', out)
+        for block in blocks:
+            sn = re.search(r'Ont SN\s*:\s*([0-9A-Fa-f]+)', block)
+            if not sn:
+                continue
+            vendor = re.search(r'VendorID\s*:\s*(\S+)', block)
+            model  = re.search(r'Ont EquipmentID\s*:\s*(\S+)', block)
+            t      = re.search(r'Ont autofind time\s*:\s*([^\n]+)', block, re.I)
+            fsp    = re.search(r'F/S/P\s*:\s*(\S+)', block)
+            fsp_val = fsp.group(1) if fsp else '?'
+            parts = fsp_val.split('/')
+            port_num = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            slot_str = '/'.join(parts[:2]) if len(parts) > 1 else fsp_val
+            results.append({
+                'sn':     sn.group(1),
+                'pon':    fsp_val,
+                'slot':   slot_str,
+                'port':   port_num,
+                'vendor': vendor.group(1) if vendor else '?',
+                'model':  model.group(1) if model else '?',
+                'time':   t.group(1).strip() if t else '?'
+            })
     conn.disconnect()
     return results
 
-def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, description):
+def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, description, vlan_id=None, user_vlan=None, vas_profile="PPP-10-IPV4-IPV6"):
     conn = olt_ssh(ip, username, password)
     conn.write_channel(f'interface gpon {slot_port}\r\n')
     time.sleep(2); conn.read_channel()
     cmd = f'ont add {port} sn-auth {sn} omci ont-lineprofile-id {line_id} ont-srvprofile-id {srv_id} desc "{description}"'
     conn.write_channel(cmd+'\r\n'); time.sleep(5)
     out = conn.read_channel()
-    conn.write_channel('quit\r\n'); time.sleep(1)
-    conn.write_channel('quit\r\n'); time.sleep(1)
-    conn.disconnect()
+    service_port_output = ""
     s = re.search(r'success:\s*(\d+)', out)
     o = re.search(r'ONTID\s*:\s*(\d+)', out)
     if s and int(s.group(1)) > 0:
-        return True, int(o.group(1)) if o else -1, out
+        ont_id = int(o.group(1)) if o else -1
+        if vlan_id and ont_id >= 0:
+            if not user_vlan:
+                user_vlan = vlan_id
+            sp_cmd = f'service-port vlan {vlan_id} gpon {slot_port}/{port} ont {ont_id} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
+            conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+            conn.write_channel(sp_cmd + '\r\n'); time.sleep(4)
+            service_port_output = conn.read_channel()
+        conn.write_channel('quit\r\n'); time.sleep(1)
+        conn.disconnect()
+        all_output = out + ("\n" + service_port_output if service_port_output else "")
+        all_output += f"\n[VAS_PROFILE] {vas_profile}"
+        if "Failure" in service_port_output:
+            return False, ont_id, all_output
+        return True, ont_id, all_output
+    conn.write_channel('quit\r\n'); time.sleep(1)
+    conn.write_channel('quit\r\n'); time.sleep(1)
+    conn.disconnect()
     return False, -1, out

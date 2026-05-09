@@ -974,7 +974,10 @@ class Handler(BaseHTTPRequestHandler):
                     sn,payload.get("slot_port","0/1"),
                     int(payload.get("port",0)),
                     payload.get("line_profile_id","8"),
-                    payload.get("srv_profile_id","10"),desc)
+                    payload.get("srv_profile_id","10"),desc,
+                    payload.get("vlan_id","10"),
+                    payload.get("user_vlan") or payload.get("vlan_id","10"),
+                    payload.get("vas_profile","PPP-10-IPV4-IPV6"))
                 if ok: return self.send_json(200, {"ok":True,"ont_id":ont_id})
                 return self.send_json(500, {"error":"Failed","output":output})
             except Exception as e:

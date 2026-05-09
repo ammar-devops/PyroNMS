@@ -165,6 +165,31 @@
   /* WLAN band section */
   .wlan-band { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
   .wlan-band-title { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+
+  @media (max-width: 640px) {
+    .sidebar { width: 44px !important; min-width: 44px !important; }
+    .sidebar.collapsed { width: 44px !important; }
+    .sidebar .nav-label { display: none !important; }
+    .sidebar .nav-section { display: none !important; }
+    .sidebar .olt-item { justify-content: center; padding-left: 14px !important; }
+    .sidebar .olt-item span { display: none !important; }
+    .sidebar-toggle { display: none !important; }
+    #sidebarAvatarWrap { display: flex !important; }
+    #profileWrap { display: none !important; }
+    .header { padding: 8px 10px !important; gap: 8px !important; flex-wrap: wrap; }
+    .stats { gap: 3px !important; margin-left: 0 !important; }
+    .stat { min-width: 46px !important; padding: 4px 6px !important; }
+    .stat-val { font-size: 15px !important; }
+    .stat-label { font-size: 9px !important; }
+    #fth-temp, #th-temp, #fth-sn, #th-sn, #fth-refresh, #th-refresh { display: none !important; }
+    .ont-table { width: 100% !important; min-width: unset !important; }
+    table th, table td { font-size: 11px !important; padding: 8px 6px !important; }
+    .signal-badge { font-size: 10px !important; padding: 2px 6px !important; white-space: nowrap; }
+    #fth-rx { width: 90px !important; }
+  }
+  @media (min-width: 641px) {
+    #sidebarAvatarWrap { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -224,7 +249,7 @@
       <th onclick="sortTable('rx')"   id="fth-rx"   style="width:140px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">RX Signal</th>
       <th onclick="sortTable('temp')" id="fth-temp" style="width:80px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Temp</th>
       <th onclick="sortTable('sn')"   id="fth-sn"   style="width:175px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Serial Number</th>
-      <th style="width:100px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;">Refresh</th>
+      <th id="fth-refresh" style="width:100px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;">Refresh</th>
     </tr>
   </table>
 </div>
@@ -281,6 +306,10 @@
 
     </div>
 
+    <!-- Sidebar avatar mobile -->
+    <div id="sidebarAvatarWrap" style="display:none;padding:10px 0;border-top:1px solid var(--border);justify-content:center;">
+      <div id="sidebarAvatar" onclick="event.stopPropagation();toggleProfile();" style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#1a5c2e,#0d2e4a);border:1.5px solid #26d97f55;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--green);cursor:pointer;">A</div>
+    </div>
     <!-- Sidebar footer -->
     <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;">
       <div id="sidebarFooter">
@@ -306,7 +335,7 @@
         <th style="width:140px" onclick="sortTable('rx')"  id="th-rx">RX Signal</th>
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
-        <th style="width:100px">Refresh</th>
+        <th id="th-refresh" style="width:100px">Refresh</th>
       </tr>
     </thead>
     <tbody id="ontTable"></tbody>
@@ -371,11 +400,24 @@ let currentTab = 'summary';
 // ── Profile dropdown ──────────────────────────────────────────────────────
 function toggleProfile() {
   const m = document.getElementById('profileMenu');
-  m.style.display = m.style.display==='none' ? 'block' : 'none';
+  if (!m) return;
+  if (m.style.display === 'block') { m.style.display = 'none'; return; }
+  if (window.innerWidth <= 640) {
+    m.style.position='fixed'; m.style.left='50px'; m.style.bottom='60px';
+    m.style.top='auto'; m.style.right='auto'; m.style.zIndex='9999';
+  } else {
+    m.style.position='absolute'; m.style.right='0'; m.style.top='calc(100% + 6px)';
+    m.style.left='auto'; m.style.bottom='auto';
+  }
+  m.style.display = 'block';
 }
 document.addEventListener('click', e => {
-  if (!document.getElementById('profileWrap')?.contains(e.target))
-    document.getElementById('profileMenu').style.display = 'none';
+  const w = document.getElementById('profileWrap');
+  const s = document.getElementById('sidebarAvatarWrap');
+  const m = document.getElementById('profileMenu');
+  if (!m) return;
+  if (w?.contains(e.target) || s?.contains(e.target) || m.contains(e.target)) return;
+  m.style.display = 'none';
 });
 
 

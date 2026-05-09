@@ -2652,6 +2652,7 @@ function renderTable() {
 
 let ontSettingsCurrent = null;
 let ontSettingsTab = 'wan';
+let ontSettingsTemplates = null;
 
 function openOntSettings(sn, name, pon, vlan) {
   ontSettingsCurrent = {sn, name, pon, vlan};
@@ -2662,9 +2663,11 @@ function openOntSettings(sn, name, pon, vlan) {
   document.getElementById('os-pon').value = pon || '';
   document.getElementById('os-vlan').value = vlan || '10';
   document.getElementById('os-user-vlan').value = '10';
+  document.getElementById('os-alias').value = name || '';
   document.getElementById('ontSettingsMsg').textContent = '';
   switchOntSettingsTab('wan');
   document.getElementById('ontSettingsOverlay').classList.add('open');
+  loadOntSettingsTemplates();
 }
 
 function closeOntSettings(e) {
@@ -2681,6 +2684,23 @@ function switchOntSettingsTab(tab) {
   document.querySelectorAll('.ont-settings-tab').forEach(panel => {
     panel.style.display = panel.dataset.tab === tab ? 'block' : 'none';
   });
+}
+
+async function loadOntSettingsTemplates() {
+  const box = document.getElementById('ontSettingsTemplateInfo');
+  if (!box) return;
+  box.textContent = 'Loading model templates...';
+  try {
+    if (!ontSettingsTemplates) {
+      const r = await fetch(`${API}/ont/settings/templates`, {headers: authHeaders()});
+      ontSettingsTemplates = await r.json();
+    }
+    const models = Object.keys((ontSettingsTemplates && ontSettingsTemplates.models) || {});
+    const profiles = Object.keys((ontSettingsTemplates && ontSettingsTemplates.profiles) || {});
+    box.innerHTML = `Templates: ${models.length || 0} model map(s), ${profiles.length || 0} profile group(s). SSH service-port repair is active; WiFi/LAN/User credential model commands remain template-gated.`;
+  } catch (e) {
+    box.textContent = 'Template map unavailable. SSH service-port and ONT alias controls still work.';
+  }
 }
 
 async function submitOntSettings(kind, action='apply') {
@@ -3301,6 +3321,7 @@ init();
     <div class="modal-body">
       <input type="hidden" id="os-sn">
       <input type="hidden" id="os-pon">
+      <div id="ontSettingsTemplateInfo" style="margin-bottom:14px;padding:9px 11px;border:1px solid var(--border);border-radius:7px;background:var(--bg3);font-size:12px;color:var(--muted);"></div>
 
       <div class="ont-settings-tab" data-tab="wan">
         <div class="ont-settings-grid">
@@ -3341,7 +3362,10 @@ init();
             <input id="os-dns" placeholder="8.8.8.8, 1.1.1.1">
           </div>
         </div>
-        <div class="ont-settings-actions"><button class="ont-settings-save" onclick="submitOntSettings('wan')">Apply WAN</button></div>
+        <div class="ont-settings-actions">
+          <button class="ont-settings-save" onclick="submitOntSettings('wan','repair_vlan')" style="background:#172554;border-color:#3b82f655;color:#93c5fd;">Repair VLAN</button>
+          <button class="ont-settings-save" onclick="submitOntSettings('wan')">Apply WAN</button>
+        </div>
       </div>
 
       <div class="ont-settings-tab" data-tab="wifi" style="display:none;">

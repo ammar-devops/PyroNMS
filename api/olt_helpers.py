@@ -50,11 +50,19 @@ def get_olt_profiles():
 
 def olt_ssh(ip, username, password):
     from netmiko import ConnectHandler
-    conn = ConnectHandler(device_type='terminal_server', host=ip,
-        username=username, password=password, timeout=60)
-    conn.write_channel('enable\r\n'); time.sleep(2); conn.read_channel()
-    conn.write_channel('config\r\n'); time.sleep(2); conn.read_channel()
-    return conn
+    last_error = None
+    for attempt in range(3):
+        try:
+            conn = ConnectHandler(device_type='terminal_server', host=ip,
+                username=username, password=password, timeout=75, conn_timeout=30,
+                banner_timeout=30, auth_timeout=30)
+            conn.write_channel('enable\r\n'); time.sleep(2); conn.read_channel()
+            conn.write_channel('config\r\n'); time.sleep(2); conn.read_channel()
+            return conn
+        except Exception as e:
+            last_error = e
+            time.sleep(2 + attempt)
+    raise last_error
 
 def _read_until_prompt(conn, delay=2, max_rounds=24):
     chunks = []
@@ -152,12 +160,41 @@ def find_ont_by_sn(ip, username, password, sn):
     if not fsp or not ont_id:
         return None, out
     parts = fsp.group(1).split('/')
+    vendor = re.search(r'SN\s*:\s*[0-9A-Fa-f]+\s*\(([^)-]+)-', out)
+    equipment = re.search(r'Ont EquipmentID\s*:\s*(.+)', out)
+    desc = re.search(r'Description\s*:\s*(.+)', out)
+    line_id = re.search(r'Line profile ID\s*:\s*(\S+)', out)
+    line_name = re.search(r'Line profile name\s*:\s*(.+)', out)
+    srv_id = re.search(r'Service profile ID\s*:\s*(\S+)', out)
+    srv_name = re.search(r'Service profile name\s*:\s*(.+)', out)
+    run_state = re.search(r'Run state\s*:\s*(\S+)', out)
+    config_state = re.search(r'Config state\s*:\s*(\S+)', out)
     return {
         'fsp': fsp.group(1),
         'slot_port': '/'.join(parts[:2]),
         'port': int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
         'ont_id': int(ont_id.group(1)),
+        'vendor': vendor.group(1).strip() if vendor else '',
+        'model': equipment.group(1).strip() if equipment else '',
+        'description': desc.group(1).strip() if desc else '',
+        'line_profile_id': line_id.group(1).strip() if line_id else '',
+        'line_profile_name': line_name.group(1).strip() if line_name else '',
+        'service_profile_id': srv_id.group(1).strip() if srv_id else '',
+        'service_profile_name': srv_name.group(1).strip() if srv_name else '',
+        'run_state': run_state.group(1).strip() if run_state else '',
+        'config_state': config_state.group(1).strip() if config_state else '',
     }, out
+
+def summarize_ont(ont):
+    lines = [
+        f"ONT: {ont.get('fsp')} / ID {ont.get('ont_id')}",
+        f"State: {ont.get('run_state') or '-'} / {ont.get('config_state') or '-'}",
+        f"Model: {ont.get('vendor') or '-'} {ont.get('model') or '-'}",
+        f"Alias: {ont.get('description') or '-'}",
+        f"Line Profile: {ont.get('line_profile_id') or '-'} {ont.get('line_profile_name') or ''}".strip(),
+        f"Service Profile: {ont.get('service_profile_id') or '-'} {ont.get('service_profile_name') or ''}".strip(),
+    ]
+    return '\n'.join(lines)
 
 def apply_ont_settings(ip, username, password, payload):
     method = payload.get('method', 'ssh')
@@ -181,7 +218,7 @@ def apply_ont_settings(ip, username, password, payload):
         time.sleep(2); outputs.append(conn.read_channel())
         conn.write_channel('quit\r\n'); time.sleep(1)
         conn.disconnect()
-        return True, '\n'.join(outputs)
+        return True, summarize_ont(ont) + '\n\n' + '\n'.join(outputs)
 
     if kind == 'user' and payload.get('alias'):
         alias = str(payload.get('alias', '')).replace('"', '')
@@ -204,10 +241,21 @@ def apply_ont_settings(ip, username, password, payload):
         conn.write_channel(f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}\r\n')
         time.sleep(2); sp_out = conn.read_channel()
         outputs.append(sp_out)
-        if 'No service virtual port' in sp_out:
+        existing_service_port = re.search(r'^\s*(\d+)\s+\d+\s+\S+\s+gpon\b', sp_out, re.M)
+        if action == 'repair_vlan' and existing_service_port:
+            service_port_id = existing_service_port.group(1)
+            conn.write_channel(f'undo service-port {service_port_id}\r\n')
+            time.sleep(3); outputs.append(conn.read_channel())
             cmd = f'service-port vlan {vlan_id} gpon {ont["fsp"]} ont {ont["ont_id"]} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
             conn.write_channel(cmd + '\r\n')
             time.sleep(3); outputs.append(conn.read_channel())
+            outputs.append(f'[SERVICE_PORT] Repaired service-port {service_port_id} with network VLAN {vlan_id}, user VLAN {user_vlan}.')
+        elif 'No service virtual port' in sp_out:
+            cmd = f'service-port vlan {vlan_id} gpon {ont["fsp"]} ont {ont["ont_id"]} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
+            conn.write_channel(cmd + '\r\n')
+            time.sleep(3); outputs.append(conn.read_channel())
+        else:
+            outputs.append('[SERVICE_PORT] Existing service-port found; no duplicate created.')
         outputs.append(f"[WAN_PROFILE_CAPTURED] mode={payload.get('mode')} pppoe_user={payload.get('pppoe_username','')} static_ip={payload.get('static_ip','')}")
 
     if kind in ('wifi', 'lan'):

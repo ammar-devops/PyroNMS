@@ -46,6 +46,7 @@ INFLUX_TOKEN  = "my-super-secret-token"
 INFLUX_ORG    = "myisp"
 INFLUX_BUCKET = "olt_monitoring"
 OLT_BACKUP_DIR = Path("/opt/ont-monitor/olt-config")
+ONT_SETTINGS_TEMPLATE_PATH = Path("/opt/ont-monitor/config/ont_settings_templates.json")
 
 # ─── InfluxDB helpers ─────────────────────────────────────────────────────────
 
@@ -945,6 +946,16 @@ class Handler(BaseHTTPRequestHandler):
             result = parse_device(raw)
             result["_device_id"] = device_id
             return self.send_json(200, result)
+
+        elif parsed.path == "/ont/settings/templates":
+            user = require_auth(self)
+            if not user: return
+            try:
+                if ONT_SETTINGS_TEMPLATE_PATH.is_file():
+                    return self.send_json(200, json.loads(ONT_SETTINGS_TEMPLATE_PATH.read_text()))
+                return self.send_json(200, {"models": {}, "profiles": {}})
+            except Exception as e:
+                return self.send_json(500, {"error": str(e)})
 
         # ── GET /health ───────────────────────────────────────────────────────
         elif parsed.path == "/health":

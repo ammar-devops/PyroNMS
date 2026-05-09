@@ -94,9 +94,9 @@ def get_all_onts():
     flux_status = f'''
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: -48h)
-  |> filter(fn: (r) => r._measurement == "ont_status" and r._field == "online")
+  |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "down_cause"))
   |> last()
-  |> keep(columns: ["sn", "pon", "description", "_value"])
+  |> keep(columns: ["sn", "pon", "description", "_field", "_value"])
 '''
 
     # Latest optical per ONT — only rx_power and temp fields
@@ -124,32 +124,47 @@ from(bucket: "{INFLUX_BUCKET}")
             optical[sn] = {}
         optical[sn][field] = val
 
-    onts = []
-    seen = set()
+    # Index status rows by sn — collect online + down_cause
+    status_map = {}
     for r in status_rows:
-        sn   = r.get("sn",          "").strip()
-        pon  = r.get("pon",         "").strip()
-        name = r.get("description", "").strip()
-        val  = r.get("_value",      "0").strip()
-        if not sn or sn in seen:
+        sn    = r.get("sn",          "").strip()
+        pon   = r.get("pon",         "").strip()
+        name  = r.get("description", "").strip()
+        field = r.get("_field",      "online").strip()
+        val   = r.get("_value",      "").strip()
+        if not sn:
             continue
-        seen.add(sn)
+        if sn not in status_map:
+            status_map[sn] = {"pon": pon, "name": name, "online": "0", "down_cause": ""}
+        if field == "online":
+            status_map[sn]["online"] = val
+        elif field == "down_cause":
+            status_map[sn]["down_cause"] = val
 
+    onts = []
+    for sn, s in status_map.items():
         opt  = optical.get(sn, {})
-        # Try common field name variants for rx and temp
-        rx   = (opt.get("rx_power")   or opt.get("rx_signal") or
-                opt.get("rx")         or "-")
+        rx   = (opt.get("rx_power") or opt.get("rx_signal") or opt.get("rx") or "-")
         temp = (opt.get("temperature") or opt.get("temp") or "-")
-
+        is_online = s["online"] in ("1", "online", "true")
+        cause = s.get("down_cause", "")
+        if is_online:
+            detail_status = "online"
+        elif "dying" in cause or "gasp" in cause:
+            detail_status = "power-failure"
+        elif "los" in cause or "lob" in cause or "loss" in cause:
+            detail_status = "fiber-issue"
+        else:
+            detail_status = "offline"
         onts.append({
-            "pon":    pon,
-            "name":   name,
-            "sn":     sn,
-            "status": "online" if val in ("1", "online", "true") else "offline",
-            "rx":     rx,
-            "temp":   temp,
+            "pon":        s["pon"],
+            "name":       s["name"],
+            "sn":         sn,
+            "status":     detail_status,
+            "down_cause": cause,
+            "rx":         rx,
+            "temp":       temp,
         })
-
     return onts
 
 
@@ -557,6 +572,132 @@ class Handler(BaseHTTPRequestHandler):
             snmp = params.get("snmp",["public"])[0]
             ok, sysname = olt_helpers.test_olt_snmp(ip, snmp) if hasattr(olt_helpers, "test_olt_snmp") else olt.test_olt_snmp(ip, snmp)
             return self.send_json(200, {"snmp": ok, "sysname": sysname})
+
+        elif parsed.path == "/olt/stats":
+            # Get OLT temperature history from InfluxDB
+            from influxdb_client import InfluxDBClient
+            
+            # Get time range (support both hours and days)
+            days = int(params.get('days', ['0'])[0])
+            hours = int(params.get('hours', ['24'])[0])
+            
+            if days > 0:
+                range_str = f"{days}d"
+                window = "30m" if days <= 7 else "2h"
+            else:
+                range_str = f"{hours}h"
+                window = "5m"
+            
+            client = InfluxDBClient(url="http://localhost:8086", 
+                                   token="my-super-secret-token", 
+                                   org="myisp")
+            query_api = client.query_api()
+            
+            query = f'''
+            from(bucket: "olt_monitoring")
+              |> range(start: -{range_str})
+              |> filter(fn: (r) => r["_measurement"] == "olt_temperature")
+              |> filter(fn: (r) => r["_field"] == "celsius")
+              |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
+            '''
+            
+            result = query_api.query(query)
+            
+            data = []
+            for table in result:
+                for record in table.records:
+                    data.append({
+                        'time': record.get_time().isoformat(),
+                        'slot': record.values.get('slot'),
+                        'temp': round(record.get_value(), 1)
+                    })
+            
+            client.close()
+            return self.send_json(200, {'data': data, 'range': range_str})
+
+
+
+        elif parsed.path == "/olt/cpu":
+            # Get OLT CPU history from InfluxDB
+            from influxdb_client import InfluxDBClient
+            
+            days = int(params.get('days', ['0'])[0])
+            hours = int(params.get('hours', ['24'])[0])
+            
+            if days > 0:
+                range_str = f"{days}d"
+                window = "30m" if days <= 7 else "2h"
+            else:
+                range_str = f"{hours}h"
+                window = "5m"
+            
+            client = InfluxDBClient(url="http://localhost:8086",
+                                   token="my-super-secret-token",
+                                   org="myisp")
+            query_api = client.query_api()
+            
+            query = f'''
+            from(bucket: "olt_monitoring")
+              |> range(start: -{range_str})
+              |> filter(fn: (r) => r["_measurement"] == "olt_cpu")
+              |> filter(fn: (r) => r["_field"] == "percent")
+              |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
+            '''
+            
+            result = query_api.query(query)
+            
+            data = []
+            for table in result:
+                for record in table.records:
+                    data.append({
+                        'time': record.get_time().isoformat(),
+                        'slot': record.values.get('slot'),
+                        'cpu': round(record.get_value(), 1)
+                    })
+            
+            client.close()
+            return self.send_json(200, {'data': data, 'range': range_str})
+
+        elif parsed.path == "/server/history":
+            # Get server stats history from InfluxDB
+            from influxdb_client import InfluxDBClient
+            
+            days = int(params.get('days', ['0'])[0])
+            hours = int(params.get('hours', ['24'])[0])
+            
+            if days > 0:
+                range_str = f"{days}d"
+                window = "30m" if days <= 7 else "2h"
+            else:
+                range_str = f"{hours}h"
+                window = "5m"
+            
+            client = InfluxDBClient(url="http://localhost:8086",
+                                   token="my-super-secret-token",
+                                   org="myisp")
+            query_api = client.query_api()
+            
+            query = f'''
+            from(bucket: "olt_monitoring")
+              |> range(start: -{range_str})
+              |> filter(fn: (r) => r["_measurement"] == "server_stats")
+              |> filter(fn: (r) => r["_field"] == "cpu_percent" or r["_field"] == "mem_percent" or r["_field"] == "disk_percent")
+              |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
+            '''
+            
+            result = query_api.query(query)
+            
+            data = []
+            for table in result:
+                for record in table.records:
+                    data.append({
+                        'time': record.get_time().isoformat(),
+                        'metric': record.values.get('_field'),
+                        'value': round(record.get_value(), 1)
+                    })
+            
+            client.close()
+            return self.send_json(200, {'data': data, 'range': range_str})
 
         elif parsed.path == "/server/stats":
             import psutil, time

@@ -90,6 +90,14 @@
   td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   .real-thead { visibility: hidden; height: 0; line-height: 0; padding: 0; border: none; }
   .real-thead th { height: 0; padding: 0; border: none; }
+  .filter-bar { display:flex;flex-wrap:wrap;gap:10px;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);align-items:flex-end; }
+  .filter-group { display:flex;flex-direction:column;gap:4px; }
+  .filter-label { font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px; }
+  .filter-select { background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:6px 10px;font-size:13px;cursor:pointer;min-width:140px;height:34px; }
+  .filter-select:focus { outline:none;border-color:var(--accent); }
+  .filter-btn { background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;height:34px;align-self:flex-end; }
+  .filter-btn:hover { border-color:var(--accent);color:var(--text); }
+  .filter-btn.active { background:var(--accent);border-color:var(--accent);color:#fff; }
   th.sort-asc::after  { content: ' ▲'; font-size: 9px; color: var(--accent); }
   th.sort-desc::after { content: ' ▼'; font-size: 9px; color: var(--accent); }
   th:hover { color: var(--text); }
@@ -104,7 +112,8 @@
   .sig-good    { background: #14532d; color: #4ade80; }
   .sig-weak    { background: #451a03; color: #fbbf24; }
   .sig-bad     { background: #450a0a; color: #f87171; }
-  .sig-offline { background: #450a0a; color: #f87171; }
+  .sig-offline { background: rgba(234,88,12,.15); color: #f97316; }
+  .sig-fiber   { background: rgba(239,68,68,.15); color: #ef4444; }
   .temp-cell { color: var(--muted); }
   .serial-cell { font-family: monospace; font-size: 12px; color: var(--muted); }
   .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
@@ -165,31 +174,6 @@
   /* WLAN band section */
   .wlan-band { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
   .wlan-band-title { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
-
-  @media (max-width: 640px) {
-    .sidebar { width: 44px !important; min-width: 44px !important; }
-    .sidebar.collapsed { width: 44px !important; }
-    .sidebar .nav-label { display: none !important; }
-    .sidebar .nav-section { display: none !important; }
-    .sidebar .olt-item { justify-content: center; padding-left: 14px !important; }
-    .sidebar .olt-item span { display: none !important; }
-    .sidebar-toggle { display: none !important; }
-    #sidebarAvatarWrap { display: flex !important; }
-    #profileWrap { display: none !important; }
-    .header { padding: 8px 10px !important; gap: 8px !important; flex-wrap: wrap; }
-    .stats { gap: 3px !important; margin-left: 0 !important; }
-    .stat { min-width: 46px !important; padding: 4px 6px !important; }
-    .stat-val { font-size: 15px !important; }
-    .stat-label { font-size: 9px !important; }
-    #fth-temp, #th-temp, #fth-sn, #th-sn, #fth-refresh, #th-refresh { display: none !important; }
-    .ont-table { width: 100% !important; min-width: unset !important; }
-    table th, table td { font-size: 11px !important; padding: 8px 6px !important; }
-    .signal-badge { font-size: 10px !important; padding: 2px 6px !important; white-space: nowrap; }
-    #fth-rx { width: 90px !important; }
-  }
-  @media (min-width: 641px) {
-    #sidebarAvatarWrap { display: none !important; }
-  }
 </style>
 </head>
 <body>
@@ -203,13 +187,7 @@
     <option value="">All PONs</option>
   </select>
   <button class="btn-refresh-all" onclick="refreshAll()">⟳ Refresh All</button>
-  <div class="stats">
-    <div class="stat s-total  active-filter" onclick="setStatFilter('all')"  id="stat-total">  <div class="stat-label">Total</div>  <div class="stat-val" id="v-total">-</div></div>
-    <div class="stat s-active"  onclick="setStatFilter('active')"  id="stat-active"> <div class="stat-label">Active</div>  <div class="stat-val" id="v-active">-</div></div>
-    <div class="stat s-offline" onclick="setStatFilter('offline')" id="stat-offline"><div class="stat-label">Offline</div> <div class="stat-val" id="v-offline">-</div></div>
-    <div class="stat s-weak"    onclick="setStatFilter('weak')"    id="stat-weak">   <div class="stat-label">-26 se -28</div><div class="stat-val" id="v-weak">-</div></div>
-    <div class="stat s-bad"     onclick="setStatFilter('bad')"     id="stat-bad">    <div class="stat-label">-29 se kam</div><div class="stat-val" id="v-bad">-</div></div>
-  </div>
+  
   <div style="position:relative;margin-left:auto;" id="profileWrap">
     <button onclick="toggleProfile()" style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:5px 12px 5px 6px;cursor:pointer;transition:all .15s;" id="profileBtn">
       <div id="profileAvatar" style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#1a5c2e,#0d2e4a);border:1.5px solid #26d97f55;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--green);flex-shrink:0;">A</div>
@@ -234,27 +212,6 @@
 </div>
 
 <!-- Toolbar -->
-<div class="toolbar">
-  <input class="search-box" id="searchBox" type="text" placeholder="Search customer name or serial number…" oninput="applyFilters()">
-  <div class="update-info" id="updateInfo">Loading…</div>
-</div>
-
-<!-- Fixed column header bar -->
-<div id="fixedHeader" style="position:sticky;top:151px;z-index:89;background:var(--bg2);border-bottom:2px solid var(--border);padding:0;display:block;">
-  <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
-    <tr>
-      <th onclick="sortTable('num')"  id="fth-num"  style="width:44px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">#</th>
-      <th onclick="sortTable('pon')"  id="fth-pon"  style="width:90px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">PON</th>
-      <th onclick="sortTable('name')" id="fth-name" style="padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Customer Name</th>
-      <th onclick="sortTable('rx')"   id="fth-rx"   style="width:140px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">RX Signal</th>
-      <th onclick="sortTable('temp')" id="fth-temp" style="width:80px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Temp</th>
-      <th onclick="sortTable('sn')"   id="fth-sn"   style="width:175px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;cursor:pointer;">Serial Number</th>
-      <th id="fth-refresh" style="width:100px;padding:9px 16px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);text-align:left;">Refresh</th>
-    </tr>
-  </table>
-</div>
-
-
 <!-- App Body with Sidebar -->
 <div class="app-body">
 
@@ -267,9 +224,13 @@
 
       <!-- ONT List section -->
       <div class="nav-section" id="navSectionLabel">Navigation</div>
-      <div class="nav-item active" id="nav-ont" onclick="switchSection('ont')">
+      <div class="nav-item active" id="nav-dashboard" onclick="switchSection('dashboard')">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Dashboard</span>
+      </div>
+      <div class="nav-item" id="nav-ont" onclick="switchSection('ont')">
         <span class="nav-icon">📡</span>
-        <span class="nav-label">ONT List</span>
+        <span class="nav-label">All ONT List</span>
       </div>
       <div class="nav-item" id="nav-unreg" onclick="switchSection('unreg')">
         <span class="nav-icon">➕</span>
@@ -290,11 +251,16 @@
         </div>
       </div>
 
-      <div class="nav-section">System</div>
-      <div class="nav-item" id="nav-server" onclick="switchSection('server')">
+      <div class="nav-section">Resource Monitor</div>
+      <div class="nav-item" id="nav-server" onclick="switchSection('server')" style="padding-left:32px;">
         <span class="nav-icon">🖥</span>
         <span class="nav-label">Server Monitor</span>
       </div>
+      <div class="nav-item" id="nav-oltmon" onclick="switchSection('oltmon')" style="padding-left:32px;">
+        <span class="nav-icon">📡</span>
+        <span class="nav-label">OLT Monitor</span>
+      </div>
+      <div class="nav-section">System</div>
       <div class="nav-item" id="nav-settings" onclick="switchSection('settings')">
         <span class="nav-icon">⚙</span>
         <span class="nav-label">Settings</span>
@@ -306,10 +272,6 @@
 
     </div>
 
-    <!-- Sidebar avatar mobile -->
-    <div id="sidebarAvatarWrap" style="display:none;padding:10px 0;border-top:1px solid var(--border);justify-content:center;">
-      <div id="sidebarAvatar" onclick="event.stopPropagation();toggleProfile();" style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#1a5c2e,#0d2e4a);border:1.5px solid #26d97f55;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--green);cursor:pointer;">A</div>
-    </div>
     <!-- Sidebar footer -->
     <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;">
       <div id="sidebarFooter">
@@ -322,8 +284,126 @@
   <!-- Main Content -->
   <div class="main-content">
 
-    <!-- Section: ONT List -->
-    <div class="main-section active" id="section-ont" style="overflow-y:auto;">
+        <!-- Section: Dashboard -->
+    <div class="main-section active" id="section-dashboard" style="overflow-y:auto;">
+      <div style="padding:24px;">
+        
+        <!-- Header -->
+        <div style="margin-bottom:24px;">
+          <div style="font-size:22px;font-weight:700;color:var(--text);">Dashboard</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">ONT Network Overview</div>
+        </div>
+
+        <!-- Stats Cards Grid -->
+        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:24px;">
+          
+          <div style="background:linear-gradient(135deg,rgba(59,130,246,.1),rgba(59,130,246,.02));border:1px solid rgba(59,130,246,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('all')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#3b82f6'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(59,130,246,.3)'">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Total ONTs</div>
+            <div style="font-size:32px;font-weight:700;color:#3b82f6;" id="dash-total">0</div>
+          </div>
+
+          <div style="background:linear-gradient(135deg,rgba(34,197,94,.1),rgba(34,197,94,.02));border:1px solid rgba(34,197,94,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('active')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#22c55e'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(34,197,94,.3)'">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Active ONTs</div>
+            <div style="font-size:32px;font-weight:700;color:#22c55e;" id="dash-active">0</div>
+          </div>
+
+          <div style="background:linear-gradient(135deg,rgba(239,68,68,.1),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ef4444'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(239,68,68,.3)'">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Offline ONTs</div>
+            <div style="background:linear-gradient(135deg,rgba(249,115,22,.1),rgba(249,115,22,.02));border:1px solid rgba(249,115,22,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('ont');setOntFilter('power-failure')">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">🔌 Power Failure</div>
+            <div style="font-size:32px;font-weight:700;color:#f97316;" id="dash-power">0</div>
+          </div>
+          <div style="background:linear-gradient(135deg,rgba(239,68,68,.1),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('ont');setOntFilter('fiber-issue')">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">⚡ Fiber Issue</div>
+            <div style="font-size:32px;font-weight:700;color:#ef4444;" id="dash-fiber">0</div>
+          </div>
+          </div>
+
+          <div style="background:linear-gradient(135deg,rgba(245,158,11,.1),rgba(245,158,11,.02));border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('weak')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f59e0b'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(245,158,11,.3)'">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">-26 to -28 dBm</div>
+            <div style="font-size:32px;font-weight:700;color:#f59e0b;" id="dash-weak">0</div>
+          </div>
+
+          <div style="background:linear-gradient(135deg,rgba(249,115,22,.1),rgba(249,115,22,.02));border:1px solid rgba(249,115,22,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;" onclick="switchSection('dashboard');setOntFilter('critical')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f97316'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(249,115,22,.3)'">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">-29 dBm or kam</div>
+            <div style="font-size:32px;font-weight:700;color:#f97316;" id="dash-bad">0</div>
+          </div>
+
+          <div style="background:linear-gradient(135deg,rgba(168,85,247,.1),rgba(168,85,247,.02));border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;" onclick="switchSection('unreg')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#a855f7'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(168,85,247,.3)'">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Unregistered</div>
+            <div style="font-size:32px;font-weight:700;color:#a855f7;" id="dash-unreg">0</div>
+          </div>
+
+        </div>
+
+        <!-- Recent Activity Section -->
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <div style="font-size:14px;font-weight:700;color:var(--text);">Recent Activity</div>
+            <div style="font-size:11px;color:var(--muted);">Last 24 hours</div>
+          </div>
+          <div id="dash-activity" style="font-size:13px;">
+            <div style="text-align:center;padding:40px;color:var(--muted);">
+              <div style="font-size:32px;margin-bottom:8px;">📊</div>
+              <div id="dash-activity" style="max-height:320px;overflow-y:auto;"><div style="text-align:center;padding:20px;color:var(--muted);">Loading...</div></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+<!-- Section: ONT List -->
+    <div class="main-section" id="section-ont" style="overflow-y:auto;">
+<div class="toolbar">
+  <div class="update-info" id="updateInfo" style="display:none">Loading…</div>
+</div>
+<!-- Filter Bar -->
+<div class="filter-bar" id="ontFilterBar" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 16px;">
+  <!-- Search -->
+  <input class="search-box" id="searchBox" type="text" placeholder="🔍 Search customer or serial…" oninput="applyFilters()" style="height:34px;min-width:220px;flex:0 0 auto;">
+  <!-- Mini stat cards -->
+  <div style="display:flex;gap:8px;margin-right:8px;padding-right:12px;border-right:1px solid var(--border);align-items:center;flex-wrap:wrap;">
+    <div onclick="resetAdvFilters()" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);min-width:60px;" title="Total ONTs">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Total</div>
+      <div style="font-size:16px;font-weight:700;color:var(--accent);" id="fc-total">-</div>
+    </div>
+    <div onclick="setStatFilter('active')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(34,197,94,.3);background:rgba(34,197,94,.08);min-width:60px;" title="Active ONTs">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Active</div>
+      <div style="font-size:16px;font-weight:700;color:#22c55e;" id="fc-active">-</div>
+    </div>
+    <div onclick="setOntFilter('power-failure')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="Power Failure">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">🔌 Power</div>
+      <div style="font-size:16px;font-weight:700;color:#f97316;" id="fc-power">-</div>
+    </div>
+    <div onclick="setOntFilter('fiber-issue')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);min-width:60px;" title="Fiber Issue">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">⚡ Fiber</div>
+      <div style="font-size:16px;font-weight:700;color:#ef4444;" id="fc-fiber">-</div>
+    </div>
+    <div onclick="setStatFilter('weak')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(245,158,11,.3);background:rgba(245,158,11,.08);min-width:60px;" title="-26 to -28 dBm">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">-26/-28</div>
+      <div style="font-size:16px;font-weight:700;color:#f59e0b;" id="fc-weak">-</div>
+    </div>
+    <div onclick="setStatFilter('bad')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="-29 dBm or worse">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">-29 kam</div>
+      <div style="font-size:16px;font-weight:700;color:#f97316;" id="fc-bad">-</div>
+    </div>
+  </div>
+
+
+  <div class="filter-group">
+    <div class="filter-label">PON / Slot</div>
+    <select class="filter-select" id="ff-pon" onchange="applyAdvFilters()">
+      <option value="">All PONs</option>
+    </select>
+  </div>
+
+
+  <div class="filter-group" style="margin-left:auto;">
+    <div class="filter-label">&nbsp;</div>
+    <button class="filter-btn" onclick="resetAdvFilters()">↺ Reset</button>
+  </div>
+</div>
 <!-- Table -->
 <div class="table-wrap">
   <table>
@@ -335,7 +415,7 @@
         <th style="width:140px" onclick="sortTable('rx')"  id="th-rx">RX Signal</th>
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
-        <th id="th-refresh" style="width:100px">Refresh</th>
+        <th style="width:100px">Refresh</th>
       </tr>
     </thead>
     <tbody id="ontTable"></tbody>
@@ -396,28 +476,143 @@ let statFilter = 'all';
 let currentDevice = null;   // { sn, name, deviceData }
 let currentTab = 'summary';
 
+
+// ── Dashboard ───────────────────────────────────────────────────────────────
+function updateDashboard() {
+  if (!allONTs || !allONTs.length) {
+    // Data not loaded yet, wait
+    setTimeout(updateDashboard, 1000);
+    return;
+  }
+  const total   = allONTs.length;
+  const active  = allONTs.filter(o => o.status === 'online').length;
+  const power   = allONTs.filter(o => o.status === 'power-failure').length;
+  const fiber   = allONTs.filter(o => o.status === 'fiber-issue').length;
+  const offline = allONTs.filter(o => o.status !== 'online').length;
+  const weak    = allONTs.filter(o => o.status==='online' && o.rx!=='-' && parseFloat(o.rx)>=-28 && parseFloat(o.rx)<-26).length;
+  const critical= allONTs.filter(o => o.status==='online' && o.rx!=='-' && parseFloat(o.rx)<-29).length;
+
+  const setEl = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
+  setEl('dash-total', total); setEl('dash-active', active);
+  setEl('dash-power', power); setEl('dash-fiber', fiber);
+  setEl('dash-weak', weak); setEl('dash-bad', critical);
+  setEl('fc-total', total); setEl('fc-active', active);
+  setEl('fc-power', power); setEl('fc-fiber', fiber);
+  setEl('fc-weak', weak); setEl('fc-bad', critical);
+  setEl('dash-total', total);
+  setEl('dash-active', active);
+  setEl('dash-offline', offline);
+  setEl('dash-weak', weak);
+  setEl('dash-bad', critical);
+
+  // Unregistered count - try from last fetch or set 0
+  setEl('dash-unreg', window._unregCount || '—');
+
+  // Activity feed
+  updateActivityFeed();
+}
+
+function updateActivityFeed() {
+  const feed = document.getElementById('dash-activity');
+  if (!feed || !allONTs.length) return;
+  // Show offline ONTs as "alerts"
+  const offline = allONTs.filter(o => o.status !== 'online').slice(0, 8);
+  const critical = allONTs.filter(o => o.status==='online' && o.rx!=='-' && parseFloat(o.rx)<-29).slice(0, 5);
+  let html = '';
+  critical.forEach(o => {
+    html += `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;"></div>
+      <div style="flex:1;"><span style="font-size:13px;color:var(--text);">${o.name||o.sn}</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:8px;">${o.pon}</span></div>
+      <div style="font-size:12px;color:var(--red);font-weight:600;">${o.rx} dBm</div>
+    </div>`;
+  });
+  offline.slice(0, 5).forEach(o => {
+    html += `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;"></div>
+      <div style="flex:1;"><span style="font-size:13px;color:var(--text);">${o.name||o.sn}</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:8px;">${o.pon}</span></div>
+      <div style="font-size:12px;color:var(--muted);">Offline</div>
+    </div>`;
+  });
+  if (!html) html = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">✓ No critical alerts</div>';
+  feed.innerHTML = html;
+}
+
+// ── Advanced Filter Bar ───────────────────────────────────────────────────
+let _advFilters = {status:'', signal:'', pon:'', sort:''};
+
+function buildPONFilterOptions() {
+  const select = document.getElementById('ff-pon');
+  if (!select || !allONTs.length) return;
+  // Use full PON port (e.g. 0/1/0, 0/1/1, ...)
+  const pons = [...new Set(allONTs.map(o => o.pon||'').filter(Boolean))];
+  pons.sort((a,b) => {
+    const pa = a.split('/').map(Number);
+    const pb = b.split('/').map(Number);
+    for(let i=0;i<3;i++) if((pa[i]||0)!==(pb[i]||0)) return (pa[i]||0)-(pb[i]||0);
+    return 0;
+  });
+  const current = select.value;
+  select.innerHTML = '<option value="">All Ports</option>';
+  pons.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p; opt.textContent = p;
+    if (p === current) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+function applyAdvFilters() {
+  _advFilters.status = document.getElementById('ff-status')?.value || '';
+  _advFilters.signal = document.getElementById('ff-signal')?.value || '';
+  _advFilters.pon    = document.getElementById('ff-pon')?.value    || '';
+  _advFilters.sort   = document.getElementById('ff-sort')?.value   || '';
+  
+  // Map to existing statFilter for status
+  if (_advFilters.status === 'online') statFilter = 'active';
+  else if (_advFilters.status === 'offline') statFilter = 'offline';
+  else statFilter = 'all';
+  
+  renderTable();
+}
+
+function resetAdvFilters() {
+  ['ff-status','ff-signal','ff-pon','ff-sort'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _advFilters = {status:'', signal:'', pon:'', sort:''};
+  statFilter = 'all';
+  document.querySelectorAll('.stat').forEach(s => s.classList.remove('active-filter'));
+  renderTable();
+}
+
+function applyOntDropdownFilter(val) {
+  statFilter = val;
+  // Sync the top stat boxes highlight
+  document.querySelectorAll('.stat').forEach(s => s.classList.remove('active-filter'));
+  const idMap = {active:'stat-online', offline:'stat-offline', weak:'stat-weak', bad:'stat-bad'};
+  if (idMap[val]) document.getElementById(idMap[val])?.classList.add('active-filter');
+  renderTable();
+}
+
+function setOntFilter(type) {
+  statFilter = type;  // set BEFORE switchSection calls renderTable
+  if (type === 'active') _advFilters.status = 'online';
+  else _advFilters.status = '';
+  switchSection('ont');
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 // ── Profile dropdown ──────────────────────────────────────────────────────
 function toggleProfile() {
   const m = document.getElementById('profileMenu');
-  if (!m) return;
-  if (m.style.display === 'block') { m.style.display = 'none'; return; }
-  if (window.innerWidth <= 640) {
-    m.style.position='fixed'; m.style.left='50px'; m.style.bottom='60px';
-    m.style.top='auto'; m.style.right='auto'; m.style.zIndex='9999';
-  } else {
-    m.style.position='absolute'; m.style.right='0'; m.style.top='calc(100% + 6px)';
-    m.style.left='auto'; m.style.bottom='auto';
-  }
-  m.style.display = 'block';
+  m.style.display = m.style.display==='none' ? 'block' : 'none';
 }
 document.addEventListener('click', e => {
-  const w = document.getElementById('profileWrap');
-  const s = document.getElementById('sidebarAvatarWrap');
-  const m = document.getElementById('profileMenu');
-  if (!m) return;
-  if (w?.contains(e.target) || s?.contains(e.target) || m.contains(e.target)) return;
-  m.style.display = 'none';
+  if (!document.getElementById('profileWrap')?.contains(e.target))
+    document.getElementById('profileMenu').style.display = 'none';
 });
 
 
@@ -751,6 +946,19 @@ function sortTable(col){
 }
 function getSortedFiltered(){
   let rows=[...getFiltered()];
+  // Apply advanced sort override
+  if (_advFilters.sort && _advFilters.sort !== '') {
+    const s = _advFilters.sort;
+    rows.sort((a,b) => {
+      if (s === 'pon')     { return (a.pon||'') < (b.pon||'') ? -1 : 1; }
+      if (s === 'name')    { return (a.name||'').toLowerCase() < (b.name||'').toLowerCase() ? -1 : 1; }
+      if (s === 'rx')      { return (parseFloat(a.rx)||0) - (parseFloat(b.rx)||0); }
+      if (s === 'rx-best') { return (parseFloat(b.rx)||0) - (parseFloat(a.rx)||0); }
+      if (s === 'temp')    { return (parseFloat(b.temp)||0) - (parseFloat(a.temp)||0); }
+      return 0;
+    });
+    return rows;
+  }
   if(!sortCol) return rows;
   return rows.sort((a,b)=>{
     let va,vb;
@@ -796,6 +1004,8 @@ function switchSection(name) {
   if (nav) nav.classList.add('active');
   // Load data for section
   if (name === 'unreg') { unregLoading = false; loadUnregistered(); }
+  if (name === 'dashboard') updateDashboard();
+  if (name === 'ont') { if (allONTs.length) renderTable(); else loadONTs(); }
   if (name === 'server') { srvStart(); }
   else { srvStop(); }
   if (name === 'olt') loadOLTList();
@@ -807,7 +1017,7 @@ function selectOLT(id) {
   document.querySelectorAll('.olt-item').forEach(o => o.classList.remove('active'));
   const el = document.getElementById('olt-' + id);
   if (el) el.classList.add('active');
-  switchSection('ont');
+  switchSection('dashboard');
 }
 
 // ── Unregistered ONTs ─────────────────────────────────────────────────────
@@ -1131,26 +1341,15 @@ async function init() {
     if(['superadmin','admin'].includes(currentUser.role)) document.getElementById('hAdmin').style.display='flex';
     if(!currentUser.can_edit){const s=document.createElement('style');s.textContent='.edit-btn{display:none!important}';document.head.appendChild(s);}
   }
-  // Calculate sticky positions dynamically
-  function updateStickyPositions() {
-    // In new layout: header is fixed at top, toolbar is inside scrollable section
-    // Toolbar sticks at top:0 of main-section
-    // fixedHeader (column headers) sticks below toolbar
-    const tb = document.querySelector('.toolbar');
-    const fh = document.getElementById('fixedHeader');
-    if (tb) {
-      tb.style.top = '0px';
-      const tbh = tb.offsetHeight || 52;
-      if (fh) fh.style.top = tbh + 'px';
-      document.documentElement.style.setProperty('--th-top', tbh + 'px');
-    }
-  }
   updateStickyPositions();
   window.addEventListener('resize', updateStickyPositions);
 
   loadOLTList();
   await loadONTs();
   setInterval(loadONTs, 3600_000);
+  updateDashboard();
+  buildPONFilterOptions();
+  renderTable();
 }
 
 async function loadONTs() {
@@ -1199,6 +1398,17 @@ function buildPONFilter() {
 }
 
 // ── Filters ──────────────────────────────────────────────────────────────────
+function updateStickyPositions() {
+  const tb = document.querySelector('.toolbar');
+  const fh = document.getElementById('fixedHeader');
+  if (tb) {
+    tb.style.top = '0px';
+    const tbh = tb.offsetHeight || 52;
+    if (fh) fh.style.top = tbh + 'px';
+    document.documentElement.style.setProperty('--th-top', tbh + 'px');
+  }
+}
+
 function applyFilters() { renderTable(); }
 
 function getFiltered() {
@@ -1213,8 +1423,17 @@ function getFiltered() {
     }
     if (statFilter === 'active'  && o.status !== 'online') return false;
     if (statFilter === 'offline' && o.status === 'online') return false;
+    if (statFilter === 'power-failure' && o.status !== 'power-failure') return false;
+    if (statFilter === 'fiber-issue'   && o.status !== 'fiber-issue') return false;
     if (statFilter === 'weak'    && !(o.status==='online' && parseFloat(o.rx)>=-28 && parseFloat(o.rx)<-26)) return false;
     if (statFilter === 'bad'     && !(o.status==='online' && parseFloat(o.rx) < -29)) return false;
+
+    // Advanced filters
+    if (_advFilters.signal === 'good'   && !(o.rx!=='-' && parseFloat(o.rx) > -26)) return false;
+    if (_advFilters.signal === 'weak'   && !(o.rx!=='-' && parseFloat(o.rx) >= -28 && parseFloat(o.rx) < -26)) return false;
+    if (_advFilters.signal === 'bad'    && !(o.rx!=='-' && parseFloat(o.rx) < -29)) return false;
+    if (_advFilters.signal === 'none'   && o.rx !== '-') return false;
+    if (_advFilters.pon && (o.pon||'') !== _advFilters.pon) return false;
     return true;
   });
 }
@@ -1239,7 +1458,9 @@ function renderTable() {
 }
 
 function signalBadge(o) {
-  if (o.status !== 'online') return { cls:'sig-offline', text:'OFFLINE' };
+  if (o.status === 'power-failure') return { cls:'sig-offline', text:'🔌 Power' };
+  if (o.status === 'fiber-issue')   return { cls:'sig-offline sig-fiber', text:'⚡ Fiber' };
+  if (o.status !== 'online')        return { cls:'sig-offline', text:'OFFLINE' };
   const rx = parseFloat(o.rx);
   if (isNaN(rx))        return { cls:'sig-bad',  text: o.rx || '-' };
   if (rx >= -26)        return { cls:'sig-good',  text: `${rx} dBm` };

@@ -1010,7 +1010,7 @@ class Handler(BaseHTTPRequestHandler):
             if user.get("role") not in ("superadmin","admin","pon_operator"):
                 return self.send_json(403, {"error":"Not allowed"})
             kind = parsed.path.rsplit("/", 1)[-1]
-            if kind not in ("wan", "wifi", "lan", "user"):
+            if kind not in ("check", "wan", "wifi", "lan", "user"):
                 return self.send_json(404, {"error":"Unknown settings section"})
             length = int(self.headers.get("Content-Length",0))
             body = self.rfile.read(length)

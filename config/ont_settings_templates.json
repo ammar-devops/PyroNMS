@@ -1,0 +1,26 @@
+{
+  "version": "v2.6-phase2",
+  "default_policy": "capture_only_until_model_template_enabled",
+  "models": {
+    "HG8145C": {
+      "wifi": {"enabled": false, "commands": []},
+      "lan": {"enabled": false, "commands": []},
+      "user": {"enabled": false, "commands": []}
+    },
+    "HG8546M": {
+      "wifi": {"enabled": false, "commands": []},
+      "lan": {"enabled": false, "commands": []},
+      "user": {"enabled": false, "commands": []}
+    },
+    "HS8545M5": {
+      "wifi": {"enabled": false, "commands": []},
+      "lan": {"enabled": false, "commands": []},
+      "user": {"enabled": false, "commands": []}
+    },
+    "EG8141A5": {
+      "wifi": {"enabled": false, "commands": []},
+      "lan": {"enabled": false, "commands": []},
+      "user": {"enabled": false, "commands": []}
+    }
+  }
+}

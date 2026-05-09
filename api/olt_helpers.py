@@ -174,6 +174,14 @@ def apply_ont_settings(ip, username, password, payload):
 
     conn = olt_ssh(ip, username, password)
     outputs = [info]
+    action = payload.get('action', 'apply')
+
+    if kind == 'check':
+        conn.write_channel(f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}\r\n')
+        time.sleep(2); outputs.append(conn.read_channel())
+        conn.write_channel('quit\r\n'); time.sleep(1)
+        conn.disconnect()
+        return True, '\n'.join(outputs)
 
     if kind == 'user' and payload.get('alias'):
         alias = str(payload.get('alias', '')).replace('"', '')
@@ -181,6 +189,13 @@ def apply_ont_settings(ip, username, password, payload):
         time.sleep(1); conn.read_channel()
         conn.write_channel(f'ont modify {ont["port"]} {ont["ont_id"]} desc "{alias}"\r\n')
         time.sleep(2); outputs.append(conn.read_channel())
+        conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+
+    if kind == 'user' and action == 'reboot':
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1); conn.read_channel()
+        conn.write_channel(f'ont reset {ont["port"]} {ont["ont_id"]}\r\n')
+        time.sleep(3); outputs.append(conn.read_channel())
         conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
 
     if kind == 'wan':

@@ -2683,12 +2683,12 @@ function switchOntSettingsTab(tab) {
   });
 }
 
-async function submitOntSettings(kind) {
+async function submitOntSettings(kind, action='apply') {
   if (!ontSettingsCurrent) return;
   const msg = document.getElementById('ontSettingsMsg');
   const method = document.getElementById('os-method').value;
   const endpoint = `${API}/ont/settings/${kind}`;
-  const payload = {sn: ontSettingsCurrent.sn, pon: ontSettingsCurrent.pon, method};
+  const payload = {sn: ontSettingsCurrent.sn, pon: ontSettingsCurrent.pon, method, action};
 
   if (kind === 'wan') {
     payload.mode = document.getElementById('os-wan-mode').value;
@@ -2729,6 +2729,9 @@ async function submitOntSettings(kind) {
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || d.output || 'Failed');
     msg.textContent = d.message || 'Saved';
+    if (d.output) {
+      msg.innerHTML = `${escHtml(d.message || 'Saved')}<pre style="margin-top:10px;max-height:220px;overflow:auto;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:10px;color:var(--muted);white-space:pre-wrap;">${escHtml(d.output)}</pre>`;
+    }
     msg.style.color = 'var(--green)';
   } catch(e) {
     msg.textContent = 'Error: ' + e.message;
@@ -3281,6 +3284,7 @@ init();
         <div class="modal-sn" id="ontSettingsSN">-</div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;">
+        <button class="ont-settings-save" onclick="submitOntSettings('check','check')" style="padding:7px 12px;font-size:12px;">Check ONT</button>
         <select id="os-method" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:7px 10px;font-size:12px;">
           <option value="ssh">SSH</option>
           <option value="snmp">SNMP Write</option>
@@ -3366,7 +3370,10 @@ init();
           <div class="ont-settings-field"><label>Admin Username</label><input id="os-admin-user" placeholder="admin"></div>
           <div class="ont-settings-field"><label>Admin Password</label><input id="os-admin-pass" type="password"></div>
         </div>
-        <div class="ont-settings-actions"><button class="ont-settings-save" onclick="submitOntSettings('user')">Apply User</button></div>
+        <div class="ont-settings-actions">
+          <button class="ont-settings-save" onclick="submitOntSettings('user','reboot')" style="background:#451a03;border-color:#f59e0b55;color:#fbbf24;">Reboot ONT</button>
+          <button class="ont-settings-save" onclick="submitOntSettings('user')">Apply User</button>
+        </div>
       </div>
 
       <div id="ontSettingsMsg" style="min-height:18px;margin-top:14px;font-size:13px;color:var(--muted);"></div>

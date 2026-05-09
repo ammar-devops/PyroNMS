@@ -10,7 +10,9 @@ Endpoints:
 """
 
 import json
+import os
 import sys
+from pathlib import Path
 sys.path.insert(0, "/opt/ont-monitor/api")
 import olt_helpers as olt
 import re
@@ -43,6 +45,7 @@ INFLUX_URL    = "http://localhost:8086"
 INFLUX_TOKEN  = "my-super-secret-token"
 INFLUX_ORG    = "myisp"
 INFLUX_BUCKET = "olt_monitoring"
+OLT_BACKUP_DIR = Path("/opt/ont-monitor/olt-config")
 
 # ─── InfluxDB helpers ─────────────────────────────────────────────────────────
 
@@ -498,6 +501,15 @@ def get_token(handler):
     auth = handler.headers.get("Authorization","")
     if auth.startswith("Bearer "):
         return auth[7:]
+    # Also accept ?token= query param (used for direct download links)
+    try:
+        parsed_url = urllib.parse.urlparse(handler.path)
+        qs = urllib.parse.parse_qs(parsed_url.query)
+        t = qs.get("token", [None])[0]
+        if t:
+            return t
+    except Exception:
+        pass
     return None
 
 def require_auth(handler):
@@ -509,6 +521,31 @@ def require_auth(handler):
         handler.send_json(401, {"error": "Unauthorized — please login"})
         return None
     return user
+
+def backup_file_info(path):
+    stat = path.stat()
+    size = stat.st_size
+    if size >= 1024 * 1024:
+        size_text = f"{size / (1024 * 1024):.1f} MB"
+    elif size >= 1024:
+        size_text = f"{size / 1024:.1f} KB"
+    else:
+        size_text = f"{size} B"
+
+    label = "Latest"
+    m = re.search(r"olt_config_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.txt$", path.name)
+    if m:
+        label = f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}:{m.group(6)}"
+
+    return {
+        "name": path.name,
+        "label": label,
+        "size": size,
+        "size_human": size_text,
+        "modified": int(stat.st_mtime),
+        "modified_text": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
+        "is_latest": path.name == "olt_config_latest.txt",
+    }
 
 class Handler(BaseHTTPRequestHandler):
 
@@ -523,6 +560,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def send_download(self, path):
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", len(data))
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -721,6 +768,30 @@ class Handler(BaseHTTPRequestHandler):
             if not user: return
             return self.send_json(200, olt.get_olt_profiles())
 
+        elif parsed.path == "/olt/backups":
+            user = require_auth(self)
+            if not user: return
+            try:
+                files = [
+                    p for p in OLT_BACKUP_DIR.glob("olt_config_*.txt")
+                    if p.is_file() and p.parent == OLT_BACKUP_DIR
+                ]
+                files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                return self.send_json(200, {"backups": [backup_file_info(p) for p in files]})
+            except Exception as e:
+                return self.send_json(500, {"error": str(e)})
+
+        elif parsed.path == "/olt/backups/download":
+            user = require_auth(self)
+            if not user: return
+            name = params.get("file", [""])[0]
+            if not re.match(r"^olt_config_(latest|\d{8}_\d{6})\.txt$", name):
+                return self.send_json(400, {"error": "Invalid backup filename"})
+            path = (OLT_BACKUP_DIR / name).resolve()
+            if path.parent != OLT_BACKUP_DIR.resolve() or not path.is_file():
+                return self.send_json(404, {"error": "Backup file not found"})
+            return self.send_download(path)
+
         elif parsed.path == "/olt/unregistered":
             user = require_auth(self)
             if not user: return
@@ -738,6 +809,63 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"onts": onts, "count": len(onts)})
 
         # ── GET /ont/wan-ip?sn=XX&pon=0/1/0 — get WAN IP via OLT SSH ───────────
+        elif parsed.path == '/workers':
+            user = require_auth(self)
+            if not user: return
+            import subprocess, re as _re2
+            # Read config for global + per-slot poll intervals
+            global_pi = 300
+            slot_pi   = {}
+            try:
+                cfg_txt = open('/opt/ont-monitor/config/config.py').read()
+                m = _re2.search(r'(?<![_\d])POLL_INTERVAL\s*=\s*(\d+)', cfg_txt)
+                global_pi = int(m.group(1)) if m else 300
+                for _s in [1, 2, 4, 5]:
+                    ms = _re2.search(rf'POLL_INTERVAL_{_s}\s*=\s*(\d+)', cfg_txt)
+                    slot_pi[_s] = int(ms.group(1)) if ms else global_pi
+            except Exception:
+                for _s in [1, 2, 4, 5]:
+                    slot_pi[_s] = global_pi
+            workers = []
+            for slot in [1, 2, 4, 5]:
+                status = 'unknown'
+                last_log = ''
+                uptime_str = ''
+                pid = ''
+                try:
+                    r = subprocess.run(['systemctl', 'is-active', f'ont-worker@{slot}.service'], capture_output=True, text=True)
+                    status = r.stdout.strip()
+                    r2 = subprocess.run(['journalctl', '-u', f'ont-worker@{slot}', '-n', '5', '--no-pager', '--output=cat'], capture_output=True, text=True)
+                    lines = [l for l in r2.stdout.strip().split('\n') if l.strip()]
+                    last_log = lines[-1][-120:] if lines else ''
+                    r3 = subprocess.run(['systemctl', 'show', f'ont-worker@{slot}', '--property=MainPID,ActiveEnterTimestamp'], capture_output=True, text=True)
+                    for prop in r3.stdout.strip().split('\n'):
+                        if prop.startswith('MainPID='): pid = prop.split('=',1)[1].strip()
+                        if prop.startswith('ActiveEnterTimestamp='):
+                            uptime_str = prop.split('=',1)[1].strip()
+                except Exception:
+                    pass
+                workers.append({
+                    'id':           f'ont-worker@{slot}',
+                    'slot':         slot,
+                    'status':       status,
+                    'last_log':     last_log,
+                    'poll_interval': slot_pi.get(slot, global_pi),
+                    'pid':          pid,
+                    'since':        uptime_str,
+                })
+            try:
+                r = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+                cron_lines = [l for l in r.stdout.splitlines() if l.strip() and not l.startswith('#')]
+            except Exception:
+                cron_lines = []
+            crons = []
+            for line in cron_lines:
+                parts = line.split(None, 5)
+                if len(parts) >= 6: crons.append({'schedule': ' '.join(parts[:5]), 'command': parts[5], 'raw': line})
+                elif len(parts) == 5: crons.append({'schedule': ' '.join(parts[:4]), 'command': parts[4], 'raw': line})
+            self.send_json(200, {'workers': workers, 'crons': crons, 'poll_interval': global_pi})
+
         elif parsed.path.startswith('/ont/wan-ip'):
             sn  = params.get('sn',  [''])[0]
             pon = params.get('pon', [''])[0]
@@ -935,6 +1063,99 @@ class Handler(BaseHTTPRequestHandler):
 
             return self.send_json(200, {"ok": True, "avatar_url": avatar_url})
 
+        # ── POST /workers/action ──────────────────────────────────────────────
+        elif parsed.path == '/workers/action':
+            user = require_auth(self)
+            if not user: return
+            if user.get('role') not in ('superadmin', 'admin'):
+                return self.send_json(403, {'error': 'Admin only'})
+            import subprocess
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+            action = body.get('action', '')
+            worker = body.get('worker', '')
+            if not worker or action not in ['start', 'stop', 'restart']:
+                return self.send_json(400, {'error': 'Invalid worker or action'})
+            r = subprocess.run(['systemctl', action, worker], capture_output=True, text=True)
+            return self.send_json(200, {'ok': r.returncode == 0, 'output': r.stderr or r.stdout})
+
+        # ── POST /workers/poll-interval ───────────────────────────────────────
+        elif parsed.path == '/workers/poll-interval':
+            user = require_auth(self)
+            if not user: return
+            if user.get('role') not in ('superadmin', 'admin'):
+                return self.send_json(403, {'error': 'Admin only'})
+            import subprocess, re as _re
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+            try:
+                interval = int(body.get('interval', 300))
+            except (ValueError, TypeError):
+                return self.send_json(400, {'error': 'interval must be a number'})
+            if interval < 60 or interval > 86400:
+                return self.send_json(400, {'error': 'interval must be 60–86400 seconds'})
+            try:
+                cfg = open('/opt/ont-monitor/config/config.py').read()
+                cfg = _re.sub(r'POLL_INTERVAL\s*=\s*\d+', f'POLL_INTERVAL = {interval}', cfg)
+                open('/opt/ont-monitor/config/config.py', 'w').write(cfg)
+            except Exception as e:
+                return self.send_json(500, {'error': f'Failed to update config: {e}'})
+            for slot in [1, 2, 4, 5]:
+                subprocess.run(['systemctl', 'restart', f'ont-worker@{slot}'], capture_output=True)
+            return self.send_json(200, {'ok': True, 'interval': interval})
+
+        # ── POST /workers/cron ────────────────────────────────────────────────
+        elif parsed.path == '/workers/cron':
+            user = require_auth(self)
+            if not user: return
+            if user.get('role') not in ('superadmin', 'admin'):
+                return self.send_json(403, {'error': 'Admin only'})
+            import subprocess
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+            old_raw = body.get('old_raw', '')
+            new_raw = body.get('new_raw', '').strip()
+            if not new_raw:
+                return self.send_json(400, {'error': 'New schedule cannot be empty'})
+            r = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+            crontab = r.stdout
+            if old_raw in crontab:
+                crontab = crontab.replace(old_raw, new_raw)
+                p = subprocess.run(['crontab', '-'], input=crontab, capture_output=True, text=True)
+                return self.send_json(200, {'ok': p.returncode == 0})
+            return self.send_json(400, {'error': 'Cron entry not found — please refresh and try again'})
+
+        # ── POST /workers/slot-config ─────────────────────────────────────────
+        elif parsed.path == '/workers/slot-config':
+            user = require_auth(self)
+            if not user: return
+            if user.get('role') not in ('superadmin', 'admin'):
+                return self.send_json(403, {'error': 'Admin only'})
+            import subprocess, re as _re3
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+            try:
+                slot     = int(body.get('slot', 0))
+                interval = int(body.get('interval', 300))
+            except (ValueError, TypeError):
+                return self.send_json(400, {'error': 'slot and interval must be numbers'})
+            if slot not in [1, 2, 4, 5]:
+                return self.send_json(400, {'error': f'Invalid slot: {slot}'})
+            if interval < 60 or interval > 86400:
+                return self.send_json(400, {'error': 'interval must be 60–86400 seconds'})
+            try:
+                cfg = open('/opt/ont-monitor/config/config.py').read()
+                key = f'POLL_INTERVAL_{slot}'
+                if _re3.search(rf'{key}\s*=\s*\d+', cfg):
+                    cfg = _re3.sub(rf'{key}\s*=\s*\d+', f'{key} = {interval}', cfg)
+                else:
+                    cfg = _re3.sub(r'((?<![_\d])POLL_INTERVAL\s*=\s*\d+)', rf'\1\n{key} = {interval}', cfg)
+                open('/opt/ont-monitor/config/config.py', 'w').write(cfg)
+            except Exception as e:
+                return self.send_json(500, {'error': f'Failed to update config: {e}'})
+            subprocess.run(['systemctl', 'restart', f'ont-worker@{slot}'], capture_output=True)
+            return self.send_json(200, {'ok': True, 'slot': slot, 'interval': interval})
+
         # ── POST /device/set ─────────────────────────────────────────────────
         elif parsed.path == "/device/set":
             length = int(self.headers.get("Content-Length", 0))
@@ -1036,7 +1257,9 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = auth_db.update_user(uid, payload)
             if ok: return self.send_json(200,{"ok":True})
             return self.send_json(400,{"error":msg})
-        return self.send_json(404,{"error":"Not found"})
+
+        else:
+            return self.send_json(404,{"error":"Not found"})
 
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -1058,7 +1281,9 @@ class Handler(BaseHTTPRequestHandler):
             uid = int(params.get("id",[0])[0])
             ok, msg = auth_db.delete_user(uid)
             return self.send_json(200,{"ok":True})
-        return self.send_json(404,{"error":"Not found"})
+
+        else:
+            return self.send_json(404,{"error":"Not found"})
 
 def _extract_field(parsed_data, field, band_index=None):
     """Extract a field from already-parsed device data for verification."""

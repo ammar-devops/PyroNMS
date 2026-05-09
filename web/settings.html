@@ -51,12 +51,33 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .msg{padding:8px 12px;border-radius:6px;font-size:13px;margin-top:12px;display:none;}
 .msg.ok{background:#0d2e1a;border:1px solid #26d97f44;color:var(--green);display:block;}
 .msg.err{background:#2d0e0e;border:1px solid #f25c5c44;color:var(--red);display:block;}
+@media (max-width:768px){
+  body{overflow-x:hidden;}
+  .header{flex-wrap:wrap;gap:8px;padding:10px 14px;}
+  .header img{height:24px!important;}
+  .header>div[style*="line-height"]{flex:1 1 calc(100% - 40px);min-width:0;}
+  .btn-back{order:3;}
+  .user-info{margin-left:0;width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .container{max-width:100%;padding:18px 14px 32px;}
+  html.embedded .container{padding-top:18px;}
+  .settings-card{padding:16px;border-radius:10px;margin-bottom:16px;overflow:hidden;}
+  .card-title{font-size:18px;}
+  .card-sub{font-size:13px;line-height:1.35;}
+  .theme-grid,
+  .form-grid{grid-template-columns:1fr!important;}
+  .settings-card [style*="grid-template-columns"]{grid-template-columns:1fr!important;}
+  .settings-card [style*="display:flex;gap:10px"]{flex-wrap:wrap;}
+  .settings-card [style*="display:flex;gap:10px"] button{flex:1 1 150px;}
+  .logo-upload-area{padding:18px;}
+  .theme-preview{height:52px;}
+}
 </style>
 </head>
 <body>
 <script>
   // If embedded in sidebar iframe, hide the top nav
   if (window.location.search.includes('embedded=1')) {
+    document.documentElement.classList.add('embedded');
     document.addEventListener('DOMContentLoaded', function() {
       const header = document.querySelector('.settings-header') || document.querySelector('.header');
       if (header) header.style.display = 'none';

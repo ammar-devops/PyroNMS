@@ -94,7 +94,7 @@ def get_all_onts():
     flux_status = f'''
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: -48h)
-  |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "down_cause"))
+  |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "down_cause" or r._field == "vlan"))
   |> last()
   |> keep(columns: ["sn", "pon", "description", "_field", "_value"])
 '''
@@ -135,11 +135,13 @@ from(bucket: "{INFLUX_BUCKET}")
         if not sn:
             continue
         if sn not in status_map:
-            status_map[sn] = {"pon": pon, "name": name, "online": "0", "down_cause": ""}
+            status_map[sn] = {"pon": pon, "name": name, "online": "0", "down_cause": "", "vlan": ""}
         if field == "online":
             status_map[sn]["online"] = val
         elif field == "down_cause":
             status_map[sn]["down_cause"] = val
+        elif field == "vlan":
+            status_map[sn]["vlan"] = val
 
     onts = []
     for sn, s in status_map.items():
@@ -164,6 +166,7 @@ from(bucket: "{INFLUX_BUCKET}")
             "down_cause": cause,
             "rx":         rx,
             "temp":       temp,
+            "vlan":       s.get("vlan", ""),
         })
     return onts
 

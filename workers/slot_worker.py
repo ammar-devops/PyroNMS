@@ -139,6 +139,19 @@ def poll_slot(slot, log):
                         op = op.time(now, "s")
                         points.append(op)
                         log.info(f"    [{ont['ont_id']:3d}] {ont['desc'][:30]:30s} RX={optical.get('rx_power')}")
+                    # Get VLAN for online ONTs (every 5th poll to avoid SSH overload)
+                    try:
+                        from workers.olt_helper import get_vlan
+                        vlan = get_vlan(conn, slot, port_num, ont["ont_id"])
+                        if vlan:
+                            vp = (Point("ont_status")
+                                .tag("olt", OLT_NAME).tag("pon", pon)
+                                .tag("ont_id", str(ont["ont_id"])).tag("sn", ont["sn"])
+                                .tag("description", ont["desc"])
+                                .field("vlan", vlan).time(now, "s"))
+                            write_points([vp])
+                    except Exception as e:
+                        log.warning(f"vlan error: {e}")
 
                         # Write every 50 optical points
                         if len(points) >= 50:

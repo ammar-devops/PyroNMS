@@ -183,3 +183,21 @@ def get_wan_ip(conn, gpon_iface, port_num, ont_id):
     except Exception as e:
         log.error(f"get_wan_ip {gpon_iface}/{port_num}/{ont_id}: {e}")
         return None
+
+
+def get_vlan(conn, gpon_iface, port_num, ont_id):
+    """Get VLAN ID for an online ONT"""
+    try:
+        cmd(conn, f"interface gpon 0/{gpon_iface}", timeout=15)
+        output = cmd(conn, f"display ont wan-info {port_num} {ont_id}", timeout=20)
+        cmd(conn, "quit", expect=r"config\)#", timeout=10)
+        import re
+        m = re.search(r'Manage VLAN\s*:\s*(\d+)', output)
+        return m.group(1) if m else None
+    except Exception as e:
+        log.error(f"get_vlan {gpon_iface}/{port_num}/{ont_id}: {e}")
+        try:
+            cmd(conn, "quit", expect=r"config\)#", timeout=10)
+        except:
+            pass
+        return None

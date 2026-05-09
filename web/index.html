@@ -160,6 +160,12 @@
   .tab-btn { background: none; border: none; color: var(--muted); padding: 11px 14px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
   .tab-btn:hover { color: var(--text); }
   .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .ont-settings-tab-btn.active { color: var(--accent) !important; border-bottom-color: var(--accent) !important; font-weight: 700; }
+  .ont-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ont-settings-field label { display: block; font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+  .ont-settings-field input, .ont-settings-field select { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 9px 11px; font-size: 13px; }
+  .ont-settings-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+  .ont-settings-save { background: #0d2e1a; border: 1px solid #26d97f55; color: var(--green); border-radius: 7px; padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer; }
 
   /* ── Tab content ── */
   .modal-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
@@ -860,7 +866,8 @@
         <th style="width:70px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('temp')" id="fth-temp">Temp</th>
         <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-sn">Serial Number</th>
         <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">VLAN</th>
-        <th style="width:50px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Router</th>
+        <th style="width:86px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Settings</th>
+        <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Router</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
       </tr>
     </thead>
@@ -878,6 +885,7 @@
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
         <th style="width:60px">VLAN</th>
+        <th style="width:86px">Settings</th>
         <th style="width:90px">Router</th>
         <th style="width:90px">Refresh</th>
       </tr>
@@ -2628,6 +2636,9 @@ function renderTable() {
       <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
       <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
       <td onclick="event.stopPropagation()" style="text-align:center;">
+        <button title="ONT Settings" onclick="openOntSettings('${o.sn}','${escAttr(o.name)}','${o.pon || ''}','${o.vlan || ''}')" style="background:rgba(79,142,247,.14);border:1px solid rgba(79,142,247,.45);color:var(--accent);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;">Settings</button>
+      </td>
+      <td onclick="event.stopPropagation()" style="text-align:center;">
         <button title="Open Router" onclick="openRouter('${o.sn}','${o.pon}',this)" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">Open Router</button>
       </td>
       <td onclick="event.stopPropagation()" style="text-align:center;">
@@ -2637,6 +2648,92 @@ function renderTable() {
   }).join('');
   const wrap = document.querySelector('#section-ont .table-wrap');
   if (isMobileView() && wrap) wrap.scrollLeft = 0;
+}
+
+let ontSettingsCurrent = null;
+let ontSettingsTab = 'wan';
+
+function openOntSettings(sn, name, pon, vlan) {
+  ontSettingsCurrent = {sn, name, pon, vlan};
+  ontSettingsTab = 'wan';
+  document.getElementById('ontSettingsTitle').textContent = name || sn;
+  document.getElementById('ontSettingsSN').textContent = sn;
+  document.getElementById('os-sn').value = sn || '';
+  document.getElementById('os-pon').value = pon || '';
+  document.getElementById('os-vlan').value = vlan || '10';
+  document.getElementById('os-user-vlan').value = '10';
+  document.getElementById('ontSettingsMsg').textContent = '';
+  switchOntSettingsTab('wan');
+  document.getElementById('ontSettingsOverlay').classList.add('open');
+}
+
+function closeOntSettings(e) {
+  if (e && e.target !== document.getElementById('ontSettingsOverlay')) return;
+  document.getElementById('ontSettingsOverlay').classList.remove('open');
+  ontSettingsCurrent = null;
+}
+
+function switchOntSettingsTab(tab) {
+  ontSettingsTab = tab;
+  document.querySelectorAll('.ont-settings-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  document.querySelectorAll('.ont-settings-tab').forEach(panel => {
+    panel.style.display = panel.dataset.tab === tab ? 'block' : 'none';
+  });
+}
+
+async function submitOntSettings(kind) {
+  if (!ontSettingsCurrent) return;
+  const msg = document.getElementById('ontSettingsMsg');
+  const method = document.getElementById('os-method').value;
+  const endpoint = `${API}/ont/settings/${kind}`;
+  const payload = {sn: ontSettingsCurrent.sn, pon: ontSettingsCurrent.pon, method};
+
+  if (kind === 'wan') {
+    payload.mode = document.getElementById('os-wan-mode').value;
+    payload.pppoe_username = document.getElementById('os-pppoe-user').value.trim();
+    payload.pppoe_password = document.getElementById('os-pppoe-pass').value;
+    payload.static_ip = document.getElementById('os-static-ip').value.trim();
+    payload.gateway = document.getElementById('os-gateway').value.trim();
+    payload.dns = document.getElementById('os-dns').value.trim();
+    payload.vlan_id = document.getElementById('os-vlan').value.trim() || '10';
+    payload.user_vlan = document.getElementById('os-user-vlan').value.trim() || '10';
+  }
+  if (kind === 'wifi') {
+    payload.ssid = document.getElementById('os-ssid').value.trim();
+    payload.password = document.getElementById('os-wifi-pass').value;
+    payload.band = document.getElementById('os-wifi-band').value;
+    payload.enabled = document.getElementById('os-wifi-enabled').checked;
+  }
+  if (kind === 'lan') {
+    payload.lan_ip = document.getElementById('os-lan-ip').value.trim();
+    payload.dhcp_start = document.getElementById('os-dhcp-start').value.trim();
+    payload.dhcp_end = document.getElementById('os-dhcp-end').value.trim();
+    payload.dhcp_enabled = document.getElementById('os-dhcp-enabled').checked;
+  }
+  if (kind === 'user') {
+    payload.admin_user = document.getElementById('os-admin-user').value.trim();
+    payload.admin_password = document.getElementById('os-admin-pass').value;
+    payload.alias = document.getElementById('os-alias').value.trim();
+  }
+
+  msg.textContent = 'Applying...';
+  msg.style.color = 'var(--muted)';
+  try {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: {...authHeaders(), 'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || d.output || 'Failed');
+    msg.textContent = d.message || 'Saved';
+    msg.style.color = 'var(--green)';
+  } catch(e) {
+    msg.textContent = 'Error: ' + e.message;
+    msg.style.color = 'var(--red)';
+  }
 }
 
 async function openRouter(sn, pon, btn) {
@@ -3168,8 +3265,114 @@ function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function escAttr(s) {
+  return escHtml(s).replace(/'/g,'&#39;').replace(/`/g,'&#96;');
+}
+
 init();
 </script>
+
+<!-- ONT Settings Modal -->
+<div class="modal-overlay" id="ontSettingsOverlay" onclick="closeOntSettings(event)" style="z-index:650;">
+  <div class="modal" onclick="event.stopPropagation()" style="width:860px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="ontSettingsTitle">ONT Settings</div>
+        <div class="modal-sn" id="ontSettingsSN">-</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <select id="os-method" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:7px 10px;font-size:12px;">
+          <option value="ssh">SSH</option>
+          <option value="snmp">SNMP Write</option>
+        </select>
+        <button class="modal-close" onclick="closeOntSettings()">x</button>
+      </div>
+    </div>
+    <div class="modal-tabs">
+      <button class="tab-btn ont-settings-tab-btn active" data-tab="wan" onclick="switchOntSettingsTab('wan')">WAN</button>
+      <button class="tab-btn ont-settings-tab-btn" data-tab="wifi" onclick="switchOntSettingsTab('wifi')">WiFi</button>
+      <button class="tab-btn ont-settings-tab-btn" data-tab="lan" onclick="switchOntSettingsTab('lan')">LAN</button>
+      <button class="tab-btn ont-settings-tab-btn" data-tab="user" onclick="switchOntSettingsTab('user')">User</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="os-sn">
+      <input type="hidden" id="os-pon">
+
+      <div class="ont-settings-tab" data-tab="wan">
+        <div class="ont-settings-grid">
+          <div class="ont-settings-field">
+            <label>WAN Mode</label>
+            <select id="os-wan-mode">
+              <option value="pppoe">PPPoE</option>
+              <option value="static">Static IP</option>
+              <option value="bridge">Bridge</option>
+            </select>
+          </div>
+          <div class="ont-settings-field">
+            <label>Network VLAN</label>
+            <input id="os-vlan" type="number" min="1" max="4094" value="10">
+          </div>
+          <div class="ont-settings-field">
+            <label>User VLAN</label>
+            <input id="os-user-vlan" type="number" min="1" max="4094" value="10">
+          </div>
+          <div class="ont-settings-field">
+            <label>PPPoE Username</label>
+            <input id="os-pppoe-user" placeholder="customer@isp">
+          </div>
+          <div class="ont-settings-field">
+            <label>PPPoE Password</label>
+            <input id="os-pppoe-pass" type="password">
+          </div>
+          <div class="ont-settings-field">
+            <label>Static IP</label>
+            <input id="os-static-ip" placeholder="192.0.2.10/24">
+          </div>
+          <div class="ont-settings-field">
+            <label>Gateway</label>
+            <input id="os-gateway" placeholder="192.0.2.1">
+          </div>
+          <div class="ont-settings-field">
+            <label>DNS</label>
+            <input id="os-dns" placeholder="8.8.8.8, 1.1.1.1">
+          </div>
+        </div>
+        <div class="ont-settings-actions"><button class="ont-settings-save" onclick="submitOntSettings('wan')">Apply WAN</button></div>
+      </div>
+
+      <div class="ont-settings-tab" data-tab="wifi" style="display:none;">
+        <div class="ont-settings-grid">
+          <div class="ont-settings-field"><label>Band</label><select id="os-wifi-band"><option value="2.4G">2.4G</option><option value="5G">5G</option></select></div>
+          <div class="ont-settings-field"><label>SSID</label><input id="os-ssid" placeholder="WiFi name"></div>
+          <div class="ont-settings-field"><label>Password</label><input id="os-wifi-pass" type="password"></div>
+          <div class="ont-settings-field"><label>Status</label><div style="padding:9px 0;"><input id="os-wifi-enabled" type="checkbox" checked> Enabled</div></div>
+        </div>
+        <div class="ont-settings-actions"><button class="ont-settings-save" onclick="submitOntSettings('wifi')">Apply WiFi</button></div>
+      </div>
+
+      <div class="ont-settings-tab" data-tab="lan" style="display:none;">
+        <div class="ont-settings-grid">
+          <div class="ont-settings-field"><label>LAN IP</label><input id="os-lan-ip" placeholder="192.168.100.1"></div>
+          <div class="ont-settings-field"><label>DHCP Start</label><input id="os-dhcp-start" placeholder="192.168.100.2"></div>
+          <div class="ont-settings-field"><label>DHCP End</label><input id="os-dhcp-end" placeholder="192.168.100.254"></div>
+          <div class="ont-settings-field"><label>DHCP</label><div style="padding:9px 0;"><input id="os-dhcp-enabled" type="checkbox" checked> Enabled</div></div>
+        </div>
+        <div class="ont-settings-actions"><button class="ont-settings-save" onclick="submitOntSettings('lan')">Apply LAN</button></div>
+      </div>
+
+      <div class="ont-settings-tab" data-tab="user" style="display:none;">
+        <div class="ont-settings-grid">
+          <div class="ont-settings-field"><label>Alias / Description</label><input id="os-alias" placeholder="customer name"></div>
+          <div class="ont-settings-field"><label>Admin Username</label><input id="os-admin-user" placeholder="admin"></div>
+          <div class="ont-settings-field"><label>Admin Password</label><input id="os-admin-pass" type="password"></div>
+        </div>
+        <div class="ont-settings-actions"><button class="ont-settings-save" onclick="submitOntSettings('user')">Apply User</button></div>
+      </div>
+
+      <div id="ontSettingsMsg" style="min-height:18px;margin-top:14px;font-size:13px;color:var(--muted);"></div>
+    </div>
+  </div>
+</div>
 
 <!-- Profile Modal -->
 <div id="profileModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:600;align-items:center;justify-content:center;backdrop-filter:blur(2px);" onclick="if(event.target===this)closeProfileModal()">

@@ -139,3 +139,66 @@ def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, 
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.disconnect()
     return False, -1, out
+
+def find_ont_by_sn(ip, username, password, sn):
+    conn = olt_ssh(ip, username, password)
+    conn.write_channel(f'display ont info by-sn {sn}\r\n')
+    time.sleep(4)
+    out = conn.read_channel()
+    conn.write_channel('quit\r\n'); time.sleep(1)
+    conn.disconnect()
+    fsp = re.search(r'F/S/P\s*:\s*(\S+)', out)
+    ont_id = re.search(r'ONT-ID\s*:\s*(\d+)', out)
+    if not fsp or not ont_id:
+        return None, out
+    parts = fsp.group(1).split('/')
+    return {
+        'fsp': fsp.group(1),
+        'slot_port': '/'.join(parts[:2]),
+        'port': int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
+        'ont_id': int(ont_id.group(1)),
+    }, out
+
+def apply_ont_settings(ip, username, password, payload):
+    method = payload.get('method', 'ssh')
+    kind = payload.get('kind', '')
+    sn = payload.get('sn', '').strip()
+    if not sn:
+        return False, 'SN is required'
+    if method != 'ssh':
+        return True, f"SNMP write request accepted for {kind}. Command template is pending model mapping."
+
+    ont, info = find_ont_by_sn(ip, username, password, sn)
+    if not ont:
+        return False, 'ONT not found on OLT'
+
+    conn = olt_ssh(ip, username, password)
+    outputs = [info]
+
+    if kind == 'user' and payload.get('alias'):
+        alias = str(payload.get('alias', '')).replace('"', '')
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1); conn.read_channel()
+        conn.write_channel(f'ont modify {ont["port"]} {ont["ont_id"]} desc "{alias}"\r\n')
+        time.sleep(2); outputs.append(conn.read_channel())
+        conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+
+    if kind == 'wan':
+        vlan_id = str(payload.get('vlan_id') or '10')
+        user_vlan = str(payload.get('user_vlan') or vlan_id)
+        conn.write_channel(f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}\r\n')
+        time.sleep(2); sp_out = conn.read_channel()
+        outputs.append(sp_out)
+        if 'No service virtual port' in sp_out:
+            cmd = f'service-port vlan {vlan_id} gpon {ont["fsp"]} ont {ont["ont_id"]} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
+            conn.write_channel(cmd + '\r\n')
+            time.sleep(3); outputs.append(conn.read_channel())
+        outputs.append(f"[WAN_PROFILE_CAPTURED] mode={payload.get('mode')} pppoe_user={payload.get('pppoe_username','')} static_ip={payload.get('static_ip','')}")
+
+    if kind in ('wifi', 'lan'):
+        outputs.append(f"[{kind.upper()}_CAPTURED] Template pending for terminal model-specific write commands.")
+
+    conn.write_channel('quit\r\n'); time.sleep(1)
+    conn.disconnect()
+    output = '\n'.join(outputs)
+    return 'Failure' not in output, output

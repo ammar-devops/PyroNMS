@@ -547,6 +547,27 @@ def backup_file_info(path):
         "is_latest": path.name == "olt_config_latest.txt",
     }
 
+def append_ont_settings_audit(user, kind, payload, ok, output):
+    try:
+        safe_payload = dict(payload)
+        for key in ("pppoe_password", "password", "admin_password"):
+            if key in safe_payload and safe_payload[key]:
+                safe_payload[key] = "***"
+        row = {
+            "ts": int(time.time()),
+            "user": user.get("username") or user.get("full_name") or user.get("id"),
+            "kind": kind,
+            "sn": safe_payload.get("sn"),
+            "method": safe_payload.get("method"),
+            "ok": bool(ok),
+            "payload": safe_payload,
+            "output": str(output)[-2000:],
+        }
+        with open("/var/log/pyronms_ont_settings_audit.log", "a") as fh:
+            fh.write(json.dumps(row, default=str) + "\n")
+    except Exception as e:
+        print(f"[ONT Settings Audit] failed: {e}")
+
 class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
@@ -982,6 +1003,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(500, {"error":"Failed","output":output})
             except Exception as e:
                 return self.send_json(500, {"error":str(e)})
+
+        elif parsed.path.startswith("/ont/settings/"):
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin","admin","pon_operator"):
+                return self.send_json(403, {"error":"Not allowed"})
+            kind = parsed.path.rsplit("/", 1)[-1]
+            if kind not in ("wan", "wifi", "lan", "user"):
+                return self.send_json(404, {"error":"Unknown settings section"})
+            length = int(self.headers.get("Content-Length",0))
+            body = self.rfile.read(length)
+            try: payload = json.loads(body)
+            except: return self.send_json(400, {"error":"Invalid JSON"})
+            payload["kind"] = kind
+            olts = olt.get_olts()
+            if not olts: return self.send_json(404, {"error":"No OLTs"})
+            o = olts[0]
+            try:
+                ok, output = olt.apply_ont_settings(o["ip"], o["username"], o["password"], payload)
+                append_ont_settings_audit(user, kind, payload, ok, output)
+                if ok:
+                    return self.send_json(200, {"ok": True, "message": f"{kind.upper()} settings accepted", "output": output})
+                return self.send_json(500, {"ok": False, "error": "Apply failed", "output": output})
+            except Exception as e:
+                append_ont_settings_audit(user, kind, payload, False, str(e))
+                return self.send_json(500, {"error": str(e)})
 
         elif parsed.path == "/auth/login":
             length = int(self.headers.get("Content-Length",0))

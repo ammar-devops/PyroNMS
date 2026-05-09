@@ -2697,7 +2697,9 @@ async function loadOntSettingsTemplates() {
     }
     const models = Object.keys((ontSettingsTemplates && ontSettingsTemplates.models) || {});
     const profiles = Object.keys((ontSettingsTemplates && ontSettingsTemplates.profiles) || {});
-    box.innerHTML = `Templates: ${models.length || 0} model map(s), ${profiles.length || 0} profile group(s). SSH service-port repair is active; WiFi/LAN/User credential model commands remain template-gated.`;
+    const vasProfiles = ((ontSettingsTemplates && ontSettingsTemplates.vas_profiles) || []).length;
+    applyOntSettingsTemplateDefaults();
+    box.innerHTML = `Templates: ${models.length || 0} model map(s), ${profiles.length || 0} profile group(s), ${vasProfiles} VAS profile(s). SSH service-port repair is active; WiFi/LAN/User credential model commands remain template-gated.`;
   } catch (e) {
     box.textContent = 'Template map unavailable. SSH service-port and ONT alias controls still work.';
   }
@@ -2719,6 +2721,8 @@ async function submitOntSettings(kind, action='apply') {
     payload.dns = document.getElementById('os-dns').value.trim();
     payload.vlan_id = document.getElementById('os-vlan').value.trim() || '10';
     payload.user_vlan = document.getElementById('os-user-vlan').value.trim() || '10';
+    payload.vas_profile = document.getElementById('os-vas-profile').value;
+    payload.service_description = document.getElementById('os-service-desc').value;
   }
   if (kind === 'wifi') {
     payload.ssid = document.getElementById('os-ssid').value.trim();
@@ -3292,6 +3296,27 @@ function escAttr(s) {
   return escHtml(s).replace(/'/g,'&#39;').replace(/`/g,'&#96;');
 }
 
+function applyOntSettingsTemplateDefaults() {
+  if (!ontSettingsTemplates) return;
+  const defaults = ontSettingsTemplates.vlan_defaults || {};
+  const vlanEl = document.getElementById('os-vlan');
+  const userVlanEl = document.getElementById('os-user-vlan');
+  if (vlanEl && !vlanEl.value) vlanEl.value = defaults.network_vlan || '10';
+  if (userVlanEl && !userVlanEl.value) userVlanEl.value = defaults.user_vlan || '10';
+  const vasSelect = document.getElementById('os-vas-profile');
+  if (vasSelect && ontSettingsTemplates.vas_profiles) {
+    const current = vasSelect.value;
+    vasSelect.innerHTML = ontSettingsTemplates.vas_profiles.map(p => `<option value="${escAttr(p.name)}" data-mode="${escAttr(p.mode || '')}">${escHtml(p.name)}${p.description ? ' - ' + escHtml(p.description) : ''}</option>`).join('');
+    if (current) vasSelect.value = current;
+  }
+  const descSelect = document.getElementById('os-service-desc');
+  if (descSelect && ontSettingsTemplates.service_descriptions) {
+    const current = descSelect.value;
+    descSelect.innerHTML = ontSettingsTemplates.service_descriptions.map(v => `<option value="${escAttr(v)}">${escHtml(v)}</option>`).join('');
+    if (current) descSelect.value = current;
+  }
+}
+
 init();
 </script>
 
@@ -3340,6 +3365,24 @@ init();
           <div class="ont-settings-field">
             <label>User VLAN</label>
             <input id="os-user-vlan" type="number" min="1" max="4094" value="10">
+          </div>
+          <div class="ont-settings-field">
+            <label>General ONT VAS Profile</label>
+            <select id="os-vas-profile">
+              <option value="PPP-10-IPV4-IPV6">PPP-10-IPV4-IPV6</option>
+              <option value="STATIC-IP">STATIC-IP</option>
+              <option value="BRIDGE-MODE">BRIDGE-MODE</option>
+              <option value="TEST-ACS">TEST-ACS</option>
+            </select>
+          </div>
+          <div class="ont-settings-field">
+            <label>Service Description</label>
+            <select id="os-service-desc">
+              <option value="HSI (High-Speed Internet)">HSI (High-Speed Internet)</option>
+              <option value="Static IP Internet">Static IP Internet</option>
+              <option value="Bridge Internet">Bridge Internet</option>
+              <option value="ACS Test">ACS Test</option>
+            </select>
           </div>
           <div class="ont-settings-field">
             <label>PPPoE Username</label>

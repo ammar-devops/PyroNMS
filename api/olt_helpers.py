@@ -238,6 +238,8 @@ def apply_ont_settings(ip, username, password, payload):
     if kind == 'wan':
         vlan_id = str(payload.get('vlan_id') or '10')
         user_vlan = str(payload.get('user_vlan') or vlan_id)
+        vas_profile = str(payload.get('vas_profile') or 'PPP-10-IPV4-IPV6')
+        service_description = str(payload.get('service_description') or 'HSI (High-Speed Internet)')
         conn.write_channel(f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}\r\n')
         time.sleep(2); sp_out = conn.read_channel()
         outputs.append(sp_out)
@@ -257,6 +259,8 @@ def apply_ont_settings(ip, username, password, payload):
         else:
             outputs.append('[SERVICE_PORT] Existing service-port found; no duplicate created.')
         outputs.append(f"[WAN_PROFILE_CAPTURED] mode={payload.get('mode')} pppoe_user={payload.get('pppoe_username','')} static_ip={payload.get('static_ip','')}")
+        outputs.append(f"[GENERAL_ONT_VAS_PROFILE] {vas_profile}")
+        outputs.append(f"[SERVICE_DESCRIPTION] {service_description}")
 
     if kind in ('wifi', 'lan'):
         outputs.append(f"[{kind.upper()}_CAPTURED] Template pending for terminal model-specific write commands.")

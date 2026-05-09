@@ -1,6 +1,22 @@
 {
-  "version": "v2.6-phase2",
+  "version": "v2.6-phase4",
   "default_policy": "capture_only_until_model_template_enabled",
+  "vas_profiles": [
+    {"name": "PPP-10-IPV4-IPV6", "mode": "pppoe", "description": "HSI PPPoE IPv4/IPv6"},
+    {"name": "STATIC-IP", "mode": "static", "description": "HSI Static IP"},
+    {"name": "BRIDGE-MODE", "mode": "bridge", "description": "Bridge mode"},
+    {"name": "TEST-ACS", "mode": "pppoe", "description": "ACS test profile"}
+  ],
+  "service_descriptions": [
+    "HSI (High-Speed Internet)",
+    "Static IP Internet",
+    "Bridge Internet",
+    "ACS Test"
+  ],
+  "vlan_defaults": {
+    "network_vlan": "10",
+    "user_vlan": "10"
+  },
   "models": {
     "HG8145C": {
       "wifi": {"enabled": false, "commands": []},

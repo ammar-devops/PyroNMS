@@ -14,7 +14,7 @@
     "ACS Test"
   ],
   "vlan_defaults": {
-    "network_vlan": "10",
+    "network_vlan": "196",
     "user_vlan": "10"
   },
   "models": {

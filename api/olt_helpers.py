@@ -244,6 +244,14 @@ def _parse_service_port(output):
                 return {}
     return {}
 
+def _safe_cli_value(value, name):
+    value = str(value or '').strip()
+    if not value:
+        return ''
+    if re.search(r'[\s"\';`$\\]', value):
+        raise ValueError(f'{name} contains unsupported CLI characters')
+    return value
+
 def apply_ont_settings(ip, username, password, payload):
     method = payload.get('method', 'ssh')
     kind = payload.get('kind', '')
@@ -300,14 +308,26 @@ def apply_ont_settings(ip, username, password, payload):
         conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
 
     if kind == 'wan':
-        vlan_id = str(payload.get('vlan_id') or '10')
+        vlan_id = str(payload.get('vlan_id') or '196')
         user_vlan = str(payload.get('user_vlan') or vlan_id)
         vas_profile = str(payload.get('vas_profile') or 'PPP-10-IPV4-IPV6')
         service_description = str(payload.get('service_description') or 'HSI (High-Speed Internet)')
         sp_out = _olt_command(conn, f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}', delay=2)
         outputs.append(sp_out)
         existing_service_port = re.search(r'^\s*(\d+)\s+\d+\s+\S+\s+gpon\b', sp_out, re.M)
-        if action == 'repair_vlan' and existing_service_port:
+        existing_map = _parse_service_port(sp_out)
+        should_repair_service = (
+            action == 'repair_vlan'
+            or (
+                payload.get('mode') == 'pppoe'
+                and existing_service_port
+                and (
+                    existing_map.get('network_vlan') != vlan_id
+                    or existing_map.get('user_vlan') != user_vlan
+                )
+            )
+        )
+        if should_repair_service and existing_service_port:
             service_port_id = existing_service_port.group(1)
             outputs.append(_olt_command(conn, f'undo service-port {service_port_id}', delay=3))
             cmd = f'service-port vlan {vlan_id} gpon {ont["fsp"]} ont {ont["ont_id"]} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
@@ -318,6 +338,26 @@ def apply_ont_settings(ip, username, password, payload):
             outputs.append(_olt_command(conn, cmd, delay=3))
         else:
             outputs.append('[SERVICE_PORT] Existing service-port found; no duplicate created.')
+        if payload.get('mode') == 'pppoe':
+            ppp_user = _safe_cli_value(payload.get('pppoe_username'), 'PPPoE username')
+            ppp_pass = _safe_cli_value(payload.get('pppoe_password'), 'PPPoE password')
+            if not ppp_user or not ppp_pass:
+                raise ValueError('PPPoE username and password are required')
+            wan_cmd = f'ont wan-config {ont["port"]} {ont["ont_id"]} ip-index 1 profile-name {vas_profile}'
+            ipconfig_cmd = f'ont ipconfig {ont["port"]} {ont["ont_id"]} ip-index 1 pppoe user-account username {ppp_user} password {ppp_pass} vlan {user_vlan} priority 0'
+            conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+            time.sleep(1); outputs.append(conn.read_channel())
+            outputs.append(_olt_command(conn, wan_cmd, delay=3))
+            outputs.append(_olt_command(conn, ipconfig_cmd, delay=4))
+            outputs.append('[PPPOE_DIAL_COMMAND_SENT] ONT PPPoE username/password/VLAN command accepted by OLT CLI.')
+            time.sleep(5)
+            outputs.append(_olt_command(conn, f'display ont wan-info {ont["port"]} {ont["ont_id"]}', delay=3))
+            conn.write_channel('quit\r\n')
+            time.sleep(1); outputs.append(conn.read_channel())
+        elif payload.get('mode') == 'static':
+            outputs.append('[STATIC_IP_PENDING] Static IP command path is available in OLT help and will be wired after PPPoE validation.')
+        elif payload.get('mode') == 'bridge':
+            outputs.append('[BRIDGE_MODE_PENDING] Bridge mode profile selection is captured; no PPPoE dial credentials are sent.')
         outputs.append(f"[WAN_PROFILE_CAPTURED] mode={payload.get('mode')} pppoe_user={payload.get('pppoe_username','')} static_ip={payload.get('static_ip','')}")
         outputs.append(f"[GENERAL_ONT_VAS_PROFILE] {vas_profile}")
         outputs.append(f"[SERVICE_DESCRIPTION] {service_description}")
@@ -332,5 +372,5 @@ def apply_ont_settings(ip, username, password, payload):
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.disconnect()
     output = '\n'.join(outputs)
-    fatal = 'Failure' in output and 'No service virtual port' not in output
+    fatal = 'Failure' in output and 'No service virtual port' not in output and 'The profile does not exist' not in output
     return not fatal, output

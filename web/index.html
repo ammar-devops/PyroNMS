@@ -404,6 +404,24 @@
     <button class="filter-btn" onclick="resetAdvFilters()">↺ Reset</button>
   </div>
 </div>
+<!-- Fixed Header -->
+<div id="fixedHeader" style="position:sticky;top:52px;z-index:89;background:var(--bg2);border-bottom:2px solid var(--border);display:block;">
+  <table style="width:100%;table-layout:fixed;border-collapse:collapse;">
+    <thead>
+      <tr>
+        <th style="width:44px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('num')" id="th-num">#</th>
+        <th style="width:90px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('pon')" id="th-pon">PON</th>
+        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('name')" id="th-name">Customer Name</th>
+        <th style="width:150px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('rx')" id="th-rx">Status / Signal</th>
+        <th style="width:70px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('temp')" id="th-temp">Temp</th>
+        <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="th-sn">Serial Number</th>
+        <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">VLAN</th>
+        <th style="width:50px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Router</th>
+        <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
+      </tr>
+    </thead>
+  </table>
+</div>
 <!-- Table -->
 <div class="table-wrap">
   <table>
@@ -415,7 +433,8 @@
         <th style="width:140px" onclick="sortTable('rx')"  id="th-rx">RX Signal</th>
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
-        <th style="width:100px">Refresh</th>
+        <th style="width:50px">Router</th>
+        <th style="width:90px">Refresh</th>
       </tr>
     </thead>
     <tbody id="ontTable"></tbody>
@@ -1451,10 +1470,38 @@ function renderTable() {
       <td class="customer-name">${escHtml(o.name || '-')}</td>
       <td><span class="signal-badge ${sig.cls}">${sig.text}</span></td>
       <td class="temp-cell">${temp}</td>
-      <td class="serial-cell">${o.sn || '-'}</td>
-      <td onclick="event.stopPropagation()"><button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>⟳</span> Refresh</button></td>
+      <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
+      <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
+      <td onclick="event.stopPropagation()" style="text-align:center;">
+        <button title="Open Router" onclick="openRouter('${o.sn}','${o.pon}',this)" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">Open Router</button>
+      </td>
+      <td onclick="event.stopPropagation()" style="text-align:center;">
+        <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>⟳</span> Refresh</button>
+      </td>
     </tr>`;
   }).join('');
+}
+
+async function openRouter(sn, pon, btn) {
+  const orig = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/ont/wan-ip?sn=${sn}&pon=${encodeURIComponent(pon)}`, {headers: authHeaders()});
+    const d = await r.json();
+    if (d.ip && d.ip !== '-') {
+      // Show info tooltip then open
+      btn.title = `IP: ${d.ip}${d.vlan ? ' | VLAN: '+d.vlan : ''}${d.status ? ' | '+d.status : ''}`;
+      window.open('http://' + d.ip, '_blank');
+    } else {
+      alert(`WAN IP not available\nSN: ${sn}\nPON: ${pon}\n${d.error||''}`);
+    }
+  } catch(e) {
+    alert('Could not fetch WAN IP: ' + e.message);
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
 }
 
 function signalBadge(o) {

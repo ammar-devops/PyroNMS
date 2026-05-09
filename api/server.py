@@ -734,6 +734,38 @@ class Handler(BaseHTTPRequestHandler):
             onts = get_all_onts()
             return self.send_json(200, {"onts": onts, "count": len(onts)})
 
+        # ── GET /ont/wan-ip?sn=XX&pon=0/1/0 — get WAN IP via OLT SSH ───────────
+        elif parsed.path.startswith('/ont/wan-ip'):
+            sn  = params.get('sn',  [''])[0]
+            pon = params.get('pon', [''])[0]
+            if not sn:
+                self.send_json(400, {'error': 'sn required'}); return
+            try:
+                import sys
+                sys.path.insert(0, '/opt/ont-monitor')
+                from workers.olt_helper import connect_olt, get_wan_ip
+                from config.config import SLOT_USERS as _SLOT_USERS, OLT_HOST as _OLT_HOST
+                parts = pon.split('/')
+                slot  = int(parts[1]) if len(parts) > 1 else 1
+                port  = int(parts[2]) if len(parts) > 2 else 0
+                user  = _SLOT_USERS.get(slot, list(_SLOT_USERS.values())[0])
+                conn  = connect_olt(_OLT_HOST, user['username'], user['password'])
+                flux  = f"""from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -48h)
+  |> filter(fn: (r) => r._measurement == "ont_status" and r._field == "online" and r.sn == "{sn}")
+  |> last()
+  |> keep(columns: ["ont_id"])"""
+                rows   = influx_query(flux)
+                ont_id = int(rows[0]['ont_id']) if rows else 0
+                ip     = get_wan_ip(conn, slot, port, ont_id)
+                conn.disconnect()
+                if ip and isinstance(ip, dict):
+                    self.send_json(200, {**ip, 'sn': sn})
+                else:
+                    self.send_json(200, {'ip': ip or '-', 'sn': sn})
+            except Exception as e:
+                self.send_json(200, {'ip': '-', 'error': str(e)})
+
         # ── GET /ont/live?sn=XXXX — live SSH refresh for one ONT row ──────────
         elif parsed.path == "/ont/live":
             sn = params.get("sn", [None])[0]

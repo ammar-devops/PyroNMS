@@ -156,3 +156,30 @@ def get_down_cause(conn, gpon_iface, port_num, ont_id):
         except:
             pass
         return "unknown"
+
+
+def get_wan_ip(conn, gpon_iface, port_num, ont_id):
+    """Get WAN IP, VLAN and service info of ONT via OLT SSH"""
+    try:
+        cmd(conn, f"interface gpon 0/{gpon_iface}", timeout=15)
+        output = cmd(conn, f"display ont wan-info {port_num} {ont_id}", timeout=20)
+        cmd(conn, "quit", expect=r"config\)#", timeout=10)
+        import re
+        result = {}
+        # IPv4 address
+        m = re.search(r'IPv4 address\s*:\s*([\d.]+)', output)
+        if m and m.group(1) != '0.0.0.0':
+            result['ip'] = m.group(1)
+        # Manage VLAN
+        m2 = re.search(r'Manage VLAN\s*:\s*(\S+)', output)
+        if m2: result['vlan'] = m2.group(1)
+        # Service type
+        m3 = re.search(r'Service type\s*:\s*(.+)', output)
+        if m3: result['service'] = m3.group(1).strip()
+        # Connection status
+        m4 = re.search(r'IPv4 Connection status\s*:\s*(\S+)', output)
+        if m4: result['status'] = m4.group(1).strip()
+        return result if result else None
+    except Exception as e:
+        log.error(f"get_wan_ip {gpon_iface}/{port_num}/{ont_id}: {e}")
+        return None

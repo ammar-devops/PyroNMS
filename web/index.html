@@ -1808,6 +1808,7 @@ async function submitProvision() {
       user_vlan: document.getElementById('prov-uservlan').value || document.getElementById('prov-vlan').value || '10',
       vas_profile: document.getElementById('prov-vasprofile').value || 'PPP-10-IPV4-IPV6',
       description: desc,
+      method: (document.querySelector('input[name="prov-method"]:checked') || {value:'ssh'}).value,
     };
     const r = await fetch(API+'/olt/provision', {
       method: 'POST',
@@ -4162,6 +4163,18 @@ init();
             <option value="TEST-ACS">TEST-ACS</option>
             <option value="BRIDGE-MODE">BRIDGE-MODE</option>
           </select>
+        </div>
+        <!-- Provision Method Selector -->
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+          <span style="font-size:12px;color:var(--muted);min-width:110px;">Method</span>
+          <div style="display:flex;gap:6px;flex:1;">
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 12px;flex:1;justify-content:center;" id="prov-method-ssh-lbl">
+              <input type="radio" name="prov-method" id="prov-method-ssh" value="ssh" checked onchange="provMethodChange()"> 🔐 SSH
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 12px;flex:1;justify-content:center;" id="prov-method-snmp-lbl">
+              <input type="radio" name="prov-method" id="prov-method-snmp" value="snmp" onchange="provMethodChange()"> 📡 SNMP
+            </label>
+          </div>
         </div>
       </div>
 

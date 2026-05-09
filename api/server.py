@@ -1000,20 +1000,38 @@ class Handler(BaseHTTPRequestHandler):
             olts = olt.get_olts()
             if not olts: return self.send_json(404, {"error":"No OLTs"})
             o = olts[0]
+            method = payload.get("method", "ssh").lower()
             try:
-                ok, ont_id, output = olt.provision_ont(
-                    o["ip"],o["username"],o["password"],
-                    sn,payload.get("slot_port","0/1"),
-                    int(payload.get("port",0)),
-                    payload.get("line_profile_id","8"),
-                    payload.get("srv_profile_id","10"),desc,
-                    payload.get("vlan_id","10"),
-                    payload.get("user_vlan") or payload.get("vlan_id","10"),
-                    payload.get("vas_profile","PPP-10-IPV4-IPV6"))
-                if ok: return self.send_json(200, {"ok":True,"ont_id":ont_id})
-                return self.send_json(500, {"error":"Failed","output":output})
+                if method == "snmp":
+                    # SNMP provisioning via hwGponOntActivate table
+                    profiles = olt.get_olt_profiles()
+                    line_id  = str(payload.get("line_profile_id","8"))
+                    srv_id   = str(payload.get("srv_profile_id","10"))
+                    # Resolve profile name from ID
+                    lp_name = next((p["name"] for p in profiles.get("line_profiles",[]) if str(p["id"]) == line_id), f"line-profile_{line_id}")
+                    sp_name = next((p["name"] for p in profiles.get("srv_profiles",[])  if str(p["id"]) == srv_id),  f"srv-profile_{srv_id}")
+                    write_comm = o.get("snmp_write_community") or o.get("snmp_community","public")
+                    read_comm  = o.get("snmp_community","public")
+                    ok, ont_id, output = olt.provision_ont_snmp(
+                        o["ip"], read_comm, write_comm,
+                        sn, payload.get("slot_port","0/1"),
+                        int(payload.get("port",0)),
+                        lp_name, sp_name, desc)
+                else:
+                    # Default: SSH provisioning
+                    ok, ont_id, output = olt.provision_ont(
+                        o["ip"],o["username"],o["password"],
+                        sn,payload.get("slot_port","0/1"),
+                        int(payload.get("port",0)),
+                        payload.get("line_profile_id","8"),
+                        payload.get("srv_profile_id","10"),desc,
+                        payload.get("vlan_id","10"),
+                        payload.get("user_vlan") or payload.get("vlan_id","10"),
+                        payload.get("vas_profile","PPP-10-IPV4-IPV6"))
+                if ok: return self.send_json(200, {"ok":True,"ont_id":ont_id,"method":method})
+                return self.send_json(500, {"error":"Failed","output":output,"method":method})
             except Exception as e:
-                return self.send_json(500, {"error":str(e)})
+                return self.send_json(500, {"error":str(e),"method":method})
 
         elif parsed.path.startswith("/ont/settings/"):
             user = require_auth(self)

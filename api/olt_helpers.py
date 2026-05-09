@@ -3,7 +3,7 @@ import subprocess, json, re, time
 def get_olts():
     import auth_db
     conn = auth_db.get_db()
-    rows = conn.execute("SELECT id,name,ip,username,password,snmp_community,model,active,created_at FROM olts").fetchall()
+    rows = conn.execute("SELECT id,name,ip,username,password,snmp_community,snmp_write_community,model,active,created_at FROM olts").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -17,7 +17,7 @@ def add_olt(name, ip, username, password, snmp_community, model):
 
 def update_olt(olt_id, data):
     import auth_db
-    allowed = ["name","ip","username","password","snmp_community","model","active"]
+    allowed = ["name","ip","username","password","snmp_community","snmp_write_community","model","active"]
     sets = [f"{k}=?" for k in data if k in allowed]
     vals = [v for k,v in data.items() if k in allowed]
     if not sets: return False
@@ -55,7 +55,8 @@ def olt_ssh(ip, username, password):
         try:
             conn = ConnectHandler(device_type='terminal_server', host=ip,
                 username=username, password=password, timeout=75, conn_timeout=30,
-                banner_timeout=30, auth_timeout=30)
+                banner_timeout=30, auth_timeout=30,
+                disabled_algorithms=dict(pubkeys=['rsa-sha2-256','rsa-sha2-512']))
             conn.write_channel('enable\r\n'); time.sleep(2); conn.read_channel()
             conn.write_channel('config\r\n'); time.sleep(2); conn.read_channel()
             return conn
@@ -374,3 +375,110 @@ def apply_ont_settings(ip, username, password, payload):
     output = '\n'.join(outputs)
     fatal = 'Failure' in output and 'No service virtual port' not in output and 'The profile does not exist' not in output
     return not fatal, output
+
+
+# ── SNMP provisioning helpers ──────────────────────────────────────────────────
+
+def _sn_to_snmp_hex(sn):
+    """Convert SN string '48575443143D1067' to snmpset hex format '48 57 54 43 14 3D 10 67'."""
+    sn = sn.strip().upper().replace(" ", "").replace(":", "")
+    return " ".join(sn[i:i+2] for i in range(0, len(sn), 2))
+
+def get_gpon_port_ifindex(slot, port):
+    """Compute Huawei MA5600 GPON port SNMP ifIndex.
+    Formula confirmed from live OLT walk: 0xFA000000 + slot*0x2000 + port*0x100
+    """
+    return 0xFA000000 + int(slot) * 0x2000 + int(port) * 0x100
+
+def get_gpon_ifindex_map(ip, read_community):
+    """Walk ifDescr to map ifIndex -> port description for GPON UNI interfaces."""
+    try:
+        result = subprocess.run(
+            ["snmpwalk", "-v2c", f"-c{read_community}", ip,
+             "1.3.6.1.2.1.2.2.1.2"],
+            capture_output=True, text=True, timeout=30
+        )
+        mapping = {}
+        for line in result.stdout.splitlines():
+            m = re.search(r'\.(\d+)\s*=\s*STRING:\s*"?(.+?)"?\s*$', line)
+            if m and "GPON_UNI" in m.group(2):
+                mapping[int(m.group(1))] = m.group(2).strip()
+        return mapping
+    except Exception:
+        return {}
+
+def provision_ont_snmp(ip, read_community, write_community, sn, slot_port, port,
+                       line_profile_name, srv_profile_name, description, ont_id=65535):
+    """Register an ONT on Huawei MA5600/MA5603T via SNMP (hwGponOntActivate table).
+
+    Returns (success, assigned_ont_id, output_string).
+    Column mapping (live confirmed):
+      col 3 = SN (Hex-STRING 8 bytes)
+      col 7 = line profile name (STRING)
+      col 8 = service profile name (STRING)
+      col 9 = description (STRING)
+      col 10 = RowStatus (INTEGER: 1=active, 4=createAndGo)
+    """
+    # Parse slot from slot_port like "0/1"
+    parts = str(slot_port).split("/")
+    slot = int(parts[1]) if len(parts) > 1 else 1
+    port_num = int(port)
+
+    port_ifindex = get_gpon_port_ifindex(slot, port_num)
+    sn_hex = _sn_to_snmp_hex(sn)
+    base = "1.3.6.1.4.1.2011.6.128.1.1.2.43.1"
+    inst = f"{port_ifindex}.{ont_id}"
+
+    cmd = [
+        "snmpset", "-v2c", "-c", write_community, ip,
+        f"{base}.3.{inst}",  "x", sn_hex,             # SN
+        f"{base}.7.{inst}",  "s", line_profile_name,  # line profile name
+        f"{base}.8.{inst}",  "s", srv_profile_name,   # service profile name
+        f"{base}.9.{inst}",  "s", description,         # description
+        f"{base}.10.{inst}", "i", "4",                 # RowStatus = createAndGo
+    ]
+
+    output_lines = [
+        f"[SNMP_PROVISION] OLT={ip} SN={sn}",
+        f"[SNMP_PROVISION] port=GPON {slot_port}/{port_num} ifIndex={port_ifindex}",
+        f"[SNMP_PROVISION] line_profile={line_profile_name} srv_profile={srv_profile_name}",
+        f"[SNMP_PROVISION] inst={inst}",
+        f"[SNMP_PROVISION] CMD: {' '.join(cmd[:6])} ...",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        output_lines.append(f"stdout: {result.stdout.strip()}")
+        if result.stderr.strip():
+            output_lines.append(f"stderr: {result.stderr.strip()}")
+
+        if result.returncode == 0 and "Error" not in result.stdout and "Timeout" not in result.stdout:
+            # Try to read back the assigned ONT ID (OLT may assign auto-id)
+            assigned_id = ont_id
+            # Check what ID was actually assigned by reading the row
+            time.sleep(2)
+            verify = subprocess.run(
+                ["snmpwalk", "-v2c", f"-c{read_community}", ip,
+                 f"{base}.3.{port_ifindex}"],
+                capture_output=True, text=True, timeout=20
+            )
+            sn_upper = sn.upper().replace(" ", "")
+            for line in verify.stdout.splitlines():
+                if sn_hex.replace(" ", "").upper() in line.upper().replace(" ", ""):
+                    m = re.search(rf"{re.escape(str(port_ifindex))}\.(\d+)", line)
+                    if m:
+                        assigned_id = int(m.group(1))
+                        output_lines.append(f"[SNMP_PROVISION] ONT registered with ID={assigned_id}")
+                        break
+            return True, assigned_id, "\n".join(output_lines)
+        else:
+            output_lines.append("[SNMP_PROVISION] FAILED — OLT returned error or non-zero exit")
+            return False, -1, "\n".join(output_lines)
+
+    except subprocess.TimeoutExpired:
+        output_lines.append("[SNMP_PROVISION] TIMEOUT — snmpset did not respond within 30s")
+        return False, -1, "\n".join(output_lines)
+    except Exception as e:
+        output_lines.append(f"[SNMP_PROVISION] EXCEPTION: {e}")
+        return False, -1, "\n".join(output_lines)
+

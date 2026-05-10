@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """
 ONT Slot Worker
-Polls one slot continuously. Run one instance per slot.
-
-Usage:
-    python3 slot_worker.py --slot 1
-    python3 slot_worker.py --slot 2
-    python3 slot_worker.py --slot 4
-    python3 slot_worker.py --slot 5
+Phase 1:
+- SNMP-first for per-ONT metrics where OIDs are configured
+- SSH fallback for compatibility and data continuity
 """
 
 import sys
@@ -19,23 +15,25 @@ from datetime import datetime, timezone
 sys.path.insert(0, "/opt/ont-monitor")
 
 from config.config import (
-    OLT_HOST, OLT_PORT, SLOT_USERS, SLOT_PORTS,
-    INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, INFLUX_BUCKET,
-    POLL_INTERVAL, OLT_NAME
+    OLT_HOST,
+    OLT_PORT,
+    SLOT_USERS,
+    SLOT_PORTS,
+    INFLUX_URL,
+    INFLUX_TOKEN,
+    INFLUX_ORG,
+    INFLUX_BUCKET,
+    POLL_INTERVAL,
+    OLT_NAME,
+    POLL_SOURCE,
+    SNMP_READ_COMMUNITY,
+    SNMP_OID_TEMPLATES,
 )
 from workers.olt_helper import connect_olt, get_ont_list, get_optical
+from workers.snmp_helper import snmp_ping, get_ont_metrics_by_index
 
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(f"/opt/ont-monitor/logs/slot%(slot)s.log")
-    ]
-)
 
 
 def get_logger(slot):
@@ -60,11 +58,23 @@ def write_points(points):
     client.close()
 
 
+def _ont_index(slot, port_num, ont_id):
+    # Keep calculation explicit and stable for future OID map usage.
+    # Common Huawei-style packed index format.
+    return (int(slot) << 24) + (int(port_num) << 16) + int(ont_id)
+
+
 def poll_slot(slot, log):
-    user   = SLOT_USERS[slot]
-    ports  = SLOT_PORTS[slot]
+    user = SLOT_USERS[slot]
+    ports = SLOT_PORTS[slot]
     points = []
-    conn   = None
+    conn = None
+
+    snmp_enabled = POLL_SOURCE.lower() == "hybrid"
+    snmp_ok = False
+    if snmp_enabled:
+        snmp_ok = snmp_ping(OLT_HOST, SNMP_READ_COMMUNITY)
+        log.info(f"SNMP check: {'OK' if snmp_ok else 'FAILED'} (source={POLL_SOURCE})")
 
     try:
         log.info(f"Connecting as {user['username']}...")
@@ -81,82 +91,109 @@ def poll_slot(slot, log):
 
                 log.info(f"  {pon}: {len(onts)} ONTs")
 
-                # Write status first (fast)
                 status_points = []
                 for ont in onts:
                     p = (
                         Point("ont_status")
-                        .tag("olt",         OLT_NAME)
-                        .tag("pon",         pon)
-                        .tag("ont_id",      str(ont["ont_id"]))
-                        .tag("sn",          ont["sn"])
+                        .tag("olt", OLT_NAME)
+                        .tag("pon", pon)
+                        .tag("ont_id", str(ont["ont_id"]))
+                        .tag("sn", ont["sn"])
                         .tag("description", ont["desc"])
-                        .field("online",    1 if ont["state"] == "online" else 0)
-                        .field("state",     ont["state"])
+                        .field("online", 1 if ont["state"] == "online" else 0)
+                        .field("state", ont["state"])
                         .time(now, "s")
                     )
                     status_points.append(p)
-
                 write_points(status_points)
 
-                # Get down cause for offline ONTs
                 for ont in onts:
                     if ont["state"] == "online":
                         continue
                     try:
                         from workers.olt_helper import get_down_cause
+
                         cause = get_down_cause(conn, slot, port_num, ont["ont_id"])
                         dc = (
                             Point("ont_status")
-                            .tag("olt",         OLT_NAME)
-                            .tag("pon",         pon)
-                            .tag("ont_id",      str(ont["ont_id"]))
-                            .tag("sn",          ont["sn"])
+                            .tag("olt", OLT_NAME)
+                            .tag("pon", pon)
+                            .tag("ont_id", str(ont["ont_id"]))
+                            .tag("sn", ont["sn"])
                             .tag("description", ont["desc"])
                             .field("down_cause", cause)
                             .time(now, "s")
                         )
                         write_points([dc])
-                        log.info(f"    [{ont['ont_id']:3d}] OFFLINE cause={cause}")
                     except Exception as e:
                         log.warning(f"down_cause error: {e}")
 
-                # Then get optical data for online ONTs
                 for ont in onts:
                     if ont["state"] != "online":
                         continue
-                    optical = get_optical(conn, slot, port_num, ont["ont_id"])
+
+                    # Phase 1: SNMP-first for metrics
+                    snmp_metrics = {}
+                    if snmp_enabled and snmp_ok and any(SNMP_OID_TEMPLATES.values()):
+                        try:
+                            idx = _ont_index(slot, port_num, ont["ont_id"])
+                            snmp_metrics = get_ont_metrics_by_index(
+                                OLT_HOST, SNMP_READ_COMMUNITY, idx, SNMP_OID_TEMPLATES
+                            )
+                        except Exception as e:
+                            log.warning(f"snmp metrics error ({pon}/{ont['ont_id']}): {e}")
+
+                    # SSH fallback (or full SSH mode)
+                    optical = None
+                    if "rx_power" in snmp_metrics or "temp" in snmp_metrics:
+                        optical = {
+                            "rx_power": snmp_metrics.get("rx_power"),
+                            "tx_power": None,
+                            "olt_rx": None,
+                            "temp": snmp_metrics.get("temp"),
+                        }
+                    else:
+                        optical = get_optical(conn, slot, port_num, ont["ont_id"])
+
                     if optical:
-                        op = Point("ont_optical") \
-                            .tag("olt",         OLT_NAME) \
-                            .tag("pon",         pon) \
-                            .tag("ont_id",      str(ont["ont_id"])) \
-                            .tag("sn",          ont["sn"]) \
+                        op = (
+                            Point("ont_optical")
+                            .tag("olt", OLT_NAME)
+                            .tag("pon", pon)
+                            .tag("ont_id", str(ont["ont_id"]))
+                            .tag("sn", ont["sn"])
                             .tag("description", ont["desc"])
+                        )
                         for field, val in optical.items():
                             if val is not None:
                                 op = op.field(field, val)
                         op = op.time(now, "s")
                         points.append(op)
-                        log.info(f"    [{ont['ont_id']:3d}] {ont['desc'][:30]:30s} RX={optical.get('rx_power')}")
-                    # Get VLAN for online ONTs (every 5th poll to avoid SSH overload)
+
                     try:
-                        from workers.olt_helper import get_vlan
-                        vlan = get_vlan(conn, slot, port_num, ont["ont_id"])
+                        vlan = snmp_metrics.get("vlan")
+                        if not vlan:
+                            from workers.olt_helper import get_vlan
+
+                            vlan = get_vlan(conn, slot, port_num, ont["ont_id"])
                         if vlan:
-                            vp = (Point("ont_status")
-                                .tag("olt", OLT_NAME).tag("pon", pon)
-                                .tag("ont_id", str(ont["ont_id"])).tag("sn", ont["sn"])
+                            vp = (
+                                Point("ont_status")
+                                .tag("olt", OLT_NAME)
+                                .tag("pon", pon)
+                                .tag("ont_id", str(ont["ont_id"]))
+                                .tag("sn", ont["sn"])
                                 .tag("description", ont["desc"])
-                                .field("vlan", vlan).time(now, "s"))
+                                .field("vlan", vlan)
+                                .time(now, "s")
+                            )
                             write_points([vp])
                     except Exception as e:
                         log.warning(f"vlan error: {e}")
 
-                        # Write every 50 optical points
-                        if len(points) >= 50:
-                            write_points(points)
-                            points = []
+                    if len(points) >= 50:
+                        write_points(points)
+                        points = []
 
             except Exception as e:
                 log.error(f"  Error on {pon}: {e}")
@@ -168,7 +205,7 @@ def poll_slot(slot, log):
         if conn:
             try:
                 conn.disconnect()
-            except:
+            except Exception:
                 pass
 
     if points:
@@ -181,12 +218,9 @@ def main():
     parser.add_argument("--slot", type=int, required=True, choices=[1, 2, 4, 5])
     args = parser.parse_args()
     slot = args.slot
-    log  = get_logger(slot)
+    log = get_logger(slot)
 
     log.info(f"=== Slot {slot} Worker Started ===")
-
-    # Stagger startup: spread polls across the POLL_INTERVAL window
-    # so all 4 workers never hold OLT SSH sessions simultaneously.
     _STAGGER = {1: 0, 2: 1800, 4: 3600, 5: 5400}
     _delay = _STAGGER.get(slot, 0)
     if _delay > 0:

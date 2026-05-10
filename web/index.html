@@ -2839,21 +2839,39 @@ async function openRouter(sn, pon, btn) {
   const orig = btn.textContent;
   btn.textContent = '...';
   btn.disabled = true;
+
+  // Open window synchronously to avoid popup blockers.
+  const w = window.open('about:blank', '_blank');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 18000);
   try {
-    const r = await fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}`, {headers: authHeaders()});
+    const r = await fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    });
     const d = await r.json();
     if (d && d.ip && d.ip !== '-' && d.ip !== '0.0.0.0') {
+      const target = 'http://' + d.ip;
       btn.title = `IP: ${d.ip}${d.vlan ? ' | VLAN: '+d.vlan : ''}${d.status ? ' | '+d.status : ''}`;
-      window.open('http://' + d.ip, '_blank');
+      if (w) {
+        try { w.location.href = target; } catch (_) { window.open(target, '_blank'); }
+      } else {
+        window.open(target, '_blank');
+      }
       return;
     }
+    if (w && !w.closed) w.close();
     const reason = (d && d.error) ? d.error : (d && d.status ? `Status: ${d.status}` : 'No WAN IPv4 returned from ONT');
     showAppNotice('Open Router Unavailable', `SN: ${sn}
 PON: ${pon || '-'}
-${reason}`);
+${reason}`, 'warn');
   } catch(e) {
-    showAppNotice('Open Router Failed', e.message || 'Unknown error', 'err');
+    if (w && !w.closed) w.close();
+    const msg = (e && e.name === 'AbortError') ? 'Timed out while fetching ONT WAN IP' : (e.message || 'Unknown error');
+    showAppNotice('Open Router Failed', msg, 'err');
   } finally {
+    clearTimeout(timer);
     btn.textContent = orig;
     btn.disabled = false;
   }

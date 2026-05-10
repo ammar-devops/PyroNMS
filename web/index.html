@@ -2632,41 +2632,51 @@ function getFiltered() {
 
 // ── Table ────────────────────────────────────────────────────────────────────
 function renderTable() {
-  const rows = getSortedFiltered();
   const tbody = document.getElementById('ontTable');
-  tbody.innerHTML = rows.map((o, i) => {
-    const sig  = signalBadge(o);
-    const temp = o.temp ? `${o.temp} C` : '-';
-    return `<tr class="ont-row" data-sn="${escAttr(o.sn)}" data-name="${escAttr(o.name || '')}">
-      <td class="row-num">${i+1}</td>
-      <td><span class="pon-tag">${o.pon || '-'}</span></td>
-      <td class="customer-name">${escHtml(o.name || '-')}</td>
-      <td><span class="signal-badge ${sig.cls}">${sig.text}</span></td>
-      <td class="temp-cell">${temp}</td>
-      <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
-      <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
-      <td onclick="event.stopPropagation()" style="text-align:center;">
-        <button title="ONT Settings" onclick="openOntSettings('${o.sn}','${escAttr(o.name)}','${o.pon || ''}','${o.vlan || ''}')" style="background:rgba(79,142,247,.14);border:1px solid rgba(79,142,247,.45);color:var(--accent);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;">Settings</button>
-      </td>
-      <td onclick="event.stopPropagation()" style="text-align:center;">
-        <button title="Open Router" onclick="openRouter('${o.sn}','${o.pon}',this)" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">Open Router</button>
-      </td>
-      <td onclick="event.stopPropagation()" style="text-align:center;">
-        <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>⟳</span> Refresh</button>
-      </td>
-    </tr>`;
-  }).join('');
-  tbody.querySelectorAll('tr.ont-row').forEach(tr => {
-    tr.addEventListener('click', (ev) => {
-      // Ignore clicks on action buttons/controls
-      if (ev.target.closest('button, a, input, select, textarea, label')) return;
-      const sn = tr.dataset.sn || '';
-      const name = tr.dataset.name || sn;
-      if (sn) openModal(sn, name);
+  if (!tbody) return;
+  try {
+    const rows = getSortedFiltered();
+    tbody.innerHTML = rows.map((o, i) => {
+      const sig  = signalBadge(o);
+      const temp = o.temp ? `${o.temp} C` : '-';
+      return `<tr class="ont-row" data-sn="${escAttr(o.sn)}" data-name="${escAttr(o.name || '')}">
+        <td class="row-num">${i+1}</td>
+        <td><span class="pon-tag">${o.pon || '-'}</span></td>
+        <td class="customer-name">${escHtml(o.name || '-')}</td>
+        <td><span class="signal-badge ${sig.cls}">${sig.text}</span></td>
+        <td class="temp-cell">${temp}</td>
+        <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
+        <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
+        <td onclick="event.stopPropagation()" style="text-align:center;">
+          <button title="ONT Settings" onclick="openOntSettings('${o.sn}','${escAttr(o.name)}','${o.pon || ''}','${o.vlan || ''}')" style="background:rgba(79,142,247,.14);border:1px solid rgba(79,142,247,.45);color:var(--accent);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;">Settings</button>
+        </td>
+        <td onclick="event.stopPropagation()" style="text-align:center;">
+          <button title="Open Router" onclick="openRouter('${o.sn}','${o.pon}',this)" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">Open Router</button>
+        </td>
+        <td onclick="event.stopPropagation()" style="text-align:center;">
+          <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>?</span> Refresh</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('tr.ont-row').forEach(tr => {
+      tr.addEventListener('click', (ev) => {
+        if (ev.target.closest('button, a, input, select, textarea, label')) return;
+        const sn = tr.dataset.sn || '';
+        const name = tr.dataset.name || sn;
+        if (sn) openModal(sn, name);
+      });
     });
-  });
-  const wrap = document.querySelector('#section-ont .table-wrap');
-  if (isMobileView() && wrap) wrap.scrollLeft = 0;
+
+    const wrap = document.querySelector('#section-ont .table-wrap');
+    if (isMobileView() && wrap) wrap.scrollLeft = 0;
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
+    }
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
+  }
 }
 
 let ontSettingsCurrent = null;

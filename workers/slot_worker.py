@@ -171,11 +171,15 @@ def poll_slot(slot, log):
                         points.append(op)
 
                     try:
-                        vlan = snmp_metrics.get("vlan")
-                        if not vlan:
-                            from workers.olt_helper import get_vlan
+                        from workers.olt_helper import get_wan_ip
 
-                            vlan = get_vlan(conn, slot, port_num, ont["ont_id"])
+                        wan = get_wan_ip(conn, slot, port_num, ont["ont_id"]) or {}
+                        wan_ip = (wan.get("ip") or "").strip()
+                        wan_status = (wan.get("status") or "").strip()
+                        wan_vlan = (wan.get("vlan") or "").strip()
+
+                        # Prefer SNMP VLAN if available, otherwise WAN parse fallback.
+                        vlan = snmp_metrics.get("vlan") or wan_vlan
                         if vlan:
                             vp = (
                                 Point("ont_status")
@@ -188,8 +192,27 @@ def poll_slot(slot, log):
                                 .time(now, "s")
                             )
                             write_points([vp])
+
+                        # Phase 2.1: cache WAN fields for fast API Open Router.
+                        if wan_ip or wan_status or vlan:
+                            wp = (
+                                Point("ont_wan")
+                                .tag("olt", OLT_NAME)
+                                .tag("pon", pon)
+                                .tag("ont_id", str(ont["ont_id"]))
+                                .tag("sn", ont["sn"])
+                                .tag("description", ont["desc"])
+                            )
+                            if wan_ip:
+                                wp = wp.field("ipv4_address", wan_ip)
+                            if wan_status:
+                                wp = wp.field("connection_status", wan_status)
+                            if vlan:
+                                wp = wp.field("network_vlan", str(vlan))
+                            wp = wp.time(now, "s")
+                            write_points([wp])
                     except Exception as e:
-                        log.warning(f"vlan error: {e}")
+                        log.warning(f"wan/vlan cache error: {e}")
 
                     if len(points) >= 50:
                         write_points(points)

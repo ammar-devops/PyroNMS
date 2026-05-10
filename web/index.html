@@ -2637,7 +2637,7 @@ function renderTable() {
   tbody.innerHTML = rows.map((o, i) => {
     const sig  = signalBadge(o);
     const temp = o.temp ? `${o.temp} C` : '-';
-    return `<tr class="ont-row" onclick="openModal('${escAttr(o.sn)}','${escAttr(o.name)}')">
+    return `<tr class="ont-row" data-sn="${escAttr(o.sn)}" data-name="${escAttr(o.name || '')}">
       <td class="row-num">${i+1}</td>
       <td><span class="pon-tag">${o.pon || '-'}</span></td>
       <td class="customer-name">${escHtml(o.name || '-')}</td>
@@ -2656,6 +2656,15 @@ function renderTable() {
       </td>
     </tr>`;
   }).join('');
+  tbody.querySelectorAll('tr.ont-row').forEach(tr => {
+    tr.addEventListener('click', (ev) => {
+      // Ignore clicks on action buttons/controls
+      if (ev.target.closest('button, a, input, select, textarea, label')) return;
+      const sn = tr.dataset.sn || '';
+      const name = tr.dataset.name || sn;
+      if (sn) openModal(sn, name);
+    });
+  });
   const wrap = document.querySelector('#section-ont .table-wrap');
   if (isMobileView() && wrap) wrap.scrollLeft = 0;
 }

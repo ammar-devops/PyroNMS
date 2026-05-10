@@ -889,35 +889,48 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {'workers': workers, 'crons': crons, 'poll_interval': global_pi})
 
         elif parsed.path.startswith('/ont/wan-ip'):
-            sn  = params.get('sn',  [''])[0]
-            pon = params.get('pon', [''])[0]
+            sn  = params.get('sn',  [''])[0].strip()
+            pon = params.get('pon', [''])[0].strip()
             if not sn:
                 self.send_json(400, {'error': 'sn required'}); return
             try:
-                import sys
-                sys.path.insert(0, '/opt/ont-monitor')
-                from workers.olt_helper import connect_olt, get_wan_ip
-                from config.config import SLOT_USERS as _SLOT_USERS, OLT_HOST as _OLT_HOST
-                parts = pon.split('/')
-                slot  = int(parts[1]) if len(parts) > 1 else 1
-                port  = int(parts[2]) if len(parts) > 2 else 0
-                user  = _SLOT_USERS.get(slot, list(_SLOT_USERS.values())[0])
-                conn  = connect_olt(_OLT_HOST, user['username'], user['password'])
-                flux  = f"""from(bucket: "{INFLUX_BUCKET}")
-  |> range(start: -48h)
-  |> filter(fn: (r) => r._measurement == "ont_status" and r._field == "online" and r.sn == "{sn}")
-  |> last()
-  |> keep(columns: ["ont_id"])"""
-                rows   = influx_query(flux)
-                ont_id = int(rows[0]['ont_id']) if rows else 0
-                ip     = get_wan_ip(conn, slot, port, ont_id)
-                conn.disconnect()
-                if ip and isinstance(ip, dict):
-                    self.send_json(200, {**ip, 'sn': sn})
-                else:
-                    self.send_json(200, {'ip': ip or '-', 'sn': sn})
+                olts = olt.get_olts()
+                if not olts:
+                    self.send_json(404, {'error': 'No OLTs configured'}); return
+                o = olts[0]
+                ok, out = olt.apply_ont_settings(o['ip'], o['username'], o['password'], {
+                    'sn': sn,
+                    'kind': 'check',
+                    'action': 'check',
+                    'method': 'ssh',
+                    'pon': pon,
+                })
+                if not ok:
+                    self.send_json(200, {'ip': '-', 'sn': sn, 'error': out}); return
+
+                ip = '-'
+                status = ''
+                vlan = ''
+
+                m = re.search(r'\[ONT_DETAILS_JSON\]\s*(\{[^\n]+\})', out)
+                if m:
+                    try:
+                        details = json.loads(m.group(1))
+                        wan = (details or {}).get('wan') or {}
+                        ip = (wan.get('ipv4_address') or '').strip() or ip
+                        status = (wan.get('connection_status') or '').strip() or status
+                        vlan = (wan.get('network_vlan') or '').strip() or vlan
+                    except Exception:
+                        pass
+
+                if ip == '-':
+                    m2 = re.search(r'IPv4 address\s*:\s*([^\s]+)', out, re.I)
+                    if m2:
+                        ip = m2.group(1).strip()
+
+                self.send_json(200, {'ip': ip, 'sn': sn, 'status': status, 'vlan': vlan})
             except Exception as e:
-                self.send_json(200, {'ip': '-', 'error': str(e)})
+                self.send_json(200, {'ip': '-', 'sn': sn, 'error': str(e)})
 
         # ── GET /ont/live?sn=XXXX — live SSH refresh for one ONT row ──────────
         elif parsed.path == "/ont/live":

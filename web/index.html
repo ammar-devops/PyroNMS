@@ -2739,6 +2739,12 @@ function populateOntSettingsFromOutput(output) {
   if (country && document.getElementById('os-wifi-country')) document.getElementById('os-wifi-country').value = country[1].trim();
 }
 
+function showAppNotice(title, message) {
+  const t = title || 'Notice';
+  const m = message || '';
+  alert(`${t}\n\n${m}`);
+}
+
 async function submitOntSettings(kind, action='apply') {
   if (!ontSettingsCurrent) return;
   const msg = document.getElementById('ontSettingsMsg');
@@ -2806,45 +2812,40 @@ async function openRouter(sn, pon, btn) {
   btn.textContent = '...';
   btn.disabled = true;
   try {
-    const r = await fetch(`${API}/ont/wan-ip?sn=${sn}&pon=${encodeURIComponent(pon)}`, {headers: authHeaders()});
+    const r = await fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}`, {headers: authHeaders()});
     const d = await r.json();
-    if (d.ip && d.ip !== '-') {
-      // Show info tooltip then open
+    if (d && d.ip && d.ip !== '-' && d.ip !== '0.0.0.0') {
       btn.title = `IP: ${d.ip}${d.vlan ? ' | VLAN: '+d.vlan : ''}${d.status ? ' | '+d.status : ''}`;
       window.open('http://' + d.ip, '_blank');
-    } else {
-      alert(`WAN IP not available\nSN: ${sn}\nPON: ${pon}\n${d.error||''}`);
+      return;
     }
+    const reason = (d && d.error) ? d.error : (d && d.status ? `Status: ${d.status}` : 'No WAN IPv4 returned from ONT');
+    showAppNotice('Open Router Unavailable', `SN: ${sn}
+PON: ${pon || '-'}
+${reason}`);
   } catch(e) {
-    alert('Could not fetch WAN IP: ' + e.message);
+    showAppNotice('Open Router Failed', e.message || 'Unknown error');
   } finally {
     btn.textContent = orig;
     btn.disabled = false;
   }
 }
 
-function signalBadge(o) {
-  if (o.status === 'power-failure') return { cls:'sig-offline', text:'🔌 Power' };
-  if (o.status === 'fiber-issue')   return { cls:'sig-offline sig-fiber', text:'⚡ Fiber' };
-  if (o.status !== 'online')        return { cls:'sig-offline', text:'OFFLINE' };
-  const rx = parseFloat(o.rx);
-  if (isNaN(rx))        return { cls:'sig-bad',  text: o.rx || '-' };
-  if (rx >= -26)        return { cls:'sig-good',  text: `${rx} dBm` };
-  if (rx >= -28)        return { cls:'sig-weak',  text: `${rx} dBm` };
-  return                       { cls:'sig-bad',   text: `${rx} dBm` };
-}
-
 async function refreshRow(sn, btn) {
   const span = btn.querySelector('span');
-  span.classList.add('spin');
+  span?.classList.add('spin');
   btn.disabled = true;
   try {
-    const r = await fetch(`${API}/ont/live?sn=${sn}`,{headers:authHeaders()});
+    const r = await fetch(`${API}/ont/live?sn=${encodeURIComponent(sn)}`,{headers:authHeaders()});
     const d = await r.json();
+    if (!r.ok || !d || !d.ont) throw new Error((d && d.error) ? d.error : 'Row refresh failed');
     const idx = allONTs.findIndex(o => o.sn === sn);
-    if (idx >= 0 && d.ont) Object.assign(allONTs[idx], d.ont);
+    if (idx >= 0) Object.assign(allONTs[idx], d.ont);
     updateStats();
     renderTable();
+  } catch(e) {
+    showAppNotice('Row Refresh Failed', `${sn}
+${e.message || e}`);
   } finally {
     span?.classList.remove('spin');
     btn.disabled = false;

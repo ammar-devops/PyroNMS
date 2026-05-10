@@ -175,6 +175,49 @@ from(bucket: "{INFLUX_BUCKET}")
     return onts
 
 
+def get_ont_cached(sn):
+    """Fast cached ONT row from Influx-backed table payload."""
+    sn = (sn or "").strip().upper()
+    if not sn:
+        return None
+    for row in get_all_onts():
+        if (row.get("sn", "").strip().upper() == sn):
+            return row
+    return None
+
+
+def get_cached_wan_ip(sn):
+    """
+    Try to get WAN IP from Influx cache first.
+    This is Phase-2 ready path. If measurement doesn't exist yet, returns None.
+    """
+    sn = (sn or "").strip()
+    if not sn:
+        return None
+    flux = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -48h)
+  |> filter(fn: (r) => r._measurement == "ont_wan" and r.sn == "{sn}")
+  |> filter(fn: (r) => r._field == "ipv4_address" or r._field == "connection_status" or r._field == "network_vlan")
+  |> last()
+  |> keep(columns: ["_field", "_value"])
+'''
+    rows = influx_query(flux)
+    if not rows:
+        return None
+    out = {"ip": "-", "status": "", "vlan": ""}
+    for r in rows:
+        field = (r.get("_field") or "").strip()
+        val = (r.get("_value") or "").strip()
+        if field == "ipv4_address" and val and val != "0.0.0.0":
+            out["ip"] = val
+        elif field == "connection_status":
+            out["status"] = val
+        elif field == "network_vlan":
+            out["vlan"] = val
+    return out
+
+
 def live_check_ont(sn):
     """
     Run live_check.py for a single ONT via subprocess.
@@ -830,7 +873,7 @@ class Handler(BaseHTTPRequestHandler):
             onts = get_all_onts()
             return self.send_json(200, {"onts": onts, "count": len(onts)})
 
-        # ── GET /ont/wan-ip?sn=XX&pon=0/1/0 — get WAN IP via OLT SSH ───────────
+        # ── GET /ont/wan-ip?sn=XX&pon=0/1/0 — cached first, SSH fallback ───────
         elif parsed.path == '/workers':
             user = require_auth(self)
             if not user: return
@@ -894,6 +937,18 @@ class Handler(BaseHTTPRequestHandler):
             if not sn:
                 self.send_json(400, {'error': 'sn required'}); return
             try:
+                # Phase-2 fast path: Influx cache (if ont_wan measurement exists)
+                cached = get_cached_wan_ip(sn)
+                if cached and cached.get("ip") and cached.get("ip") != "-":
+                    self.send_json(200, {
+                        'ip': cached.get("ip", "-"),
+                        'sn': sn,
+                        'status': cached.get("status", ""),
+                        'vlan': cached.get("vlan", ""),
+                        'source': 'cache',
+                    })
+                    return
+
                 olts = olt.get_olts()
                 if not olts:
                     self.send_json(404, {'error': 'No OLTs configured'}); return
@@ -928,17 +983,26 @@ class Handler(BaseHTTPRequestHandler):
                     if m2:
                         ip = m2.group(1).strip()
 
-                self.send_json(200, {'ip': ip, 'sn': sn, 'status': status, 'vlan': vlan})
+                self.send_json(200, {'ip': ip, 'sn': sn, 'status': status, 'vlan': vlan, 'source': 'ssh'})
             except Exception as e:
                 self.send_json(200, {'ip': '-', 'sn': sn, 'error': str(e)})
 
-        # ── GET /ont/live?sn=XXXX — live SSH refresh for one ONT row ──────────
+        # ── GET /ont/live?sn=XXXX — cache-first, SSH fallback ──────────────────
         elif parsed.path == "/ont/live":
             sn = params.get("sn", [None])[0]
             if not sn:
                 return self.send_json(400, {"error": "Missing ?sn= parameter"})
+            # Phase-2 fast path: Influx-backed row
+            cached = get_ont_cached(sn)
+            if cached:
+                cached["source"] = "cache"
+                return self.send_json(200, {"ont": cached})
+
+            # Fallback to existing SSH live check
             ont = live_check_ont(sn)
             if ont:
+                if isinstance(ont, dict):
+                    ont["source"] = "ssh"
                 return self.send_json(200, {"ont": ont})
             return self.send_json(502, {"error": "Live check failed or timed out"})
 

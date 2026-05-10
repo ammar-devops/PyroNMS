@@ -35,6 +35,10 @@ from workers.snmp_helper import snmp_ping, get_ont_metrics_by_index
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
+# Phase 2.2: throttle WAN info collection to avoid per-ONT per-poll SSH load.
+WAN_CACHE_SHARDS = 6  # each poll handles ~1/6 online ONTs for WAN cache
+_POLL_CYCLE = {}
+
 
 def get_logger(slot):
     logger = logging.getLogger(f"slot{slot}")
@@ -81,6 +85,9 @@ def poll_slot(slot, log):
         conn = connect_olt(OLT_HOST, user["username"], user["password"], OLT_PORT)
         log.info("Connected.")
         now = datetime.now(timezone.utc)
+        cycle = _POLL_CYCLE.get(slot, 0)
+        _POLL_CYCLE[slot] = cycle + 1
+        shard = cycle % WAN_CACHE_SHARDS
 
         for port_num in ports:
             pon = f"0/{slot}/{port_num}"
@@ -171,12 +178,19 @@ def poll_slot(slot, log):
                         points.append(op)
 
                     try:
-                        from workers.olt_helper import get_wan_ip
-
-                        wan = get_wan_ip(conn, slot, port_num, ont["ont_id"]) or {}
-                        wan_ip = (wan.get("ip") or "").strip()
-                        wan_status = (wan.get("status") or "").strip()
-                        wan_vlan = (wan.get("vlan") or "").strip()
+                        # Phase 2.2 WAN sampling:
+                        # avoid expensive WAN command on every ONT every cycle.
+                        want_wan_probe = (ont["ont_id"] % WAN_CACHE_SHARDS) == shard
+                        wan = {}
+                        wan_ip = ""
+                        wan_status = ""
+                        wan_vlan = ""
+                        if want_wan_probe:
+                            from workers.olt_helper import get_wan_ip
+                            wan = get_wan_ip(conn, slot, port_num, ont["ont_id"]) or {}
+                            wan_ip = (wan.get("ip") or "").strip()
+                            wan_status = (wan.get("status") or "").strip()
+                            wan_vlan = (wan.get("vlan") or "").strip()
 
                         # Prefer SNMP VLAN if available, otherwise WAN parse fallback.
                         vlan = snmp_metrics.get("vlan") or wan_vlan
@@ -193,8 +207,8 @@ def poll_slot(slot, log):
                             )
                             write_points([vp])
 
-                        # Phase 2.1: cache WAN fields for fast API Open Router.
-                        if wan_ip or wan_status or vlan:
+                        # Phase 2.1/2.2: cache WAN fields for fast API Open Router.
+                        if want_wan_probe and (wan_ip or wan_status or vlan):
                             wp = (
                                 Point("ont_wan")
                                 .tag("olt", OLT_NAME)

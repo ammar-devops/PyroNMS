@@ -2842,14 +2842,10 @@ async function openRouter(sn, pon, btn) {
 
   // Open window synchronously to avoid popup blockers.
   const w = window.open('about:blank', '_blank');
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 18000);
   try {
     const r = await fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}`, {
       headers: authHeaders(),
-      signal: controller.signal,
-    });
+          });
     const d = await r.json();
     if (d && d.ip && d.ip !== '-' && d.ip !== '0.0.0.0') {
       const target = 'http://' + d.ip;
@@ -2868,10 +2864,8 @@ PON: ${pon || '-'}
 ${reason}`, 'warn');
   } catch(e) {
     if (w && !w.closed) w.close();
-    const msg = (e && e.name === 'AbortError') ? 'Timed out while fetching ONT WAN IP' : (e.message || 'Unknown error');
-    showAppNotice('Open Router Failed', msg, 'err');
+    showAppNotice('Open Router Failed', e.message || 'Could not fetch ONT WAN IP', 'err');
   } finally {
-    clearTimeout(timer);
     btn.textContent = orig;
     btn.disabled = false;
   }

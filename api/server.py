@@ -1034,6 +1034,60 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json(500, {"error": str(e)})
 
+        # ── GET /snmp/probe-ont?sn=... (or slot/port/ont_id) ───────────────────
+        elif parsed.path == "/snmp/probe-ont":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Not allowed"})
+            try:
+                olts = olt.get_olts()
+                if not olts:
+                    return self.send_json(404, {"error": "No OLTs configured"})
+                o = olts[0]
+
+                # Load configured OID templates from runtime config.
+                sys.path.insert(0, "/opt/ont-monitor")
+                try:
+                    from config.config import SNMP_OID_TEMPLATES
+                except Exception:
+                    SNMP_OID_TEMPLATES = {}
+
+                sn = (params.get("sn", [""])[0] or "").strip()
+                slot = params.get("slot", [""])[0].strip()
+                port = params.get("port", [""])[0].strip()
+                ont_id = params.get("ont_id", [""])[0].strip()
+
+                # If SN provided, resolve fsp/id using existing SSH helper.
+                if sn and (not slot or not port or not ont_id):
+                    ont_data, raw = olt.find_ont_by_sn(o["ip"], o["username"], o["password"], sn)
+                    if not ont_data:
+                        return self.send_json(404, {"error": "ONT not found by SN", "sn": sn, "details": raw[-600:] if raw else ""})
+                    fsp = ont_data.get("fsp", "")
+                    parts = fsp.split("/")
+                    slot = parts[1] if len(parts) > 1 else ""
+                    port = parts[2] if len(parts) > 2 else ""
+                    ont_id = str(ont_data.get("ont_id", ""))
+
+                if not slot or not port or not ont_id:
+                    return self.send_json(400, {"error": "Provide sn=... or slot=..&port=..&ont_id=.."})
+
+                read_comm = o.get("snmp_community") or "public"
+                ok, data = olt.snmp_probe_ont_fields(
+                    o["ip"], read_comm, int(slot), int(port), int(ont_id), SNMP_OID_TEMPLATES
+                )
+                if not ok:
+                    return self.send_json(500, data)
+                data["source"] = "snmp"
+                data["sn"] = sn
+                data["slot"] = int(slot)
+                data["port"] = int(port)
+                data["ont_id"] = int(ont_id)
+                data["templates"] = SNMP_OID_TEMPLATES
+                return self.send_json(200, data)
+            except Exception as e:
+                return self.send_json(500, {"error": str(e)})
+
         # ── GET /health ───────────────────────────────────────────────────────
         elif parsed.path == "/health":
             return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})

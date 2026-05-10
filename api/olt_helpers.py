@@ -568,3 +568,48 @@ def provision_ont_snmp(ip, read_community, write_community, sn, slot_port, port,
         output_lines.append(f"[SNMP_PROVISION] EXCEPTION: {e}")
         return False, -1, "\n".join(output_lines)
 
+
+def snmp_probe_ont_fields(ip, read_community, slot, port, ont_id, oid_templates):
+    """
+    Probe configured OID templates for one ONT index and return parsed values.
+    This is a discovery helper for Phase 3 and does not modify OLT.
+    """
+    try:
+        ont_index = (int(slot) << 24) + (int(port) << 16) + int(ont_id)
+    except Exception as e:
+        return False, {"error": f"invalid index parameters: {e}"}
+
+    out = {
+        "ont_index": ont_index,
+        "values": {},
+        "raw": {},
+    }
+
+    def _run_get(oid):
+        cmd = ["snmpget", "-v2c", "-c", read_community, "-Oqv", ip, oid]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout or "").strip()
+        return True, (r.stdout or "").strip().strip('"')
+
+    for field in ("rx_power", "temp", "vlan"):
+        tpl = (oid_templates or {}).get(field, "")
+        if not tpl:
+            continue
+        oid = tpl.format(index=ont_index)
+        ok, val = _run_get(oid)
+        out["raw"][field] = {"oid": oid, "ok": ok, "value": val}
+        if ok:
+            if field == "temp":
+                m = re.search(r"\d+", val or "")
+                out["values"][field] = int(m.group(0)) if m else None
+            elif field == "vlan":
+                m = re.search(r"\d+", val or "")
+                out["values"][field] = m.group(0) if m else ""
+            else:
+                m = re.search(r"[-+]?\d+(?:\.\d+)?", val or "")
+                out["values"][field] = float(m.group(0)) if m else None
+        else:
+            out["values"][field] = None
+
+    return True, out

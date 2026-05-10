@@ -185,6 +185,14 @@ def main():
 
     log.info(f"=== Slot {slot} Worker Started ===")
 
+    # Stagger startup: spread polls across the POLL_INTERVAL window
+    # so all 4 workers never hold OLT SSH sessions simultaneously.
+    _STAGGER = {1: 0, 2: 1800, 4: 3600, 5: 5400}
+    _delay = _STAGGER.get(slot, 0)
+    if _delay > 0:
+        log.info(f"Stagger delay: sleeping {_delay}s before first poll...")
+        time.sleep(_delay)
+
     while True:
         try:
             poll_slot(slot, log)

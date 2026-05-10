@@ -164,7 +164,7 @@ def find_ont_by_sn(ip, username, password, sn):
     for attempt in range(2):
         conn = olt_ssh(ip, username, password)
         conn.write_channel(f'display ont info by-sn {sn}\r\n')
-        out = _read_until_prompt(conn, delay=1, max_rounds=40)
+        out = _read_until_prompt(conn, delay=3, max_rounds=20)
         conn.write_channel('quit\r\n'); time.sleep(1)
         conn.disconnect()
         if re.search(r'F/S/P\s*:\s*(\S+)', out) and re.search(r'ONT-ID\s*:\s*(\d+)', out):
@@ -262,34 +262,69 @@ def apply_ont_settings(ip, username, password, payload):
     if method != 'ssh':
         return True, f"SNMP write request accepted for {kind}. Command template is pending model mapping."
 
-    ont, info = find_ont_by_sn(ip, username, password, sn)
-    if not ont:
-        return False, 'ONT not found on OLT'
-
+    # Single connection: open once and reuse for both find and apply
     conn = olt_ssh(ip, username, password)
+    conn.write_channel(f'display ont info by-sn {sn}\r\n')
+    _find_out = _read_until_prompt(conn, delay=3, max_rounds=20)
+    _fsp_m = re.search(r'F/S/P\s*:\s*(\S+)', _find_out)
+    _id_m  = re.search(r'ONT-ID\s*:\s*(\d+)', _find_out)
+    if not _fsp_m or not _id_m:
+        conn.disconnect()
+        return False, 'ONT not found on OLT'
+    _parts = _fsp_m.group(1).split('/')
+    ont = {
+        'fsp':              _fsp_m.group(1),
+        'slot_port':        '/'.join(_parts[:2]),
+        'port':             int(_parts[2]) if len(_parts) > 2 and _parts[2].isdigit() else 0,
+        'ont_id':           int(_id_m.group(1)),
+        'vendor':           (re.search(r'SN\s*:\s*[0-9A-Fa-f]+\s*\(([^)-]+)-', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'model':            (re.search(r'Ont EquipmentID\s*:\s*(.+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'description':      (re.search(r'Description\s*:\s*(.+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'line_profile_id':  (re.search(r'Line profile ID\s*:\s*(\S+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'line_profile_name':(re.search(r'Line profile name\s*:\s*(.+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'service_profile_id': (re.search(r'Service profile ID\s*:\s*(\S+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'service_profile_name': (re.search(r'Service profile name\s*:\s*(.+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'run_state':        (re.search(r'Run state\s*:\s*(\S+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+        'config_state':     (re.search(r'Config state\s*:\s*(\S+)', _find_out) or type('', (), {'group': lambda s, x: ''})()).group(1).strip(),
+    }
+    info = _find_out
     outputs = [info]
     action = payload.get('action', 'apply')
 
     if kind == 'check':
         details = {"wan": {}, "wifi": {}, "raw_sections": []}
-        commands = [
-            ("SERVICE_PORT", f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}'),
-            ("WAN_INFO", f'display ont wan-info {ont["fsp"]} {ont["ont_id"]}'),
-            ("WLAN_INFO", f'display ont wlan-info {ont["fsp"]} {ont["ont_id"]}'),
-            ("WIFI_INFO", f'display ont wifi-info {ont["fsp"]} {ont["ont_id"]}'),
-            ("ETH_PORT", f'display ont port state {ont["fsp"]} {ont["ont_id"]} eth-port all'),
+        # SERVICE_PORT works from (config)# with fsp format
+        sp_section = _olt_command(conn, f'display service-port port {ont["fsp"]} ont {ont["ont_id"]}', delay=3)
+        if 'Parameter error' not in sp_section and 'Unknown command' not in sp_section:
+            outputs.append(f'[SERVICE_PORT]\n{sp_section}')
+            details["raw_sections"].append("SERVICE_PORT")
+            details["wan"].update(_parse_service_port(sp_section))
+        # Enter gpon interface for port-based commands (avoids digit-space-digit issue)
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1.5); conn.read_channel()
+        port_cmds = [
+            ("WAN_INFO",  f'display ont wan-info {ont["port"]} {ont["ont_id"]}'),
+            ("WLAN_INFO", f'display ont wlan-info {ont["port"]} {ont["ont_id"]}'),
+            ("WIFI_INFO", f'display ont wifi-info {ont["port"]} {ont["ont_id"]}'),
+            ("ETH_PORT",  f'display ont port state {ont["port"]} {ont["ont_id"]} eth-port all'),
         ]
-        for label, cmd in commands:
-            section = _olt_command(conn, cmd, delay=2)
+        for label, cmd in port_cmds:
+            section = _olt_command(conn, cmd, delay=3)
             if 'Unknown command' in section or 'Parameter error' in section:
                 continue
             outputs.append(f'[{label}]\n{section}')
             details["raw_sections"].append(label)
-            if label == 'SERVICE_PORT':
-                details["wan"].update(_parse_service_port(section))
+            if label == 'WAN_INFO':
+                import re as _re
+                _ip = _re.search("IPv4 address\s*:\s*(\S+)", section)
+                _st = _re.search("IPv4 Connection status\s*:\s*(\S.*)", section)
+                _at = _re.search("IPv4 access type\s*:\s*(\S.*)", section)
+                if _ip and _ip.group(1) != "-": details["wan"]["ipv4_address"] = _ip.group(1).strip()
+                if _st: details["wan"]["connection_status"] = _st.group(1).strip()
+                if _at: details["wan"]["access_type"] = _at.group(1).strip()
             if label == 'WLAN_INFO':
                 details["wifi"].update(_parse_wlan_info(section))
-        conn.write_channel('quit\r\n'); time.sleep(1)
+        conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
         conn.disconnect()
         return True, summarize_ont(ont) + '\n[ONT_DETAILS_JSON] ' + json.dumps(details) + '\n\n' + '\n'.join(outputs)
 

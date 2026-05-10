@@ -30,7 +30,7 @@ SLOT_PORTS = {
 }
 
 # Background poll interval (seconds) - 1 hour
-POLL_INTERVAL = 300
+POLL_INTERVAL = 7200
 
 # API Settings
 API_HOST = "0.0.0.0"

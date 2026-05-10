@@ -2637,7 +2637,7 @@ function renderTable() {
   tbody.innerHTML = rows.map((o, i) => {
     const sig  = signalBadge(o);
     const temp = o.temp ? `${o.temp} C` : '-';
-    return `<tr class="ont-row" onclick="openModal('${o.sn}','${escHtml(o.name)}')">
+    return `<tr class="ont-row" onclick="openModal('${escAttr(o.sn)}','${escAttr(o.name)}')">
       <td class="row-num">${i+1}</td>
       <td><span class="pon-tag">${o.pon || '-'}</span></td>
       <td class="customer-name">${escHtml(o.name || '-')}</td>

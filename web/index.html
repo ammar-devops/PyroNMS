@@ -207,6 +207,15 @@
   .mobile-menu-btn,
   .mobile-sidebar-backdrop { display: none; }
   .sidebar-profile { display: none; }
+
+  .toast-wrap { position: fixed; right: 16px; bottom: 16px; z-index: 1200; display: flex; flex-direction: column; gap: 10px; max-width: 360px; }
+  .toast { background: var(--bg2); border: 1px solid var(--border); border-left: 4px solid var(--accent); color: var(--text); border-radius: 8px; padding: 10px 12px; box-shadow: 0 10px 24px rgba(0,0,0,.35); }
+  .toast-title { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+  .toast-msg { font-size: 12px; color: var(--muted); white-space: pre-line; }
+  .toast.ok { border-left-color: #22c55e; }
+  .toast.warn { border-left-color: #f59e0b; }
+  .toast.err { border-left-color: #ef4444; }
+
   .sidebar-profile-btn {
     width: 100%;
     display: flex;
@@ -2824,7 +2833,7 @@ async function openRouter(sn, pon, btn) {
 PON: ${pon || '-'}
 ${reason}`);
   } catch(e) {
-    showAppNotice('Open Router Failed', e.message || 'Unknown error');
+    showAppNotice('Open Router Failed', e.message || 'Unknown error', 'err');
   } finally {
     btn.textContent = orig;
     btn.disabled = false;

@@ -159,6 +159,57 @@ def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, 
     conn.disconnect()
     return False, -1, out
 
+
+def delete_onts(ip, username, password, sns):
+    """Delete ONTs by SN list.  Returns list of {sn, ok, message} dicts."""
+    conn = olt_ssh(ip, username, password)
+    results = []
+    for sn in sns:
+        sn = sn.strip().upper()
+        try:
+            # Locate ONT on OLT
+            conn.write_channel(f'display ont info by-sn {sn}\r\n')
+            _out = _read_until_prompt(conn, delay=3, max_rounds=20)
+            _fsp_m = re.search(r'F/S/P\s*:\s*(\S+)', _out)
+            _id_m  = re.search(r'ONT-ID\s*:\s*(\d+)', _out)
+            if not _fsp_m or not _id_m:
+                results.append({'sn': sn, 'ok': False, 'message': 'ONT not found on OLT'})
+                continue
+            fsp    = _fsp_m.group(1)
+            ont_id = int(_id_m.group(1))
+            parts  = fsp.split('/')
+            slot_port = '/'.join(parts[:2])
+            port   = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+            # Delete service-ports first
+            sp_out = _olt_command(conn, f'display service-port port {fsp} ont {ont_id}', delay=3)
+            sp_ids = re.findall(r'^\s*(\d+)\s+GPON', sp_out, re.MULTILINE)
+            for sp_id in sp_ids:
+                _olt_command(conn, f'undo service-port {sp_id}', delay=3)
+
+            # Enter GPON interface and delete ONT
+            conn.write_channel(f'interface gpon {slot_port}\r\n')
+            time.sleep(1.5); conn.read_channel()
+            conn.write_channel(f'ont delete {port} {ont_id}\r\n')
+            time.sleep(2)
+            del_out = conn.read_channel()
+            if 'y/n' in del_out.lower() or 'sure' in del_out.lower() or 'confirm' in del_out.lower():
+                conn.write_channel('y\r\n')
+                time.sleep(2); conn.read_channel()
+            conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+
+            results.append({
+                'sn': sn, 'ok': True,
+                'message': f'Deleted {fsp} / ID {ont_id}. Removed {len(sp_ids)} service-port(s).'
+            })
+        except Exception as e:
+            results.append({'sn': sn, 'ok': False, 'message': str(e)})
+    try:
+        conn.disconnect()
+    except Exception:
+        pass
+    return results
+
 def find_ont_by_sn(ip, username, password, sn):
     out = ''
     for attempt in range(2):

@@ -1059,6 +1059,30 @@ class Handler(BaseHTTPRequestHandler):
                 append_ont_settings_audit(user, kind, payload, False, str(e))
                 return self.send_json(500, {"error": str(e)})
 
+        elif parsed.path == "/ont/delete":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Admin only"})
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            try:
+                payload = json.loads(body)
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            sns = payload.get("sns", [])
+            if not sns or not isinstance(sns, list):
+                return self.send_json(400, {"error": "sns list required"})
+            olts = olt.get_olts()
+            if not olts:
+                return self.send_json(404, {"error": "No OLTs configured"})
+            o = olts[0]
+            try:
+                results = olt.delete_onts(o["ip"], o["username"], o["password"], sns)
+                return self.send_json(200, {"results": results})
+            except Exception as e:
+                return self.send_json(500, {"error": str(e)})
+
         elif parsed.path == "/auth/login":
             length = int(self.headers.get("Content-Length",0))
             body = self.rfile.read(length)

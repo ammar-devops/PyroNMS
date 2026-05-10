@@ -2859,6 +2859,17 @@ ${reason}`);
   }
 }
 
+function signalBadge(o) {
+  if (o.status === 'power-failure') return { cls:'sig-offline', text:'?? Power' };
+  if (o.status === 'fiber-issue')   return { cls:'sig-offline sig-fiber', text:'? Fiber' };
+  if (o.status !== 'online')        return { cls:'sig-offline', text:'OFFLINE' };
+  const rx = parseFloat(o.rx);
+  if (isNaN(rx))        return { cls:'sig-bad',  text: o.rx || '-' };
+  if (rx >= -26)        return { cls:'sig-good',  text: `${rx} dBm` };
+  if (rx >= -28)        return { cls:'sig-weak',  text: `${rx} dBm` };
+  return                       { cls:'sig-bad',   text: `${rx} dBm` };
+}
+
 async function refreshRow(sn, btn) {
   const span = btn.querySelector('span');
   span?.classList.add('spin');

@@ -4316,7 +4316,7 @@ function renderOntManager(d) {
   const theme = themeForModel(d.model || row.vendor || '');
 
   document.getElementById('ontManagerBox').className = 'ontmgr-box ' + theme.cls;
-  document.getElementById('ontmgrVendor').textContent = theme.vendor + (d.model ? ' · ' + d.model : '');
+  document.getElementById('ontmgrVendor').textContent = (d.device_type || theme.vendor) + (d.model ? ' · ' + d.model : '');
   document.getElementById('ontmgrName').textContent = row.name || d.description || d.sn;
   document.getElementById('ontmgrMeta').textContent = `SN ${d.sn}  •  PON ${d.fsp}  •  ID ${d.ont_id}`;
 
@@ -4345,8 +4345,9 @@ function renderOntManager(d) {
       </div>
       <div class="ontmgr-card">
         <h4>🛠️ Hardware</h4>
+        ${liveRow('Device Type', d.device_type || '—')}
         ${liveRow('Model',       d.model)}
-        ${liveRow('Vendor',      theme.vendor)}
+        ${liveRow('Vendor',      d.vendor || theme.vendor)}
         ${liveRow('HW Version',  d.hw_version)}
         ${liveRow('SW Version',  d.sw_version)}
       </div>
@@ -4481,7 +4482,7 @@ function renderOntManager(d) {
   <div id="ontManagerOverlay" class="ontmgr-overlay" onclick="closeOntManager(event)">
     <div id="ontManagerBox" class="ontmgr-box theme-generic" onclick="event.stopPropagation()">
       <div class="ontmgr-head">
-        <span id="ontmgrVendor" class="vendor-pill">ONT</span>
+        <span id="ontmgrVendor" class="vendor-pill" title="ONT = Router | ONU = L2 Bridge">ONT</span>
         <div class="title-block">
           <div id="ontmgrName" class="title-name">—</div>
           <div id="ontmgrMeta" class="title-meta">—</div>

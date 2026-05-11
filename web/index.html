@@ -594,6 +594,53 @@
     .table-wrap table { min-width: 620px; }
     #oltListCards button { min-width: 100%; }
   }
+
+  /* ─── ONT Manager Modal (v2.7.0) ──────────────────────────────────────── */
+  .ontmgr-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.72); z-index:600; align-items:center; justify-content:center; padding:20px; }
+  .ontmgr-overlay.open { display:flex; }
+  .ontmgr-box { background:var(--bg2); border:1px solid var(--border); border-radius:14px; width:100%; max-width:960px; max-height:90vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 30px 80px rgba(0,0,0,.45); }
+  .ontmgr-head { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; background:linear-gradient(135deg,rgba(79,142,247,.10),transparent); }
+  .ontmgr-head .vendor-pill { font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px; text-transform:uppercase; letter-spacing:.5px; background:rgba(79,142,247,.15); color:var(--accent); border:1px solid rgba(79,142,247,.4); }
+  .ontmgr-head .title-block { flex:1; min-width:0; }
+  .ontmgr-head .title-name { font-size:18px; font-weight:700; color:var(--text); line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ontmgr-head .title-meta { font-size:11px; color:var(--muted); margin-top:4px; font-family:monospace; }
+  .ontmgr-head .status-pill { padding:5px 12px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase; }
+  .ontmgr-head .btn-close { background:none; border:none; color:var(--muted); font-size:22px; cursor:pointer; padding:4px 10px; }
+  .ontmgr-head .btn-close:hover { color:var(--text); }
+  .ontmgr-body { padding:20px 22px; overflow-y:auto; flex:1; }
+  .ontmgr-loading { display:flex; align-items:center; justify-content:center; gap:10px; padding:60px; color:var(--muted); font-size:14px; }
+  .ontmgr-error { padding:30px; text-align:center; color:#f87171; font-size:14px; }
+  .ontmgr-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; margin-bottom:18px; }
+  .ontmgr-card { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .ontmgr-card h4 { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin:0 0 10px 0; }
+  .ontmgr-row { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(255,255,255,.04); font-size:13px; }
+  .ontmgr-row:last-child { border-bottom:none; }
+  .ontmgr-row .k { color:var(--muted); font-size:12px; }
+  .ontmgr-row .v { color:var(--text); font-weight:600; font-family:monospace; text-align:right; word-break:break-all; max-width:60%; }
+  .ontmgr-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; padding-top:18px; border-top:1px solid var(--border); }
+  .ontmgr-actions button { background:var(--bg3); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:9px 16px; cursor:pointer; font-size:13px; font-weight:600; transition:all .15s; }
+  .ontmgr-actions button:hover { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .ontmgr-actions button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .ontmgr-actions button.danger { background:rgba(239,68,68,.15); border-color:rgba(239,68,68,.4); color:#fca5a5; }
+  .ontmgr-actions button.danger:hover { background:#ef4444; color:#fff; }
+  .ontmgr-actions button:disabled { opacity:.5; cursor:not-allowed; }
+  /* Theme variants */
+  .ontmgr-box.theme-huawei  .ontmgr-head { background:linear-gradient(135deg,rgba(230,0,18,.14),rgba(230,0,18,.02)); border-bottom-color:rgba(230,0,18,.3); }
+  .ontmgr-box.theme-huawei  .vendor-pill { background:rgba(230,0,18,.18); color:#ff6b76; border-color:rgba(230,0,18,.45); }
+  .ontmgr-box.theme-zte     .ontmgr-head { background:linear-gradient(135deg,rgba(0,102,179,.18),rgba(0,102,179,.02)); border-bottom-color:rgba(0,102,179,.3); }
+  .ontmgr-box.theme-zte     .vendor-pill { background:rgba(0,102,179,.22); color:#60a5fa; border-color:rgba(0,102,179,.45); }
+  .ontmgr-box.theme-generic .vendor-pill { background:rgba(148,163,184,.18); color:#cbd5e1; border-color:rgba(148,163,184,.4); }
+  /* Status pill colors */
+  .status-online   { background:rgba(34,197,94,.18); color:#86efac; }
+  .status-offline  { background:rgba(148,163,184,.18); color:#cbd5e1; }
+  .status-fault    { background:rgba(239,68,68,.20); color:#fca5a5; }
+  @media (max-width:640px) {
+    .ontmgr-box { max-height:96vh; border-radius:10px; }
+    .ontmgr-head { padding:14px 16px; gap:10px; }
+    .ontmgr-head .title-name { font-size:16px; }
+    .ontmgr-body { padding:14px 16px; }
+    .ontmgr-grid { grid-template-columns:1fr; }
+  }
 </style>
 </head>
 <body>
@@ -877,8 +924,6 @@
         <th style="width:70px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('temp')" id="fth-temp">Temp</th>
         <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-sn">Serial Number</th>
         <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('vlan')" id="fth-vlan">VLAN</th>
-        <th style="width:86px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Settings</th>
-        <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Router</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
       </tr>
     </thead>
@@ -896,8 +941,6 @@
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
         <th style="width:60px" onclick="sortTable('vlan')" id="th-vlan" style="cursor:pointer">VLAN</th>
-        <th style="width:86px">Settings</th>
-        <th style="width:90px">Router</th>
         <th style="width:90px">Refresh</th>
       </tr>
     </thead>
@@ -2673,12 +2716,6 @@ function renderTable() {
         <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
         <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
-          <button title="ONT Settings" onclick="openOntSettings('${o.sn}','${escAttr(o.name)}','${o.pon || ''}','${o.vlan || ''}')" style="background:rgba(79,142,247,.14);border:1px solid rgba(79,142,247,.45);color:var(--accent);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;">Settings</button>
-        </td>
-        <td onclick="event.stopPropagation()" style="text-align:center;">
-          <button title="Open Router" onclick="openRouter('${o.sn}','${o.pon}',this)" data-ip="${escAttr(o.wan_ip || '')}" data-ontid="${escAttr(o.ont_id || '')}" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">Open Router</button>
-        </td>
-        <td onclick="event.stopPropagation()" style="text-align:center;">
           <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>?</span> Refresh</button>
         </td>
       </tr>`;
@@ -2689,7 +2726,7 @@ function renderTable() {
         if (ev.target.closest('button, a, input, select, textarea, label')) return;
         const sn = tr.dataset.sn || '';
         const name = tr.dataset.name || sn;
-        if (sn) openModal(sn, name);
+        if (sn) openOntManager(sn, name);
       });
     });
 
@@ -2697,10 +2734,10 @@ function renderTable() {
     if (isMobileView() && wrap) wrap.scrollLeft = 0;
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
     }
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
   }
 }
 
@@ -2869,7 +2906,26 @@ function _openResolvingWindow() {
   const w = window.open('about:blank', '_blank');
   if (!w) return null;
   try {
-    w.document.write('<!doctype html><title>Resolving Router...</title><body style="font-family:Arial,sans-serif;background:#0b1020;color:#dbe4ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><div style="font-size:18px;font-weight:700;margin-bottom:8px;">Resolving Router IP...</div><div style="opacity:.8;font-size:13px;">Please wait</div></div></body>');
+    w.document.write('<!doctype html><title>Resolving Router...</title><body style="font-family:Arial,sans-serif;background:#0b1020;color:#dbe4ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><div style="font-size:18px;font-weight:700;margin-bottom:8px;">Resolving Router IP...</div><div style="opacity:.8;font-size:13px;">Please wait</div></div>
+  <!-- ONT Manager Modal (v2.7.0) — replaces GenieACS popup -->
+  <div id="ontManagerOverlay" class="ontmgr-overlay" onclick="closeOntManager(event)">
+    <div id="ontManagerBox" class="ontmgr-box theme-generic" onclick="event.stopPropagation()">
+      <div class="ontmgr-head">
+        <span id="ontmgrVendor" class="vendor-pill">ONT</span>
+        <div class="title-block">
+          <div id="ontmgrName" class="title-name">—</div>
+          <div id="ontmgrMeta" class="title-meta">—</div>
+        </div>
+        <span id="ontmgrStatus" class="status-pill status-offline">—</span>
+        <button class="btn-close" onclick="closeOntManager()" title="Close">✕</button>
+      </div>
+      <div id="ontmgrBody" class="ontmgr-body">
+        <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
+      </div>
+    </div>
+  </div>
+
+</body>');
     w.document.close();
   } catch(_) {}
   return w;
@@ -4214,7 +4270,120 @@ init();
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js">
+// ─── ONT Manager (v2.7.0) ────────────────────────────────────────────────
+let _ontMgrCurrent = null;
+
+function themeForModel(model) {
+  const m = (model || '').toUpperCase();
+  if (/^(EG8|HG8|HS8|HN8|EG9|MA56)/.test(m) || m.includes('HUAWEI')) return { cls:'theme-huawei',  vendor:'Huawei' };
+  if (/^F\d{3,4}/.test(m)            || m.includes('ZTE'))           return { cls:'theme-zte',     vendor:'ZTE' };
+  return { cls:'theme-generic', vendor: model ? 'ONT' : 'Unknown' };
+}
+
+function openOntManager(sn, fallbackName) {
+  if (!sn) return;
+  _ontMgrCurrent = { sn, name: fallbackName || sn };
+  const box = document.getElementById('ontManagerBox');
+  box.className = 'ontmgr-box theme-generic';
+  document.getElementById('ontmgrVendor').textContent = 'ONT';
+  document.getElementById('ontmgrName').textContent = fallbackName || sn;
+  document.getElementById('ontmgrMeta').textContent = sn;
+  const st = document.getElementById('ontmgrStatus');
+  st.className = 'status-pill status-offline'; st.textContent = '…';
+  document.getElementById('ontmgrBody').innerHTML =
+    '<div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>';
+  document.getElementById('ontManagerOverlay').classList.add('open');
+  loadOntManagerData(sn);
+}
+
+function closeOntManager(e) {
+  if (e && e.target !== document.getElementById('ontManagerOverlay') && e.target.tagName !== 'BUTTON' && !e.target.classList.contains('btn-close')) return;
+  document.getElementById('ontManagerOverlay').classList.remove('open');
+  _ontMgrCurrent = null;
+}
+
+async function loadOntManagerData(sn) {
+  try {
+    const r = await fetch(`${API}/ont/info?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      document.getElementById('ontmgrBody').innerHTML =
+        `<div class="ontmgr-error">⚠ ${escHtml(data.error || 'Failed to load ONT info')}</div>`;
+      return;
+    }
+    renderOntManager(data);
+  } catch (e) {
+    document.getElementById('ontmgrBody').innerHTML =
+      `<div class="ontmgr-error">⚠ Network error: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderOntManager(d) {
+  // Cross-reference with the row in allONTs to grab signal/wan_ip/temp/vlan we already have cached
+  const row = (typeof allONTs !== 'undefined' ? allONTs : []).find(o => o.sn === d.sn) || {};
+  const theme = themeForModel(d.model || row.vendor || '');
+
+  document.getElementById('ontManagerBox').className = 'ontmgr-box ' + theme.cls;
+  document.getElementById('ontmgrVendor').textContent = theme.vendor + (d.model ? ' · ' + d.model : '');
+  document.getElementById('ontmgrName').textContent = row.name || d.description || d.sn;
+  document.getElementById('ontmgrMeta').textContent = `SN ${d.sn}  •  PON ${d.fsp}  •  ID ${d.ont_id}`;
+
+  // Status pill
+  const stEl = document.getElementById('ontmgrStatus');
+  const rs = (d.run_state || '').toLowerCase();
+  if (rs === 'online')        { stEl.className = 'status-pill status-online';  stEl.textContent = 'Online'; }
+  else if (rs.includes('off')||rs.includes('down')) { stEl.className = 'status-pill status-fault'; stEl.textContent = d.run_state || 'Offline'; }
+  else                        { stEl.className = 'status-pill status-offline'; stEl.textContent = d.run_state || 'Unknown'; }
+
+  const liveRow = (k, v) => `<div class="ontmgr-row"><span class="k">${k}</span><span class="v">${escHtml(String(v ?? '—'))}</span></div>`;
+
+  const distanceTxt = d.distance_m != null ? `${d.distance_m} m` : '—';
+  const rxTxt       = row.rx && row.rx !== '-' ? `${row.rx} dBm` : '—';
+  const tempTxt     = row.temp ? `${row.temp} °C` : '—';
+  const wanIp       = row.wan_ip || '';
+
+  document.getElementById('ontmgrBody').innerHTML = `
+    <div class="ontmgr-grid">
+      <div class="ontmgr-card">
+        <h4>📡 Live Signal</h4>
+        ${liveRow('RX Power',    rxTxt)}
+        ${liveRow('Temperature', tempTxt)}
+        ${liveRow('Distance',    distanceTxt)}
+        ${liveRow('Online for',  d.online_duration)}
+      </div>
+      <div class="ontmgr-card">
+        <h4>🛠️ Hardware</h4>
+        ${liveRow('Model',       d.model)}
+        ${liveRow('Vendor',      theme.vendor)}
+        ${liveRow('HW Version',  d.hw_version)}
+        ${liveRow('SW Version',  d.sw_version)}
+      </div>
+      <div class="ontmgr-card">
+        <h4>🔌 Service</h4>
+        ${liveRow('Line Profile',    d.line_profile)}
+        ${liveRow('Service Profile', d.service_profile)}
+        ${liveRow('VLAN',            row.vlan)}
+        ${liveRow('WAN IP',          wanIp)}
+      </div>
+      <div class="ontmgr-card">
+        <h4>📊 OLT State</h4>
+        ${liveRow('Run State',     d.run_state)}
+        ${liveRow('Config State',  d.config_state)}
+        ${liveRow('Match State',   d.match_state)}
+        ${liveRow('Last Up',       d.last_up_time)}
+        ${liveRow('Last Down',     d.last_down_cause)}
+      </div>
+    </div>
+    <div class="ontmgr-actions">
+      <button class="primary" onclick="loadOntManagerData('${escAttr(d.sn)}')" title="Re-run display ont info via SSH">⟳ Refresh</button>
+      ${wanIp ? `<button onclick="window.open('http://${escAttr(wanIp)}','_blank')" title="Open ONT web UI in new tab">🌐 Open Web UI (${escHtml(wanIp)})</button>` : ''}
+    </div>
+  `;
+}
+
+
+</script>
 
 <!-- Provision ONT Modal -->
 <div id="provModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:800;align-items:center;justify-content:center;backdrop-filter:blur(3px);" onclick="if(event.target===this)closeProvisionModal()">

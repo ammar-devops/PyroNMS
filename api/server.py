@@ -1071,23 +1071,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json(500, {"error": str(e)})
 
-        # ── GET /device?sn=XXXX ──────────────────────────────────────────────
+        # ── GET /device — DEPRECATED in v2.7.0 (GenieACS removed) ────────────
         elif parsed.path == "/device":
-            sn = params.get("sn", [None])[0]
-            if not sn:
-                return self.send_json(400, {"error": "Missing ?sn= parameter"})
-
-            device_id = find_device_id(sn)
-            if not device_id:
-                return self.send_json(404, {"error": f"Device with SN {sn} not found in GenieACS"})
-
-            raw = fetch_device_data(device_id)
-            if not raw:
-                return self.send_json(500, {"error": "Failed to fetch device data"})
-
-            result = parse_device(raw)
-            result["_device_id"] = device_id
-            return self.send_json(200, result)
+            return self.send_json(410, {"error": "GenieACS removed in v2.7.0 — use /ont/info?sn=..."})
 
         elif parsed.path == "/ont/settings/templates":
             user = require_auth(self)

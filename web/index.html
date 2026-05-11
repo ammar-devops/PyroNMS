@@ -2079,10 +2079,30 @@ async function init() {
 }
 
 async function loadONTs() {
+  // Show cached data IMMEDIATELY for instant dashboard
+  if (!allONTs.length) {
+    try {
+      const cached = localStorage.getItem('pyronms_onts_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.onts && parsed.onts.length) {
+          allONTs = parsed.onts;
+          updateStats();
+          updateDashboard();
+          buildPONFilterOptions();
+          renderTable();
+          const ageMin = Math.round((Date.now() - parsed.ts) / 60000);
+          document.getElementById('updateInfo').textContent =
+            `Cached (${ageMin}m ago) — fetching fresh…`;
+        }
+      }
+    } catch(e) { /* cache read failed, fall through to fetch */ }
+  }
   try {
     const r = await fetch(`${API}/onts`,{headers:authHeaders()});
     const data = await r.json();
     allONTs = data.onts || [];
+    try { localStorage.setItem('pyronms_onts_cache', JSON.stringify({ts:Date.now(), onts:allONTs})); } catch(e) {}
     updateStats();
     updateDashboard();
     buildPONFilterOptions();
@@ -2091,7 +2111,7 @@ async function loadONTs() {
       `Updated: ${new Date().toLocaleTimeString()} — ${allONTs.length} ONTs`;
   } catch(e) {
     document.getElementById('updateInfo').textContent = 'Error loading data';
-    throw e;  // propagate so refreshAll can catch it
+    throw e;
   }
 }
 

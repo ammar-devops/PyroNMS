@@ -2906,8 +2906,7 @@ function _openResolvingWindow() {
   const w = window.open('about:blank', '_blank');
   if (!w) return null;
   try {
-    w.document.write('<!doctype html><title>Resolving Router...</title><body style="font-family:Arial,sans-serif;background:#0b1020;color:#dbe4ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><div style="font-size:18px;font-weight:700;margin-bottom:8px;">Resolving Router IP...</div><div style="opacity:.8;font-size:13px;">Please wait</div></div>
-</body>');
+    w.document.write('<!doctype html><title>Resolving Router...</title><body style="font-family:Arial,sans-serif;background:#0b1020;color:#dbe4ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><div style="font-size:18px;font-weight:700;margin-bottom:8px;">Resolving Router IP...</div><div style="opacity:.8;font-size:13px;">Please wait</div></div></body>');
     w.document.close();
   } catch(_) {}
   return w;

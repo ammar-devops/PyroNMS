@@ -4255,6 +4255,7 @@ init();
 <script>
 // ─── ONT Manager (v2.7.0) ────────────────────────────────────────────────
 let _ontMgrCurrent = null;
+let _ontMgrReq = 0;
 
 function themeForModel(model) {
   const m = (model || '').toUpperCase();
@@ -4283,12 +4284,19 @@ function closeOntManager(e) {
   if (e && e.target !== document.getElementById('ontManagerOverlay') && e.target.tagName !== 'BUTTON' && !e.target.classList.contains('btn-close')) return;
   document.getElementById('ontManagerOverlay').classList.remove('open');
   _ontMgrCurrent = null;
+  _ontMgrReq++;   // invalidate any in-flight request
 }
 
 async function loadOntManagerData(sn) {
+  const myReq = ++_ontMgrReq;       // unique token for this call
+  const mySn  = sn;                  // remember the SN this call is for
   try {
     const r = await fetch(`${API}/ont/info?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
     const data = await r.json();
+    // Discard if (a) another request started after this one, (b) popup closed, (c) current popup is for a different SN, or (d) backend echoed a different SN
+    if (myReq !== _ontMgrReq) return;
+    if (!_ontMgrCurrent || _ontMgrCurrent.sn !== mySn) return;
+    if (data && data.ok && data.sn && data.sn !== mySn) return;
     if (!r.ok || !data.ok) {
       document.getElementById('ontmgrBody').innerHTML =
         `<div class="ontmgr-error">⚠ ${escHtml(data.error || 'Failed to load ONT info')}</div>`;
@@ -4296,6 +4304,7 @@ async function loadOntManagerData(sn) {
     }
     renderOntManager(data);
   } catch (e) {
+    if (myReq !== _ontMgrReq) return;
     document.getElementById('ontmgrBody').innerHTML =
       `<div class="ontmgr-error">⚠ Network error: ${escHtml(e.message)}</div>`;
   }

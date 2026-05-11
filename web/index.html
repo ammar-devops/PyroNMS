@@ -1033,9 +1033,11 @@ let _advFilters = {status:'', signal:'', pon:'', sort:''};
 
 function buildPONFilterOptions() {
   const select = document.getElementById('ff-pon');
-  if (!select || !allONTs.length) return;
+  if (!select) { console.warn('[buildPONFilterOptions] ff-pon not found'); return; }
+  if (!allONTs.length) { console.warn('[buildPONFilterOptions] allONTs empty, skipping'); return; }
   // Use full PON port (e.g. 0/1/0, 0/1/1, ...)
   const pons = [...new Set(allONTs.map(o => o.pon||'').filter(Boolean))];
+  console.log('[buildPONFilterOptions]', allONTs.length, 'ONTs ->', pons.length, 'unique PONs');
   pons.sort((a,b) => {
     const pa = a.split('/').map(Number);
     const pb = b.split('/').map(Number);
@@ -1043,13 +1045,14 @@ function buildPONFilterOptions() {
     return 0;
   });
   const current = select.value;
-  select.innerHTML = '<option value="">All Ports</option>';
+  // Build HTML string directly to avoid any DOM append issues
+  let html = '<option value="">All Ports</option>';
   pons.forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p; opt.textContent = p;
-    if (p === current) opt.selected = true;
-    select.appendChild(opt);
+    const sel = (p === current) ? ' selected' : '';
+    html += `<option value="${p}"${sel}>${p}</option>`;
   });
+  select.innerHTML = html;
+  console.log('[buildPONFilterOptions] options written:', select.options.length);
 }
 
 function applyAdvFilters() {

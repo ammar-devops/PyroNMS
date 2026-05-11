@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img width="1552" height="2060" alt="PyroNet Solutions Logo - P" src="https://github.com/user-attachments/assets/ae47fad8-2a62-41e8-b22e-156b7ad140c7" /> PyroNMS
+# <img width="10" height="10" alt="PyroNet Solutions Logo - P" src="https://github.com/user-attachments/assets/ae47fad8-2a62-41e8-b22e-156b7ad140c7" /> PyroNMS
 
 ### Network Management System for ISPs
 

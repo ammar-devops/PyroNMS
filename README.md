@@ -13,7 +13,7 @@
 
 **A purpose-built NMS for ISPs running Huawei GPON OLTs — real-time ONT monitoring, fault detection, and full provisioning lifecycle in one dashboard.**
 
-🏢 *Developed by [PyroNet Solutions](https://github.com/ammar-devops)* &nbsp;•&nbsp; 🌐 *Powering Indus Broadband Pvt Ltd*
+🏢 *Developed by [PyroNet Solutions](https://github.com/PyroNet-Solutions)* &nbsp;•&nbsp; 🌐 *Powering Indus Broadband Pvt Ltd*
 
 </div>
 

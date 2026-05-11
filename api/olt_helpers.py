@@ -732,3 +732,51 @@ def snmp_walk_raw(ip, read_community, oid, limit_lines=200):
         }
     except Exception as e:
         return {"ok": False, "oid": str(oid), "error": str(e), "lines": [], "count": 0}
+
+
+def snmp_discover_candidates(ip, read_community, expected_ip='', expected_temp=''):
+    """
+    Bounded SNMP discovery:
+    walk only selected Huawei subtrees with strict timeout,
+    then return lines that match expected WAN IP / temperature tokens.
+    """
+    expected_ip = (expected_ip or '').strip()
+    expected_temp = str(expected_temp or '').strip()
+    subtrees = [
+        '1.3.6.1.4.1.2011.6.128.1.1.2',
+        '1.3.6.1.4.1.2011.5.100.1',
+        '1.3.6.1.2.1.31.1.1.1',
+    ]
+
+    hits = []
+    scans = []
+    for root in subtrees:
+        cmd = [
+            'snmpwalk', '-v2c', '-c', read_community,
+            '-On', '-t', '1', '-r', '0', '-Cc',
+            ip, root
+        ]
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=18)
+            out = (p.stdout or '').splitlines()
+            scans.append({'root': root, 'rc': p.returncode, 'lines': len(out)})
+            for line in out:
+                line_l = line.lower()
+                matched = False
+                why = []
+                if expected_ip and expected_ip in line:
+                    matched = True
+                    why.append('expected_ip')
+                if expected_temp and (f'integer: {expected_temp}' in line_l or f'gauge32: {expected_temp}' in line_l):
+                    matched = True
+                    why.append('expected_temp')
+                if matched:
+                    if any(k in line_l for k in ['ipv4', 'pppoe', 'wan', 'optical', 'temperature', 'vlan']):
+                        why.append('keyword_context')
+                    hits.append({'root': root, 'line': line, 'why': ','.join(why)})
+        except subprocess.TimeoutExpired:
+            scans.append({'root': root, 'timeout': True})
+        except Exception as e:
+            scans.append({'root': root, 'error': str(e)})
+
+    return {'ok': True, 'scans': scans, 'hits': hits[:300]}

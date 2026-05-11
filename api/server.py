@@ -1133,6 +1133,23 @@ class Handler(BaseHTTPRequestHandler):
             read_comm = o.get("snmp_community") or "public"
             return self.send_json(200, olt.snmp_walk_raw(o["ip"], read_comm, oid, limit_lines=limit))
 
+        elif parsed.path == "/snmp/discover":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Not allowed"})
+            expected_ip = (params.get("expected_ip", [""])[0] or "").strip()
+            expected_temp = (params.get("expected_temp", [""])[0] or "").strip()
+            olts = olt.get_olts()
+            if not olts:
+                return self.send_json(404, {"error": "No OLTs configured"})
+            o = olts[0]
+            read_comm = o.get("snmp_community") or "public"
+            result = olt.snmp_discover_candidates(o["ip"], read_comm, expected_ip=expected_ip, expected_temp=expected_temp)
+            result["expected_ip"] = expected_ip
+            result["expected_temp"] = expected_temp
+            return self.send_json(200, result)
+
         elif parsed.path == "/health":
             return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})
 

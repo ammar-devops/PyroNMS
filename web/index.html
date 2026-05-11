@@ -2115,7 +2115,7 @@ function setStatFilter(f) {
 // ── PON filter ───────────────────────────────────────────────────────────────
 function buildPONFilter() {
   const pons = [...new Set(allONTs.map(o => o.pon || ''))].filter(Boolean).sort();
-  const sel = document.getElementById('ponFilter');
+  const sel = document.getElementById('ff-pon'); if (!sel) return;
   const cur = sel.value;
   sel.innerHTML = '<option value="">All PONs</option>' +
     pons.map(p => `<option value="${p}" ${p===cur?'selected':''}>${p}</option>`).join('');

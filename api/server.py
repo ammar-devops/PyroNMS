@@ -1054,6 +1054,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ont": ont})
             return self.send_json(502, {"error": "Live check failed or timed out"})
 
+        # ── GET /ont/info?sn=XXXX — live SSH ONT detail (replaces GenieACS) ──
+        elif parsed.path == "/ont/info":
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip()
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+            try:
+                olts = olt.get_olts()
+                if not olts:
+                    return self.send_json(404, {"error": "No OLTs configured"})
+                o = olts[0]
+                data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn)
+                return self.send_json(200 if data.get("ok") else 404, data)
+            except Exception as e:
+                return self.send_json(500, {"error": str(e)})
+
         # ── GET /device?sn=XXXX ──────────────────────────────────────────────
         elif parsed.path == "/device":
             sn = params.get("sn", [None])[0]

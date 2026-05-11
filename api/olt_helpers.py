@@ -958,3 +958,86 @@ def snmp_map_ont_candidates(ip, read_community, pon='', ont_id=None, expected_na
         'hits': hits[:400],
         'direct': direct[:120],
     }
+
+
+def get_ont_full_info(ip, username, password, sn):
+    """
+    Return structured ONT info parsed from `display ont info by-sn {sn}`
+    plus `display ont version by-sn {sn}` for model/HW/SW versions.
+
+    Returns dict: { ok, sn, fsp, slot_port, port, ont_id, vendor, model,
+                    description, line_profile, service_profile, run_state,
+                    config_state, distance_m, last_down_cause, last_up_time,
+                    online_duration, hw_version, sw_version, raw_info, raw_version }
+    On failure returns { ok: False, error: '...' }
+    """
+    try:
+        conn = olt_ssh(ip, username, password)
+    except Exception as e:
+        return {'ok': False, 'error': f'OLT SSH failed: {e}'}
+
+    try:
+        conn.write_channel(f'display ont info by-sn {sn}\r\n')
+        info = _read_until_prompt(conn, delay=3, max_rounds=20)
+        fsp_m = re.search(r'F/S/P\s*:\s*(\S+)', info)
+        id_m  = re.search(r'ONT-ID\s*:\s*(\d+)', info)
+        if not fsp_m or not id_m:
+            return {'ok': False, 'error': 'ONT not found on OLT'}
+
+        fsp = fsp_m.group(1)
+        parts = fsp.split('/')
+        slot_port = '/'.join(parts[:2])
+        port = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        ont_id = int(id_m.group(1))
+
+        def grab(pattern, default=''):
+            m = re.search(pattern, info)
+            return m.group(1).strip() if m else default
+
+        # Distance can be "ONT distance(m)        : 1234" or similar
+        dist_m = re.search(r'ONT[\s_]?distance\s*\(m\)\s*:\s*(\d+)', info, re.IGNORECASE)
+        distance_m = int(dist_m.group(1)) if dist_m else None
+
+        # Try version command for hw/sw + model fallback
+        conn.write_channel(f'display ont version {slot_port} {port} {ont_id}\r\n')
+        ver = _read_until_prompt(conn, delay=2, max_rounds=12)
+
+        result = {
+            'ok': True,
+            'sn': sn,
+            'fsp': fsp,
+            'slot_port': slot_port,
+            'port': port,
+            'ont_id': ont_id,
+            'vendor': grab(r'SN\s*:\s*[0-9A-Fa-f]+\s*\(([^)-]+)-'),
+            'model':  grab(r'Ont EquipmentID\s*:\s*(\S+)') or grab(r'Equipment ID\s*:\s*(\S+)'),
+            'description':       grab(r'Description\s*:\s*(.+)'),
+            'line_profile':      grab(r'Line profile name\s*:\s*(.+)'),
+            'service_profile':   grab(r'Service profile name\s*:\s*(.+)'),
+            'run_state':         grab(r'Run state\s*:\s*(\S+)'),
+            'config_state':      grab(r'Config state\s*:\s*(\S+)'),
+            'match_state':       grab(r'Match state\s*:\s*(\S+)'),
+            'distance_m':        distance_m,
+            'last_down_cause':   grab(r'Last down cause\s*:\s*(.+)'),
+            'last_up_time':      grab(r'Last up time\s*:\s*(.+)'),
+            'online_duration':   grab(r'ONT online duration\s*:\s*(.+)'),
+            'hw_version':        '',
+            'sw_version':        '',
+            'raw_info': info[-4000:],
+            'raw_version': ver[-2000:],
+        }
+        # Version parsing
+        hw_m = re.search(r'Hardware version\s*:\s*(\S+)', ver, re.IGNORECASE)
+        sw_m = re.search(r'(?:Main )?Software version\s*:\s*(\S+)', ver, re.IGNORECASE)
+        model_v = re.search(r'EquipmentID\s*:\s*(\S+)', ver, re.IGNORECASE)
+        if hw_m: result['hw_version'] = hw_m.group(1).strip()
+        if sw_m: result['sw_version'] = sw_m.group(1).strip()
+        if model_v and not result['model']:
+            result['model'] = model_v.group(1).strip()
+
+        return result
+    except Exception as e:
+        return {'ok': False, 'error': f'parse failed: {e}'}
+    finally:
+        try: conn.disconnect()
+        except Exception: pass

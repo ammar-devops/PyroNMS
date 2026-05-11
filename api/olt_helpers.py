@@ -1093,3 +1093,105 @@ def get_ont_full_info(ip, username, password, sn):
     finally:
         try: conn.disconnect()
         except Exception: pass
+
+
+def run_ont_action(ip, username, password, action, sn='', pon='', ont_id=''):
+    """
+    Execute an ONT lifecycle action via SSH against the OLT.
+    `action` is one of: enable | disable | reset | restore | delete
+    `pon` is full F/S/P (e.g. "0/1/7") and `ont_id` is the ONT ID. SN is optional but
+    we resolve pon/ont_id from SN if missing.
+    Returns {'ok': bool, 'output': str, 'error': str}.
+    """
+    if action not in ('enable', 'disable', 'reset', 'restore', 'delete'):
+        return {'ok': False, 'error': f'unknown action: {action}'}
+
+    try:
+        conn = olt_ssh(ip, username, password)
+    except Exception as e:
+        return {'ok': False, 'error': f'OLT SSH failed: {e}'}
+
+    try:
+        # If pon/ont_id missing, resolve from SN
+        if (not pon or not str(ont_id)) and sn:
+            conn.write_channel(f'display ont info by-sn {sn}\r\n')
+            info = _read_until_prompt(conn, delay=3, max_rounds=20)
+            fsp_m = re.search(r'F/S/P\s*:\s*(\S+)', info)
+            id_m  = re.search(r'ONT-ID\s*:\s*(\d+)', info)
+            if not fsp_m or not id_m:
+                return {'ok': False, 'error': f'ONT {sn} not found on OLT'}
+            pon = fsp_m.group(1)
+            ont_id = id_m.group(1)
+
+        try:
+            ont_id = int(ont_id)
+        except Exception:
+            return {'ok': False, 'error': f'invalid ont_id: {ont_id}'}
+
+        parts = pon.split('/')
+        if len(parts) != 3:
+            return {'ok': False, 'error': f'invalid pon: {pon}'}
+        slot_port = '/'.join(parts[:2])
+        port = parts[2]
+
+        outputs = []
+
+        # Enter interface gpon mode (port commands need the slot/port context)
+        conn.write_channel(f'interface gpon {slot_port}\r\n')
+        outputs.append(_read_until_prompt(conn, delay=1, max_rounds=8))
+
+        if action == 'enable':
+            conn.write_channel(f'ont activate {port} {ont_id}\r\n')
+        elif action == 'disable':
+            conn.write_channel(f'ont deactivate {port} {ont_id}\r\n')
+        elif action == 'reset':
+            conn.write_channel(f'ont reset {port} {ont_id}\r\n')
+        elif action == 'restore':
+            # Factory restore: reset_factory on Huawei MA5603T
+            conn.write_channel(f'ont ipconfig {port} {ont_id} factory\r\n')
+            # Some firmwares use: ont reset {port} {ont_id} factory
+            # If we get parameter error, retry with alternate
+            time.sleep(2)
+            chunk = conn.read_channel()
+            outputs.append(chunk)
+            if 'Parameter error' in chunk or 'Unknown command' in chunk:
+                conn.write_channel(f'ont reset {port} {ont_id} factory\r\n')
+        elif action == 'delete':
+            conn.write_channel(f'ont delete {port} {ont_id}\r\n')
+
+        time.sleep(1.5)
+        out = _read_until_prompt(conn, delay=2, max_rounds=20)
+        outputs.append(out)
+
+        # Many Huawei commands ask for confirmation with "{ <cr>|<n>}"; auto-confirm
+        if '{ <cr>|' in out or '{<cr>|' in out or 'Are you sure' in out:
+            conn.write_channel('\r\n')
+            time.sleep(1.5)
+            outputs.append(_read_until_prompt(conn, delay=2, max_rounds=20))
+
+        # Quit interface mode
+        conn.write_channel('quit\r\n')
+        outputs.append(_read_until_prompt(conn, delay=1, max_rounds=8))
+
+        # For changes that persist, commit / save
+        if action in ('delete', 'restore'):
+            conn.write_channel('save\r\n')
+            time.sleep(2)
+            sv = _read_until_prompt(conn, delay=2, max_rounds=12)
+            outputs.append(sv)
+            if '{ <cr>|' in sv or 'continue' in sv.lower():
+                conn.write_channel('\r\n')
+                outputs.append(_read_until_prompt(conn, delay=2, max_rounds=12))
+
+        full = '\n'.join(o for o in outputs if o)
+        # Detect failure
+        bad_phrases = ('Parameter error', 'Failure', 'Failed', 'Cannot', 'invalid')
+        bad = any(p.lower() in full.lower() for p in bad_phrases) and 'success' not in full.lower()
+        if bad:
+            return {'ok': False, 'error': 'OLT rejected command', 'output': full[-2000:]}
+        return {'ok': True, 'output': full[-2000:]}
+    except Exception as e:
+        return {'ok': False, 'error': f'action failed: {e}'}
+    finally:
+        try: conn.disconnect()
+        except Exception: pass

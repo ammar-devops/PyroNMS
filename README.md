@@ -4,7 +4,7 @@
 
 ### Network Management System for ISPs
 
-[![Version](https://img.shields.io/badge/version-2.7.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
+[![Version](https://img.shields.io/badge/version-2.8.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
 [![Status](https://img.shields.io/badge/status-active-success.svg)]()
 [![License](https://img.shields.io/badge/license-Private-red.svg)]()
 [![Built for](https://img.shields.io/badge/OLT-Huawei%20MA5603T-orange.svg)]()
@@ -136,14 +136,15 @@ PyroNMS/
 | 🩹 v2.5.1  | Provisioning + unregistered ONT reliability fixes          |
 | 🚀 v2.6.0  | SNMP-first architecture, dashboard rebuild, perf + UX overhaul |
 | 🧹 v2.7.0  | GenieACS removed, new ONT Manager popup, slimmer table     |
+| 🛠️ v2.8.0  | Bulk Actions (Enable/Disable/Reset/Restore/Delete), checkbox selection, robust ONT detail parsing, ONT/ONU detection |
 
-### 🔭 Current Release — `v2.7.0`
+### 🔭 Current Release — `v2.8.0`
 
-- 🧹 **GenieACS removed** — all ONT management now via SSH + SNMP directly to the OLT
-- 🪟 **New ONT Manager popup** — model-aware theming (Huawei / ZTE / generic), live SSH data, Open Web UI button
-- 📋 **Table slimmed** — Settings + Router columns gone (their actions merged into the new popup)
-- 🔌 **New endpoint** — `GET /ont/info?sn=X` returns parsed `display ont info by-sn` + version
-- ⚠️ **Breaking** — `GET /device?sn=X` now returns HTTP 410 (use `/ont/info` instead)
+- 🛠️ **U2000-style bulk Actions** — checkbox column + `▾ Actions` dropdown (Enable, Disable, Reset, Restore, Delete) with type-to-confirm for destructive actions
+- 🪟 **Popup renamed** — "ONT Details and Configuration", with ONT/ONU device-type pill
+- 🔍 **Robust SSH parsing** — handles Huawei pager, uses `interface gpon` mode for version, parses model from `OntProductDescription`
+- 🧠 **Smart model detection** — Huawei HG/EG/HS/HN/MA prefixes and ZTE F-series mapped to themed UI
+- 🚀 **New endpoint** — `POST /ont/action` (admin) wraps all 5 lifecycle actions
 
 ---
 

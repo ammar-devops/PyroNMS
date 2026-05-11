@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.8.0 (2026-05-12)
+
+### ONT Manager popup
+- Renamed popup heading to **"ONT Details and Configuration"** with a top title strip.
+- Robust SSH parsing: Huawei pager (`( Press 'Q' to break )`) now auto-continued.
+- `display ont version` runs from `interface gpon` mode (avoids the space-eating quirk on Huawei firmware).
+- Model parsed from `OntProductDescription` (e.g. `EchoLife HG8245 GPON Terminal` → `HG8245`).
+- Vendor read from `Vendor-ID`, HW from `ONT Version`, SW from `Main Software Version`.
+- **Device type detection**: shows `ONT` (router) or `ONU` (L2 bridge) in the vendor pill with tooltip *ONT = Router | ONU = L2 Bridge*, based on model prefix + IPHOST presence.
+- Hardware card now includes Device Type, Vendor, Model, HW Version, SW Version.
+
+### ONT list — bulk Actions (U2000-style)
+- Added a leftmost **checkbox column** to the ONT list (with a header "select all visible" checkbox).
+- Selected rows highlight; row click still opens the popup.
+- Added **`▾ Actions`** dropdown in the filter bar (enabled when ≥1 ONT is selected). Shows count: `▾ Actions (N)`.
+- Actions available: **ONT Enable** / **Disable** / **Reset (Reboot)** / **Restore (Factory)** / **Delete**.
+- **Confirmation modal**:
+  - Enable / Disable / Reset → simple OK confirm with target list.
+  - Delete / Restore → type-the-SN to enable the destructive button.
+- Bulk dispatch: one request runs every action against all selected ONTs serially and reports per-target ok/fail.
+
+### Backend
+- New `POST /ont/action` endpoint (admin / superadmin only). Body: `{ action, targets: [{sn, pon, ont_id}] }`.
+- New `olt_helpers.run_ont_action(ip, user, pwd, action, sn, pon, ont_id)`.
+- SSH commands per action (Huawei MA5603T, from `interface gpon` mode):
+  - enable → `ont activate {port} {ont_id}`
+  - disable → `ont deactivate {port} {ont_id}`
+  - reset → `ont reset {port} {ont_id}`
+  - restore → `ont ipconfig {port} {ont_id} factory` (fallback `ont reset {port} {ont_id} factory`)
+  - delete → `ont delete {port} {ont_id}` + auto-confirm + `save`
+- Pon/ont_id auto-resolved from SN if missing.
+
+### Fixes
+- Popup race-condition guard: discard stale `/ont/info` responses (request token + SN check + close-bump).
+- Hotfixes that landed in v2.7.x are folded in: rejoined broken `document.write` string, moved ONT Manager JS out of Chart.js script tag, removed orphan trailing JS after `</html>`.
+
 ## v2.7.0 (2026-05-11)
 
 ### Breaking

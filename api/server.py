@@ -1533,6 +1533,43 @@ class Handler(BaseHTTPRequestHandler):
             subprocess.run(['systemctl', 'restart', f'ont-worker@{slot}'], capture_output=True)
             return self.send_json(200, {'ok': True, 'slot': slot, 'interval': interval})
 
+        # ── POST /ont/action — bulk ONT lifecycle actions (v2.8.0) ──────────
+        if parsed.path == "/ont/action":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "admin only"})
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0") or "0")).decode())
+            except Exception as e:
+                return self.send_json(400, {"error": f"bad JSON: {e}"})
+            action = (body.get("action") or "").strip()
+            targets = body.get("targets") or []
+            if action not in ("enable","disable","reset","restore","delete"):
+                return self.send_json(400, {"error": f"invalid action: {action}"})
+            if not targets:
+                return self.send_json(400, {"error": "no targets"})
+            try:
+                olts = olt.get_olts()
+                if not olts:
+                    return self.send_json(404, {"error": "No OLTs configured"})
+                o = olts[0]
+            except Exception as e:
+                return self.send_json(500, {"error": f"olt lookup: {e}"})
+
+            results = []
+            for t in targets:
+                sn     = (t.get("sn") or "").strip()
+                pon    = (t.get("pon") or "").strip()
+                ont_id = t.get("ont_id") or ""
+                try:
+                    r = olt.run_ont_action(o["ip"], o["username"], o["password"], action, sn=sn, pon=pon, ont_id=ont_id)
+                except Exception as e:
+                    r = {"ok": False, "error": str(e)}
+                r["sn"] = sn
+                results.append(r)
+            return self.send_json(200, {"ok": True, "action": action, "results": results})
+
         # ── POST /device/set ─────────────────────────────────────────────────
         elif parsed.path == "/device/set":
             length = int(self.headers.get("Content-Length", 0))

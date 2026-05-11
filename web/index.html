@@ -641,6 +641,36 @@
     .ontmgr-body { padding:14px 16px; }
     .ontmgr-grid { grid-template-columns:1fr; }
   }
+
+  /* Popup title strip */
+  .ontmgr-title-strip { padding:10px 22px; background:rgba(79,142,247,.08); border-bottom:1px solid var(--border); color:var(--accent); font-size:12px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; }
+  /* Selection column */
+  td.sel-cell, th.sel-cell { width:36px; text-align:center; padding:8px 6px; }
+  .ont-select { width:16px; height:16px; cursor:pointer; accent-color:var(--accent); }
+  tr.ont-row.selected td { background:rgba(79,142,247,.08); }
+  /* Actions dropdown */
+  .actions-wrap { position:relative; }
+  .actions-menu { position:absolute; top:100%; right:0; margin-top:6px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:6px; min-width:220px; box-shadow:0 12px 32px rgba(0,0,0,.5); z-index:300; display:none; }
+  .actions-menu.open { display:block; }
+  .actions-menu button { display:block; width:100%; text-align:left; background:none; border:none; color:var(--text); padding:9px 12px; font-size:13px; cursor:pointer; border-radius:6px; }
+  .actions-menu button:hover { background:var(--bg3); }
+  .actions-menu button.danger { color:#fca5a5; }
+  .actions-menu button.danger:hover { background:rgba(239,68,68,.15); color:#fca5a5; }
+  .filter-btn[disabled] { opacity:.45; cursor:not-allowed; }
+  /* Confirm modal */
+  .confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.72); z-index:700; align-items:center; justify-content:center; padding:20px; }
+  .confirm-overlay.open { display:flex; }
+  .confirm-box { background:var(--bg2); border:1px solid var(--border); border-radius:12px; width:100%; max-width:520px; overflow:hidden; }
+  .confirm-head { padding:16px 22px; border-bottom:1px solid var(--border); font-size:15px; font-weight:700; }
+  .confirm-body { padding:18px 22px; font-size:13px; color:var(--text); }
+  .confirm-list { background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:8px 12px; margin:10px 0; max-height:160px; overflow-y:auto; font-size:12px; font-family:monospace; }
+  .confirm-foot { padding:12px 22px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px; }
+  .confirm-foot button { padding:8px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid var(--border); }
+  .confirm-foot .btn-cancel { background:var(--bg3); color:var(--muted); }
+  .confirm-foot .btn-go { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .confirm-foot .btn-go.danger { background:#ef4444; border-color:#ef4444; }
+  .confirm-foot .btn-go:disabled { opacity:.4; cursor:not-allowed; }
+  .confirm-typebox { width:100%; padding:8px 10px; border-radius:6px; border:1px solid var(--border); background:var(--bg3); color:var(--text); font-family:monospace; font-size:13px; margin-top:8px; }
 </style>
 </head>
 <body>
@@ -907,6 +937,18 @@
   </div>
 
 
+  <div class="filter-group actions-wrap">
+    <div class="filter-label">&nbsp;</div>
+    <button id="btn-actions" class="filter-btn" disabled onclick="toggleActionsMenu(event)">▾ Actions</button>
+    <div id="actionsMenu" class="actions-menu">
+      <button onclick="runOntAction('enable')">✓ ONT Enable</button>
+      <button onclick="runOntAction('disable')">⏸ ONT Disable</button>
+      <button onclick="runOntAction('reset')">⟳ ONT Reset (Reboot)</button>
+      <button onclick="runOntAction('restore')">🔄 ONT Restore (Factory)</button>
+      <button class="danger" onclick="runOntAction('delete')">🗑 ONT Delete</button>
+    </div>
+  </div>
+
   <div class="filter-group" style="margin-left:auto;">
     <div class="filter-label">&nbsp;</div>
     <button class="filter-btn" onclick="resetAdvFilters()">↺ Reset</button>
@@ -917,6 +959,7 @@
   <table style="width:100%;table-layout:fixed;border-collapse:collapse;">
     <thead>
       <tr>
+        <th class="sel-cell" style="text-align:center;padding:10px 8px;"><input type="checkbox" id="ont-select-all" onchange="toggleSelectAll(this)" class="ont-select" title="Select all visible"></th>
         <th style="width:44px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('num')" id="fth-num">#</th>
         <th style="width:90px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('pon')" id="fth-pon">PON</th>
         <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('name')" id="fth-name">Customer Name</th>
@@ -934,6 +977,7 @@
   <table>
     <thead class="real-thead">
       <tr>
+        <th class="sel-cell"></th>
         <th style="width:44px" onclick="sortTable('num')"  id="th-num">#</th>
         <th style="width:90px" onclick="sortTable('pon')"  id="th-pon">PON</th>
         <th                    onclick="sortTable('name')" id="th-name">Customer Name</th>
@@ -2708,7 +2752,7 @@ function renderTable() {
       const sig  = signalBadge(o);
       const temp = o.temp ? `${o.temp} C` : '-';
       return `<tr class="ont-row" data-sn="${escAttr(o.sn)}" data-name="${escAttr(o.name || '')}">
-        <td class="row-num">${i+1}</td>
+        <td class="sel-cell" onclick="event.stopPropagation()"><input type="checkbox" class="ont-select" data-sn="${escAttr(o.sn)}" data-pon="${escAttr(o.pon || '')}" data-ont-id="${escAttr(o.ont_id || '')}" onchange="onOntSelectChange()"></td><td class="row-num">${i+1}</td>
         <td><span class="pon-tag">${o.pon || '-'}</span></td>
         <td class="customer-name">${escHtml(o.name || '-')}</td>
         <td><span class="signal-badge ${sig.cls}">${sig.text}</span></td>
@@ -2734,10 +2778,10 @@ function renderTable() {
     if (isMobileView() && wrap) wrap.scrollLeft = 0;
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
     }
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
   }
 }
 
@@ -4375,6 +4419,128 @@ function renderOntManager(d) {
 }
 
 
+
+// ─── Actions (v2.8.0) ─────────────────────────────────────────────────────
+let _ontSelected = new Map();   // sn -> { sn, pon, ont_id }
+let _pendingAction = null;       // { action, targets }
+
+function onOntSelectChange() {
+  _ontSelected.clear();
+  document.querySelectorAll('.ont-select:checked').forEach(cb => {
+    const sn = cb.dataset.sn;
+    if (!sn) return;
+    _ontSelected.set(sn, { sn, pon: cb.dataset.pon || '', ont_id: cb.dataset.ontId || '' });
+    const tr = cb.closest('tr.ont-row');
+    if (tr) tr.classList.add('selected');
+  });
+  document.querySelectorAll('tr.ont-row').forEach(tr => {
+    const cb = tr.querySelector('.ont-select');
+    if (cb && !cb.checked) tr.classList.remove('selected');
+  });
+  const btn = document.getElementById('btn-actions');
+  if (btn) {
+    btn.disabled = _ontSelected.size === 0;
+    btn.textContent = _ontSelected.size > 0 ? `▾ Actions (${_ontSelected.size})` : '▾ Actions';
+  }
+}
+
+function toggleSelectAll(headerCb) {
+  document.querySelectorAll('tbody#ontTable .ont-select').forEach(cb => { cb.checked = headerCb.checked; });
+  onOntSelectChange();
+}
+
+function toggleActionsMenu(e) {
+  if (e) e.stopPropagation();
+  const m = document.getElementById('actionsMenu');
+  if (!m) return;
+  m.classList.toggle('open');
+}
+
+document.addEventListener('click', (e) => {
+  const wrap = e.target.closest('.actions-wrap');
+  if (!wrap) document.getElementById('actionsMenu')?.classList.remove('open');
+});
+
+function runOntAction(action) {
+  document.getElementById('actionsMenu')?.classList.remove('open');
+  if (_ontSelected.size === 0) { showToast('No ONTs selected', 'err'); return; }
+  const targets = Array.from(_ontSelected.values());
+  _pendingAction = { action, targets };
+  openConfirm(action, targets);
+}
+
+function openConfirm(action, targets) {
+  const head = document.getElementById('confirmHead');
+  const body = document.getElementById('confirmBody');
+  const go   = document.getElementById('confirmGo');
+  const danger = (action === 'delete' || action === 'restore');
+  const titleMap = { enable:'Enable', disable:'Disable', reset:'Reset (Reboot)', restore:'Restore (Factory)', delete:'Delete' };
+  head.textContent = `Confirm ONT ${titleMap[action] || action}`;
+  go.className = 'btn-go' + (danger ? ' danger' : '');
+  go.textContent = (action === 'delete') ? 'Delete' : (action === 'restore' ? 'Factory Restore' : 'Proceed');
+
+  const list = targets.map(t => `${t.sn}   PON ${t.pon || '?'}   ID ${t.ont_id || '?'}`).join('\n');
+  let html = `<div>You are about to <b>${escHtml(titleMap[action] || action)}</b> ${targets.length} ONT(s):</div>
+              <pre class="confirm-list">${escHtml(list)}</pre>`;
+  if (danger) {
+    const first = targets[0];
+    html += `<div style="color:#fca5a5;">⚠ Destructive action. Type the first SN below to confirm:</div>
+             <div style="font-family:monospace;font-size:12px;color:var(--muted);margin-top:4px;">${escHtml(first.sn)}</div>
+             <input id="confirmType" class="confirm-typebox" placeholder="Type SN here" oninput="confirmTypeCheck('${escAttr(first.sn)}')"/>`;
+    go.disabled = true;
+  } else {
+    go.disabled = false;
+  }
+  body.innerHTML = html;
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function confirmTypeCheck(expected) {
+  const inp = document.getElementById('confirmType');
+  document.getElementById('confirmGo').disabled = inp.value.trim() !== expected;
+}
+
+function closeConfirm() {
+  document.getElementById('confirmOverlay').classList.remove('open');
+  _pendingAction = null;
+}
+
+async function confirmProceed() {
+  if (!_pendingAction) { closeConfirm(); return; }
+  const { action, targets } = _pendingAction;
+  closeConfirm();
+  const go = document.getElementById('btn-actions');
+  if (go) { go.disabled = true; go.textContent = `⧖ ${action}…`; }
+  try {
+    const r = await fetch(`${API}/ont/action`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, targets })
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      showToast(`✗ ${action}: ${data.error || 'Failed'}`, 'err');
+    } else {
+      const ok = (data.results || []).filter(x => x.ok).length;
+      const fail = (data.results || []).filter(x => !x.ok).length;
+      const msg = fail === 0
+        ? `✓ ${action}: ${ok}/${targets.length} succeeded`
+        : `${action}: ${ok} ok, ${fail} failed — see console`;
+      showToast(msg, fail === 0 ? 'ok' : 'err');
+      if (fail) console.warn('Action results:', data.results);
+    }
+    // Refresh list after destructive actions
+    if (['delete','reset','restore','enable','disable'].includes(action)) {
+      setTimeout(() => { if (typeof loadONTs === 'function') loadONTs(); }, 1500);
+    }
+  } catch (e) {
+    showToast(`✗ Network error: ${e.message}`, 'err');
+  } finally {
+    document.querySelectorAll('.ont-select').forEach(cb => cb.checked = false);
+    onOntSelectChange();
+  }
+}
+
 </script>
 
 <!-- Provision ONT Modal -->
@@ -4481,6 +4647,7 @@ function renderOntManager(d) {
   <!-- ONT Manager Modal (v2.7.0) — replaces GenieACS popup -->
   <div id="ontManagerOverlay" class="ontmgr-overlay" onclick="closeOntManager(event)">
     <div id="ontManagerBox" class="ontmgr-box theme-generic" onclick="event.stopPropagation()">
+      <div class="ontmgr-title-strip">ONT Details and Configuration</div>
       <div class="ontmgr-head">
         <span id="ontmgrVendor" class="vendor-pill" title="ONT = Router | ONU = L2 Bridge">ONT</span>
         <div class="title-block">
@@ -4492,6 +4659,19 @@ function renderOntManager(d) {
       </div>
       <div id="ontmgrBody" class="ontmgr-body">
         <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Confirm action modal -->
+  <div id="confirmOverlay" class="confirm-overlay" onclick="if(event.target===this)closeConfirm()">
+    <div class="confirm-box" onclick="event.stopPropagation()">
+      <div id="confirmHead" class="confirm-head">Confirm action</div>
+      <div id="confirmBody" class="confirm-body"></div>
+      <div class="confirm-foot">
+        <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
+        <button id="confirmGo" class="btn-go" onclick="confirmProceed()">Proceed</button>
       </div>
     </div>
   </div>

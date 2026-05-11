@@ -1150,6 +1150,33 @@ class Handler(BaseHTTPRequestHandler):
             result["expected_temp"] = expected_temp
             return self.send_json(200, result)
 
+        elif parsed.path == "/snmp/ont-map":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Not allowed"})
+            pon = (params.get("pon", [""])[0] or "").strip()
+            ont_id_s = (params.get("ont_id", [""])[0] or "").strip()
+            expected_name = (params.get("expected_name", [""])[0] or "").strip()
+            expected_ip = (params.get("expected_ip", [""])[0] or "").strip()
+            expected_temp = (params.get("expected_temp", [""])[0] or "").strip()
+            ont_id = int(ont_id_s) if ont_id_s.isdigit() else None
+            olts = olt.get_olts()
+            if not olts:
+                return self.send_json(404, {"error": "No OLTs configured"})
+            o = olts[0]
+            read_comm = o.get("snmp_community") or "public"
+            result = olt.snmp_map_ont_candidates(
+                o["ip"],
+                read_comm,
+                pon=pon,
+                ont_id=ont_id,
+                expected_name=expected_name,
+                expected_ip=expected_ip,
+                expected_temp=expected_temp,
+            )
+            return self.send_json(200, result)
+
         elif parsed.path == "/health":
             return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})
 

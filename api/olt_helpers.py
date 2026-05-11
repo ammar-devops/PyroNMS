@@ -780,3 +780,107 @@ def snmp_discover_candidates(ip, read_community, expected_ip='', expected_temp='
             scans.append({'root': root, 'error': str(e)})
 
     return {'ok': True, 'scans': scans, 'hits': hits[:300]}
+
+
+def snmp_find_ifindex_by_pon(ip, read_community, pon):
+    pon = (pon or '').strip()
+    if not pon:
+        return None
+    cmd = ['snmpwalk', '-v2c', '-c', read_community, '-On', '-t', '1', '-r', '0', ip, '1.3.6.1.2.1.31.1.1.1.1']
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        for line in (p.stdout or '').splitlines():
+            if pon in line:
+                m = re.match(r'^\.1\.3\.6\.1\.2\.1\.31\.1\.1\.1\.1\.(\d+)\s*=', line.strip())
+                if m:
+                    return int(m.group(1))
+    except Exception:
+        return None
+    return None
+
+
+def snmp_map_ont_candidates(ip, read_community, pon='', ont_id=None, expected_name='', expected_ip='', expected_temp=''):
+    """
+    Deep-but-bounded ONT mapping helper.
+    Scans Huawei XPON table columns and returns matching lines + index hints.
+    """
+    expected_name = (expected_name or '').strip().lower()
+    expected_ip = (expected_ip or '').strip()
+    expected_temp = str(expected_temp or '').strip()
+    base = '1.3.6.1.4.1.2011.6.128.1.1.2.21.1'
+    ifindex = snmp_find_ifindex_by_pon(ip, read_community, pon) if pon else None
+    candidate_indexes = []
+    if ifindex is not None and ont_id is not None:
+        try:
+            oid_int = int(ont_id)
+            candidate_indexes = [int(ifindex) + oid_int, int(ifindex) + (oid_int * 256)]
+        except Exception:
+            candidate_indexes = []
+
+    hits = []
+    scans = []
+    # Focus on first 30 columns; this table is known active on MA5600.
+    for col in range(1, 31):
+        root = f'{base}.{col}'
+        cmd = ['snmpwalk', '-v2c', '-c', read_community, '-On', '-t', '1', '-r', '0', '-Cc', ip, root]
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+            lines = (p.stdout or '').splitlines()
+            scans.append({'col': col, 'rc': p.returncode, 'count': len(lines)})
+            for line in lines:
+                line_l = line.lower()
+                why = []
+                if expected_name and expected_name in line_l:
+                    why.append('expected_name')
+                if expected_ip and expected_ip in line:
+                    why.append('expected_ip')
+                if expected_temp and (f'integer: {expected_temp}' in line_l or f'gauge32: {expected_temp}' in line_l):
+                    why.append('expected_temp')
+                m = re.match(r'^\.' + re.escape(base) + r'\.' + str(col) + r'\.(\d+)\s*=\s*(.+)$', line.strip(), re.I)
+                idx = int(m.group(1)) if m else None
+                inferred_ont_id = None
+                if idx is not None and ifindex is not None:
+                    delta = idx - ifindex
+                    if delta >= 0 and delta <= (256 * 128) and delta % 256 == 0:
+                        inferred_ont_id = delta // 256
+                if idx is not None and ifindex is not None and idx >= ifindex and idx <= (ifindex + (256 * 128)):
+                    why.append('index_near_pon')
+                if why:
+                    hits.append({
+                        'col': col,
+                        'index': idx,
+                        'inferred_ont_id': inferred_ont_id,
+                        'line': line,
+                        'why': ','.join(sorted(set(why))),
+                    })
+        except subprocess.TimeoutExpired:
+            scans.append({'col': col, 'timeout': True})
+        except Exception as e:
+            scans.append({'col': col, 'error': str(e)})
+
+    direct = []
+    for cand_idx in candidate_indexes:
+        for col in range(1, 31):
+            oid = f'{base}.{col}.{cand_idx}'
+            cmd = ['snmpget', '-v2c', '-c', read_community, '-On', '-t', '1', '-r', '0', ip, oid]
+            try:
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=4)
+                out = (p.stdout or '').strip()
+                err = (p.stderr or '').strip()
+                if out and ('No Such Instance' not in out and 'No Such Object' not in out):
+                    direct.append({'candidate_index': cand_idx, 'col': col, 'oid': oid, 'value': out})
+                elif err:
+                    direct.append({'candidate_index': cand_idx, 'col': col, 'oid': oid, 'error': err})
+            except Exception as e:
+                direct.append({'candidate_index': cand_idx, 'col': col, 'oid': oid, 'error': str(e)})
+
+    return {
+        'ok': True,
+        'pon': pon,
+        'ifindex': ifindex,
+        'ont_id': ont_id,
+        'candidate_indexes': candidate_indexes,
+        'scans': scans,
+        'hits': hits[:400],
+        'direct': direct[:120],
+    }

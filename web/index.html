@@ -648,6 +648,9 @@
   td.sel-cell, th.sel-cell { width:36px; text-align:center; padding:8px 6px; }
   .ont-select { width:16px; height:16px; cursor:pointer; accent-color:var(--accent); }
   tr.ont-row.selected td { background:rgba(79,142,247,.08); }
+  .admin-pill { display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:2px 10px; font-size:11px; font-weight:700; line-height:1.2; }
+  .admin-pill-active { color:#4ade80; background:rgba(34,197,94,.15); border:1px solid rgba(34,197,94,.45); }
+  .admin-pill-disabled { color:#fdba74; background:rgba(251,146,60,.15); border:1px solid rgba(251,146,60,.45); }
   /* Actions dropdown */
   .actions-wrap { position:relative; }
   .actions-menu { position:absolute; top:100%; right:0; margin-top:6px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:6px; min-width:220px; box-shadow:0 12px 32px rgba(0,0,0,.5); z-index:300; display:none; }
@@ -660,6 +663,11 @@
   /* Confirm modal */
   .confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.72); z-index:700; align-items:center; justify-content:center; padding:20px; }
   .confirm-overlay.open { display:flex; }
+  .action-overlay { position:fixed; inset:0; z-index:1200; background:rgba(2,6,23,.55); backdrop-filter:blur(2px); display:none; align-items:center; justify-content:center; }
+  .action-overlay.open { display:flex; }
+  .action-overlay-card { min-width:320px; max-width:90vw; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px 20px; box-shadow:0 20px 50px rgba(0,0,0,.45); text-align:center; }
+  .action-overlay-spinner { width:34px; height:34px; border:3px solid rgba(79,142,247,.2); border-top-color:var(--accent); border-radius:50%; margin:0 auto 10px; animation:spin .9s linear infinite; }
+  .action-overlay-text { color:var(--text); font-size:14px; font-weight:600; }
   .confirm-box { background:var(--bg2); border:1px solid var(--border); border-radius:12px; width:100%; max-width:520px; overflow:hidden; }
   .confirm-head { padding:16px 22px; border-bottom:1px solid var(--border); font-size:15px; font-weight:700; }
   .confirm-body { padding:18px 22px; font-size:13px; color:var(--text); }
@@ -962,6 +970,7 @@
         <th class="sel-cell" style="text-align:center;padding:10px 8px;"><input type="checkbox" id="ont-select-all" onchange="toggleSelectAll(this)" class="ont-select" title="Select all visible"></th>
         <th style="width:44px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('num')" id="fth-num">#</th>
         <th style="width:90px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('pon')" id="fth-pon">PON</th>
+        <th style="width:88px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Status</th>
         <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('name')" id="fth-name">Customer Name</th>
         <th style="width:150px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('rx')" id="fth-rx">Status / Signal</th>
         <th style="width:70px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('temp')" id="fth-temp">Temp</th>
@@ -980,6 +989,7 @@
         <th class="sel-cell"></th>
         <th style="width:44px" onclick="sortTable('num')"  id="th-num">#</th>
         <th style="width:90px" onclick="sortTable('pon')"  id="th-pon">PON</th>
+        <th style="width:88px">Status</th>
         <th                    onclick="sortTable('name')" id="th-name">Customer Name</th>
         <th style="width:140px" onclick="sortTable('rx')"  id="th-rx">RX Signal</th>
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
@@ -2742,6 +2752,43 @@ function getFiltered() {
   });
 }
 
+function getAdminStateFromCache(sn) {
+  if (!sn) return '';
+  const v = (localStorage.getItem('admin_state_' + sn) || '').toLowerCase();
+  return (v === 'disabled' || v === 'enabled') ? v : '';
+}
+
+function statusBadge(o) {
+  const state = getAdminStateFromCache(o?.sn || '');
+  if (state === 'disabled') return '<span class="admin-pill admin-pill-disabled">Deactivated</span>';
+  return '<span class="admin-pill admin-pill-active">Active</span>';
+}
+
+function setAdminStateFromAction(sn, actionName) {
+  const a = (actionName || '').toString().toLowerCase();
+  if (!sn) return;
+  if (a === 'disable' || a === 'deactivate' || a === 'inactive') {
+    localStorage.setItem('admin_state_' + sn, 'disabled');
+  } else if (a === 'enable' || a === 'activate' || a === 'active') {
+    localStorage.setItem('admin_state_' + sn, 'enabled');
+  }
+}
+
+function showActionOverlay(actionName, count = 1) {
+  const overlay = document.getElementById('actionOverlay');
+  const text = document.getElementById('actionOverlayText');
+  if (!overlay || !text) return;
+  const n = Number(count) > 0 ? Number(count) : 1;
+  text.textContent = `Running ${actionName || 'action'} on ${n} ONT(s)…`;
+  overlay.classList.add('open');
+}
+
+function hideActionOverlay() {
+  const overlay = document.getElementById('actionOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+}
+
 // ── Table ────────────────────────────────────────────────────────────────────
 function renderTable() {
   const tbody = document.getElementById('ontTable');
@@ -2754,6 +2801,7 @@ function renderTable() {
       return `<tr class="ont-row" data-sn="${escAttr(o.sn)}" data-name="${escAttr(o.name || '')}">
         <td class="sel-cell" onclick="event.stopPropagation()"><input type="checkbox" class="ont-select" data-sn="${escAttr(o.sn)}" data-pon="${escAttr(o.pon || '')}" data-ont-id="${escAttr(o.ont_id || '')}" onchange="onOntSelectChange()"></td><td class="row-num">${i+1}</td>
         <td><span class="pon-tag">${o.pon || '-'}</span></td>
+        <td>${statusBadge(o)}</td>
         <td class="customer-name">${escHtml(o.name || '-')}</td>
         <td><span class="signal-badge ${sig.cls}">${sig.text}</span></td>
         <td class="temp-cell">${temp}</td>
@@ -2778,10 +2826,10 @@ function renderTable() {
     if (isMobileView() && wrap) wrap.scrollLeft = 0;
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
     }
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
   }
 }
 
@@ -4509,6 +4557,7 @@ async function confirmProceed() {
   if (!_pendingAction) { closeConfirm(); return; }
   const { action, targets } = _pendingAction;
   closeConfirm();
+  showActionOverlay(action, targets.length);
   const go = document.getElementById('btn-actions');
   if (go) { go.disabled = true; go.textContent = `⧖ ${action}…`; }
   try {
@@ -4523,6 +4572,11 @@ async function confirmProceed() {
     } else {
       const ok = (data.results || []).filter(x => x.ok).length;
       const fail = (data.results || []).filter(x => !x.ok).length;
+      if (['enable','disable'].includes(action)) {
+        (data.results || []).forEach(r => {
+          if (r && r.ok && r.sn) setAdminStateFromAction(r.sn, action);
+        });
+      }
       const msg = fail === 0
         ? `✓ ${action}: ${ok}/${targets.length} succeeded`
         : `${action}: ${ok} ok, ${fail} failed — see console`;
@@ -4536,6 +4590,7 @@ async function confirmProceed() {
   } catch (e) {
     showToast(`✗ Network error: ${e.message}`, 'err');
   } finally {
+    hideActionOverlay();
     document.querySelectorAll('.ont-select').forEach(cb => cb.checked = false);
     onOntSelectChange();
   }
@@ -4673,6 +4728,14 @@ async function confirmProceed() {
         <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
         <button id="confirmGo" class="btn-go" onclick="confirmProceed()">Proceed</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Action loading overlay -->
+  <div id="actionOverlay" class="action-overlay" aria-hidden="true">
+    <div class="action-overlay-card">
+      <div class="action-overlay-spinner"></div>
+      <div id="actionOverlayText" class="action-overlay-text">Running action on 1 ONT(s)…</div>
     </div>
   </div>
 

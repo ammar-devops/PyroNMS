@@ -855,7 +855,7 @@
   <div class="filter-group">
     <div class="filter-label">PON / Slot</div>
     <select class="filter-select" id="ff-pon" onchange="applyAdvFilters()">
-      <option value="">All PONs</option>
+      <option value="">All Ports</option>
     </select>
   </div>
 
@@ -2085,7 +2085,7 @@ async function loadONTs() {
     allONTs = data.onts || [];
     updateStats();
     updateDashboard();
-    buildPONFilter();
+    buildPONFilterOptions();
     renderTable();
     document.getElementById('updateInfo').textContent =
       `Updated: ${new Date().toLocaleTimeString()} — ${allONTs.length} ONTs`;
@@ -2119,14 +2119,6 @@ function setStatFilter(f) {
   renderTable();
 }
 
-// ── PON filter ───────────────────────────────────────────────────────────────
-function buildPONFilter() {
-  const pons = [...new Set(allONTs.map(o => o.pon || ''))].filter(Boolean).sort();
-  const sel = document.getElementById('ff-pon'); if (!sel) return;
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">All PONs</option>' +
-    pons.map(p => `<option value="${p}" ${p===cur?'selected':''}>${p}</option>`).join('');
-}
 
 // ── Filters ──────────────────────────────────────────────────────────────────
 // ── Worker Manager ────────────────────────────────────────────────────────────

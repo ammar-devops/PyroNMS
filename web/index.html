@@ -2084,6 +2084,7 @@ async function loadONTs() {
     const data = await r.json();
     allONTs = data.onts || [];
     updateStats();
+    updateDashboard();
     buildPONFilter();
     renderTable();
     document.getElementById('updateInfo').textContent =
@@ -2955,14 +2956,14 @@ ${e.message || e}`);
 
 async function refreshAll() {
   const btn = document.querySelector('.btn-refresh-all');
-  if (btn) { btn.disabled = true; btn.textContent = '⧖ Refreshing…'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Refreshing…'; }
   try {
     await loadONTs();
     showToast('✓ Data refreshed — ' + allONTs.length + ' ONTs loaded', 'ok');
   } catch(e) {
     showToast('⚠ Refresh failed: ' + e.message, 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '⧖ Refresh All'; }
+    if (btn) { btn.disabled = false; btn.textContent = '⟳ Refresh All'; }
   }
 }
 

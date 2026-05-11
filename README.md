@@ -4,7 +4,7 @@
 
 ### Network Management System for ISPs
 
-[![Version](https://img.shields.io/badge/version-2.5.1-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
+[![Version](https://img.shields.io/badge/version-2.6.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
 [![Status](https://img.shields.io/badge/status-active-success.svg)]()
 [![License](https://img.shields.io/badge/license-Private-red.svg)]()
 [![Built for](https://img.shields.io/badge/OLT-Huawei%20MA5603T-orange.svg)]()
@@ -133,14 +133,17 @@ PyroNMS/
 | 🎨 v2.3    | Themes and branding                                        |
 | 🧭 v2.4    | Side panel, OLT management, server monitor                 |
 | 📊 v2.5    | Dashboard cards and resource monitor                       |
-| 🩹 v2.5.1  | Provisioning + unregistered ONT reliability fixes         |
+| 🩹 v2.5.1  | Provisioning + unregistered ONT reliability fixes          |
+| 🚀 v2.6.0  | SNMP-first architecture, dashboard rebuild, perf + UX overhaul |
 
-### 🔭 Current Release — `v2.5.1`
+### 🔭 Current Release — `v2.6.0`
 
-- Unregistered ONT scanner reliability fix
-- Provisioning workflow improvements
-- VLAN-10 defaults in provisioning flow
-- General ONT VAS Profile field in UI
+- 🔌 **SNMP-first polling** — Phases 1–6 of worker architecture (cache-first, bounded discovery, OID mapper)
+- 🖥️ **Dashboard rebuild** — 8-card responsive grid, sidebar auto-collapse, theme bridge
+- ⚡ **Instant render** — `localStorage` cache + nginx no-cache headers
+- 📋 **ONT list polish** — sortable VLAN, consolidated PON filter, async refresh with toasts
+- 🩹 **UI fixes** — distinct Power/Fiber badges, safe click bindings, null-safe stats
+- ✨ **Features** — bulk ONT delete, in-app toasts, fast Open Router WAN lookup
 
 ---
 

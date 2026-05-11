@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.7.0 (2026-05-11)
+
+### Breaking
+- **GenieACS TR-069 integration removed.** All ONT management now goes through SSH + SNMP directly to the Huawei OLT.
+- `GET /device?sn=...` now returns HTTP 410 Gone. Use `GET /ont/info?sn=...` instead.
+
+### ONT Manager (new popup)
+- Clicking any ONT row in the list opens a new **ONT Manager** modal showing live data fetched via SSH (`display ont info by-sn`).
+- Sections: Live Signal (RX, temperature, distance, online duration), Hardware (model, vendor, HW/SW version), Service (line/service profile, VLAN, WAN IP), OLT State (run/config/match state, last up/down).
+- **Model-aware theming** — modal accent + vendor pill colors change per ONT model: Huawei (red-orange), ZTE (blue), Generic (neutral).
+- **Refresh** button re-runs the SSH query.
+- **Open Web UI** button opens the ONT's web admin in a new tab (using the WAN IP).
+
+### UI Cleanup
+- Removed **Settings** column from the ONT list (replaced by the unified ONT Manager popup).
+- Removed **Router** column (its action merged into the new popup).
+- Table now has 8 columns instead of 10.
+
+### Backend
+- New `GET /ont/info?sn=X` endpoint — runs `display ont info by-sn` + `display ont version` via SSH and returns clean JSON.
+- New `olt_helpers.get_ont_full_info(ip, user, pwd, sn)` helper.
+- `/device` returns 410 Gone with a deprecation message.
+
 ## v2.6.0 (2026-05-11)
 
 ### SNMP-First Architecture

@@ -4,7 +4,7 @@
 
 ### Network Management System for ISPs
 
-[![Version](https://img.shields.io/badge/version-2.6.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
+[![Version](https://img.shields.io/badge/version-2.7.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
 [![Status](https://img.shields.io/badge/status-active-success.svg)]()
 [![License](https://img.shields.io/badge/license-Private-red.svg)]()
 [![Built for](https://img.shields.io/badge/OLT-Huawei%20MA5603T-orange.svg)]()
@@ -27,7 +27,7 @@
 - 🛠️ **Full ONT lifecycle** — discover, provision, monitor, repair, decommission
 - 🔍 **Unregistered ONT scanner** — SSH-based discovery with one-click registration
 - 🔌 **Service-port aware provisioning** — VLAN-10 default flow with VAS Profile support
-- 📡 **GenieACS TR-069 integration** — remote router management
+- 🪟 **Per-ONT Manager popup** — click any row for live SSH/SNMP data with model-aware theming (Huawei/ZTE/generic)
 - 📈 **InfluxDB time-series** — historical metrics, trend analysis, alerting-ready
 
 ---
@@ -135,15 +135,15 @@ PyroNMS/
 | 📊 v2.5    | Dashboard cards and resource monitor                       |
 | 🩹 v2.5.1  | Provisioning + unregistered ONT reliability fixes          |
 | 🚀 v2.6.0  | SNMP-first architecture, dashboard rebuild, perf + UX overhaul |
+| 🧹 v2.7.0  | GenieACS removed, new ONT Manager popup, slimmer table     |
 
-### 🔭 Current Release — `v2.6.0`
+### 🔭 Current Release — `v2.7.0`
 
-- 🔌 **SNMP-first polling** — Phases 1–6 of worker architecture (cache-first, bounded discovery, OID mapper)
-- 🖥️ **Dashboard rebuild** — 8-card responsive grid, sidebar auto-collapse, theme bridge
-- ⚡ **Instant render** — `localStorage` cache + nginx no-cache headers
-- 📋 **ONT list polish** — sortable VLAN, consolidated PON filter, async refresh with toasts
-- 🩹 **UI fixes** — distinct Power/Fiber badges, safe click bindings, null-safe stats
-- ✨ **Features** — bulk ONT delete, in-app toasts, fast Open Router WAN lookup
+- 🧹 **GenieACS removed** — all ONT management now via SSH + SNMP directly to the OLT
+- 🪟 **New ONT Manager popup** — model-aware theming (Huawei / ZTE / generic), live SSH data, Open Web UI button
+- 📋 **Table slimmed** — Settings + Router columns gone (their actions merged into the new popup)
+- 🔌 **New endpoint** — `GET /ont/info?sn=X` returns parsed `display ont info by-sn` + version
+- ⚠️ **Breaking** — `GET /device?sn=X` now returns HTTP 410 (use `/ont/info` instead)
 
 ---
 

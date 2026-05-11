@@ -2907,24 +2907,6 @@ function _openResolvingWindow() {
   if (!w) return null;
   try {
     w.document.write('<!doctype html><title>Resolving Router...</title><body style="font-family:Arial,sans-serif;background:#0b1020;color:#dbe4ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><div style="font-size:18px;font-weight:700;margin-bottom:8px;">Resolving Router IP...</div><div style="opacity:.8;font-size:13px;">Please wait</div></div>
-  <!-- ONT Manager Modal (v2.7.0) — replaces GenieACS popup -->
-  <div id="ontManagerOverlay" class="ontmgr-overlay" onclick="closeOntManager(event)">
-    <div id="ontManagerBox" class="ontmgr-box theme-generic" onclick="event.stopPropagation()">
-      <div class="ontmgr-head">
-        <span id="ontmgrVendor" class="vendor-pill">ONT</span>
-        <div class="title-block">
-          <div id="ontmgrName" class="title-name">—</div>
-          <div id="ontmgrMeta" class="title-meta">—</div>
-        </div>
-        <span id="ontmgrStatus" class="status-pill status-offline">—</span>
-        <button class="btn-close" onclick="closeOntManager()" title="Close">✕</button>
-      </div>
-      <div id="ontmgrBody" class="ontmgr-body">
-        <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
-      </div>
-    </div>
-  </div>
-
 </body>');
     w.document.close();
   } catch(_) {}
@@ -4485,6 +4467,25 @@ function renderOntManager(d) {
     </div>
   </div>
 </div>
+
+
+  <!-- ONT Manager Modal (v2.7.0) — replaces GenieACS popup -->
+  <div id="ontManagerOverlay" class="ontmgr-overlay" onclick="closeOntManager(event)">
+    <div id="ontManagerBox" class="ontmgr-box theme-generic" onclick="event.stopPropagation()">
+      <div class="ontmgr-head">
+        <span id="ontmgrVendor" class="vendor-pill">ONT</span>
+        <div class="title-block">
+          <div id="ontmgrName" class="title-name">—</div>
+          <div id="ontmgrMeta" class="title-meta">—</div>
+        </div>
+        <span id="ontmgrStatus" class="status-pill status-offline">—</span>
+        <button class="btn-close" onclick="closeOntManager()" title="Close">✕</button>
+      </div>
+      <div id="ontmgrBody" class="ontmgr-body">
+        <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
+      </div>
+    </div>
+  </div>
 
 </body>
 </html>

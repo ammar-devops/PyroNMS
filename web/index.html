@@ -390,9 +390,9 @@
     .main-section > div[style*="padding:24px"] { padding: 14px !important; }
 
     #section-dashboard > div { padding: 14px !important; }
-  #dash-cards { grid-template-columns: repeat(auto-fill,minmax(130px,1fr)) !important; gap:10px !important; }
+  #dash-cards { grid-template-columns: repeat(2,1fr) !important; gap:10px !important; }
   #dash-cards .dash-card { padding:14px 12px !important; }
-  #dash-cards .dash-card [style*="font-size:34px"] { font-size:26px !important; }
+  #dash-cards [style*="font-size:34px"] { font-size:22px !important; }
     #section-dashboard [style*="font-size:22px"] { font-size: 20px !important; }
     #section-dashboard [style*="min-width:160px"] {
       min-width: calc(50% - 8px) !important;
@@ -743,7 +743,7 @@
         </div>
 
         <!-- Stats Cards Grid -->
-        <div id="dash-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:24px;">
+        <div id="dash-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;">
 
           <div class="dash-card" style="background:linear-gradient(135deg,rgba(59,130,246,.12),rgba(59,130,246,.03));border:1px solid rgba(59,130,246,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');resetAdvFilters()" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#3b82f6'" onmouseout="this.style.transform='';this.style.borderColor='rgba(59,130,246,.35)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Total ONTs</div>
@@ -796,7 +796,7 @@
           <div id="dash-activity" style="font-size:13px;">
             <div style="text-align:center;padding:40px;color:var(--muted);">
               <div style="font-size:32px;margin-bottom:8px;">📊</div>
-              <div id="dash-activity" style="max-height:320px;overflow-y:auto;"><div style="text-align:center;padding:20px;color:var(--muted);">Loading...</div></div>
+              <div id="dash-activity" style="max-height:320px;overflow-y:auto;"><div style="text-align:center;padding:20px;color:var(--muted);">⟳ Loading activity feed...</div></div>
             </div>
           </div>
         </div>

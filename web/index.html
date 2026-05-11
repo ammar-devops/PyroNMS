@@ -136,8 +136,8 @@
   .sig-good    { background: #14532d; color: #4ade80; }
   .sig-weak    { background: #451a03; color: #fbbf24; }
   .sig-bad     { background: #450a0a; color: #f87171; }
-  .sig-offline { background: rgba(234,88,12,.15); color: #f97316; }
-  .sig-fiber   { background: rgba(239,68,68,.15); color: #ef4444; }
+  .sig-offline { background: rgba(236,72,153,.18); color: #f9a8d4; }
+  .sig-fiber   { background: rgba(219,39,119,.22); color: #ec4899; }
   .temp-cell { color: var(--muted); }
   .serial-cell { font-family: monospace; font-size: 12px; color: var(--muted); }
   .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
@@ -512,8 +512,8 @@
     }
     #section-ont .signal-badge {
       display: inline-flex;
-      max-width: 84px;
-      white-space: normal;
+      max-width: 130px;
+      white-space: nowrap;
       justify-content: center;
       text-align: center;
     }
@@ -1289,6 +1289,11 @@ function applyBranding(){
 }
 loadTheme();
 applyFavicon();
+
+// Receive theme changes from settings.html iframe
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'setTheme') { applyTheme(e.data.name); }
+});
 
 
 // ── Server Monitor ────────────────────────────────────────────────────────

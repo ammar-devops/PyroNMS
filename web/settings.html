@@ -226,6 +226,8 @@ function applyTheme(name){
 function selectTheme(name){
   localStorage.setItem('pyronms_theme',name);
   applyTheme(name);
+  // Notify parent window (index.html) to apply the same theme
+  try { window.parent.postMessage({type:'setTheme',name:name}, '*'); } catch(e){}
   document.querySelectorAll('.theme-card').forEach(c=>c.classList.remove('active'));
   document.getElementById('theme-'+name)?.classList.add('active');
   const msg=document.getElementById('themeMsg');

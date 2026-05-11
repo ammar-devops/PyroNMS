@@ -613,3 +613,35 @@ def snmp_probe_ont_fields(ip, read_community, slot, port, ont_id, oid_templates)
             out["values"][field] = None
 
     return True, out
+
+
+def snmp_get_raw(ip, read_community, oid):
+    cmd = ["snmpget", "-v2c", "-c", read_community, "-Oqv", ip, str(oid)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        return {
+            "ok": r.returncode == 0,
+            "oid": str(oid),
+            "stdout": (r.stdout or "").strip(),
+            "stderr": (r.stderr or "").strip(),
+            "rc": r.returncode,
+        }
+    except Exception as e:
+        return {"ok": False, "oid": str(oid), "error": str(e)}
+
+
+def snmp_walk_raw(ip, read_community, oid, limit_lines=200):
+    cmd = ["snmpwalk", "-v2c", "-c", read_community, ip, str(oid)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
+        lines = (r.stdout or "").splitlines()[:max(1, int(limit_lines))]
+        return {
+            "ok": r.returncode == 0,
+            "oid": str(oid),
+            "lines": lines,
+            "stderr": (r.stderr or "").strip(),
+            "rc": r.returncode,
+            "count": len(lines),
+        }
+    except Exception as e:
+        return {"ok": False, "oid": str(oid), "error": str(e), "lines": [], "count": 0}

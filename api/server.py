@@ -47,6 +47,7 @@ INFLUX_ORG    = "myisp"
 INFLUX_BUCKET = "olt_monitoring"
 OLT_BACKUP_DIR = Path("/opt/ont-monitor/olt-config")
 ONT_SETTINGS_TEMPLATE_PATH = Path("/opt/ont-monitor/config/ont_settings_templates.json")
+SNMP_OID_TEMPLATE_PATH = Path("/opt/ont-monitor/config/snmp_oid_templates.json")
 
 # ─── InfluxDB helpers ─────────────────────────────────────────────────────────
 
@@ -216,6 +217,29 @@ from(bucket: "{INFLUX_BUCKET}")
         elif field == "network_vlan":
             out["vlan"] = val
     return out
+
+
+def load_snmp_oid_templates():
+    base = {"rx_power": "", "temp": "", "vlan": ""}
+    try:
+        if SNMP_OID_TEMPLATE_PATH.is_file():
+            d = json.loads(SNMP_OID_TEMPLATE_PATH.read_text())
+            if isinstance(d, dict):
+                for k in base:
+                    if k in d:
+                        base[k] = str(d[k]).strip()
+    except Exception:
+        pass
+    return base
+
+
+def save_snmp_oid_templates(payload):
+    base = {"rx_power": "", "temp": "", "vlan": ""}
+    for k in base:
+        base[k] = str((payload or {}).get(k, "")).strip()
+    SNMP_OID_TEMPLATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SNMP_OID_TEMPLATE_PATH.write_text(json.dumps(base, indent=2))
+    return base
 
 
 def live_check_ont(sn):
@@ -1046,12 +1070,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(404, {"error": "No OLTs configured"})
                 o = olts[0]
 
-                # Load configured OID templates from runtime config.
-                sys.path.insert(0, "/opt/ont-monitor")
-                try:
-                    from config.config import SNMP_OID_TEMPLATES
-                except Exception:
-                    SNMP_OID_TEMPLATES = {}
+                SNMP_OID_TEMPLATES = load_snmp_oid_templates()
 
                 sn = (params.get("sn", [""])[0] or "").strip()
                 slot = params.get("slot", [""])[0].strip()
@@ -1089,6 +1108,45 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(500, {"error": str(e)})
 
         # ── GET /health ───────────────────────────────────────────────────────
+        elif parsed.path == "/snmp/templates":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Not allowed"})
+            return self.send_json(200, {"templates": load_snmp_oid_templates()})
+
+        elif parsed.path == "/snmp/get":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Not allowed"})
+            oid = (params.get("oid", [""])[0] or "").strip()
+            if not re.match(r"^[0-9.]+$", oid):
+                return self.send_json(400, {"error": "Invalid oid"})
+            olts = olt.get_olts()
+            if not olts:
+                return self.send_json(404, {"error": "No OLTs configured"})
+            o = olts[0]
+            read_comm = o.get("snmp_community") or "public"
+            return self.send_json(200, olt.snmp_get_raw(o["ip"], read_comm, oid))
+
+        elif parsed.path == "/snmp/walk":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Not allowed"})
+            oid = (params.get("oid", [""])[0] or "").strip()
+            if not re.match(r"^[0-9.]+$", oid):
+                return self.send_json(400, {"error": "Invalid oid"})
+            limit = int((params.get("limit", ["200"])[0] or "200"))
+            limit = max(10, min(limit, 1000))
+            olts = olt.get_olts()
+            if not olts:
+                return self.send_json(404, {"error": "No OLTs configured"})
+            o = olts[0]
+            read_comm = o.get("snmp_community") or "public"
+            return self.send_json(200, olt.snmp_walk_raw(o["ip"], read_comm, oid, limit_lines=limit))
+
         elif parsed.path == "/health":
             return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})
 
@@ -1189,6 +1247,20 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 append_ont_settings_audit(user, kind, payload, False, str(e))
                 return self.send_json(500, {"error": str(e)})
+
+        elif parsed.path == "/snmp/templates":
+            user = require_auth(self)
+            if not user: return
+            if user.get("role") not in ("superadmin", "admin"):
+                return self.send_json(403, {"error": "Not allowed"})
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            try:
+                payload = json.loads(body) if body else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            saved = save_snmp_oid_templates(payload)
+            return self.send_json(200, {"ok": True, "templates": saved})
 
         elif parsed.path == "/ont/delete":
             user = require_auth(self)

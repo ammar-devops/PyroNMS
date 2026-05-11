@@ -601,9 +601,6 @@
   <div class="header-dot"></div>
   <img src="/logo.png" alt="Logo" style="height:32px;object-fit:contain;opacity:.9;filter:brightness(1.1);">
   <div style="line-height:1.2;"><div class="header-title">Indus Broadband</div><div style="font-size:10px;color:var(--muted);letter-spacing:.3px;">PyroNMS by PyroNet Solutions</div></div>
-  <select class="pon-select" id="ponFilter" onchange="applyFilters()">
-    <option value="">All PONs</option>
-  </select>
   <button class="btn-refresh-all" onclick="refreshAll()">⟳ Refresh All</button>
   
   <div style="position:relative;margin-left:auto;" id="profileWrap">
@@ -2087,6 +2084,7 @@ async function loadONTs() {
       `Updated: ${new Date().toLocaleTimeString()} — ${allONTs.length} ONTs`;
   } catch(e) {
     document.getElementById('updateInfo').textContent = 'Error loading data';
+    throw e;  // propagate so refreshAll can catch it
   }
 }
 
@@ -2952,9 +2950,17 @@ ${e.message || e}`);
   }
 }
 
-function refreshAll() {
-  document.getElementById('updateInfo').textContent = 'Refreshing…';
-  loadONTs();
+async function refreshAll() {
+  const btn = document.querySelector('.btn-refresh-all');
+  if (btn) { btn.disabled = true; btn.textContent = '⧖ Refreshing…'; }
+  try {
+    await loadONTs();
+    showToast('✓ Data refreshed — ' + allONTs.length + ' ONTs loaded', 'ok');
+  } catch(e) {
+    showToast('⚠ Refresh failed: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⧖ Refresh All'; }
+  }
 }
 
 // ── Modal ────────────────────────────────────────────────────────────────────

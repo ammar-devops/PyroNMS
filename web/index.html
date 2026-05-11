@@ -2608,10 +2608,7 @@ function applyFilters() { renderTable(); }
 
 function getFiltered() {
   const search = document.getElementById('searchBox').value.toLowerCase();
-  const pon    = document.getElementById('ponFilter').value;
-
   return allONTs.filter(o => {
-    if (pon  && !o.pon?.startsWith(pon)) return false;
     if (search) {
       const hay = (o.name || '') + ' ' + (o.sn || '');
       if (!hay.toLowerCase().includes(search)) return false;

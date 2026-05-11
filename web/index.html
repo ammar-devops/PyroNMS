@@ -2916,8 +2916,8 @@ ${reason}`, 'warn');
 }
 
 function signalBadge(o) {
-  if (o.status === 'power-failure') return { cls:'sig-offline', text:'?? Power' };
-  if (o.status === 'fiber-issue')   return { cls:'sig-offline sig-fiber', text:'? Fiber' };
+  if (o.status === 'power-failure') return { cls:'sig-offline', text:'⚡ Power Down' };
+  if (o.status === 'fiber-issue')   return { cls:'sig-offline sig-fiber', text:'⚡ Power Down' };
   if (o.status !== 'online')        return { cls:'sig-offline', text:'OFFLINE' };
   const rx = parseFloat(o.rx);
   if (isNaN(rx))        return { cls:'sig-bad',  text: o.rx || '-' };

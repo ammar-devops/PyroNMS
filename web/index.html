@@ -2651,7 +2651,7 @@ function renderTable() {
           <button title="ONT Settings" onclick="openOntSettings('${o.sn}','${escAttr(o.name)}','${o.pon || ''}','${o.vlan || ''}')" style="background:rgba(79,142,247,.14);border:1px solid rgba(79,142,247,.45);color:var(--accent);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;">Settings</button>
         </td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
-          <button title="Open Router" onclick="openRouter('${o.sn}','${o.pon}',this)" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">Open Router</button>
+          <button title="Open Router" onclick="openRouter('${o.sn}','${o.pon}',this)" data-ip="${escAttr(o.wan_ip || '')}" data-ontid="${escAttr(o.ont_id || '')}" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">Open Router</button>
         </td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
           <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>?</span> Refresh</button>
@@ -2835,21 +2835,65 @@ async function submitOntSettings(kind, action='apply') {
   }
 }
 
+function _openTargetUrl(url) {
+  const w = window.open(url, '_blank');
+  if (!w) location.href = url;
+}
+
+function _openResolvingWindow() {
+  const w = window.open('about:blank', '_blank');
+  if (!w) return null;
+  try {
+    w.document.write('<!doctype html><title>Resolving Router...</title><body style="font-family:Arial,sans-serif;background:#0b1020;color:#dbe4ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div><div style="font-size:18px;font-weight:700;margin-bottom:8px;">Resolving Router IP...</div><div style="opacity:.8;font-size:13px;">Please wait</div></div></body>');
+    w.document.close();
+  } catch(_) {}
+  return w;
+}
+
 async function openRouter(sn, pon, btn) {
   const orig = btn.textContent;
   btn.textContent = '...';
   btn.disabled = true;
 
-  // Open window synchronously to avoid popup blockers.
-  const w = window.open('about:blank', '_blank');
+  const row = allONTs.find(o => o.sn === sn) || {};
+  const cachedIp = (btn?.dataset?.ip || row.wan_ip || '').trim();
+  if (cachedIp && cachedIp !== '-' && cachedIp !== '0.0.0.0') {
+    const target = 'http://' + cachedIp;
+    btn.title = `IP: ${cachedIp}${row.wan_vlan ? ' | VLAN: '+row.wan_vlan : ''}${row.wan_status ? ' | '+row.wan_status : ''}`;
+    _openTargetUrl(target);
+    // Warm cache in background, non-blocking
+    fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}&ont_id=${encodeURIComponent(ontId || '')}`, { headers: authHeaders() })
+      .then(r => r.json()).then(d => {
+        if (d && d.ip && d.ip !== '-' && d.ip !== '0.0.0.0') {
+          const idx = allONTs.findIndex(x => x.sn === sn);
+          if (idx >= 0) {
+            allONTs[idx].wan_ip = d.ip;
+            allONTs[idx].wan_status = d.status || allONTs[idx].wan_status || '';
+            allONTs[idx].wan_vlan = d.vlan || allONTs[idx].wan_vlan || '';
+          }
+        }
+      }).catch(()=>{});
+    btn.textContent = orig;
+    btn.disabled = false;
+    return;
+  }
+
+  // No cached IP -> open a resolving page (not blank) to avoid bad UX.
+  const w = _openResolvingWindow();
   try {
-    const r = await fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}`, {
+    const r = await fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}&ont_id=${encodeURIComponent(ontId || '')}`, {
       headers: authHeaders(),
           });
     const d = await r.json();
     if (d && d.ip && d.ip !== '-' && d.ip !== '0.0.0.0') {
       const target = 'http://' + d.ip;
       btn.title = `IP: ${d.ip}${d.vlan ? ' | VLAN: '+d.vlan : ''}${d.status ? ' | '+d.status : ''}`;
+      const idx = allONTs.findIndex(x => x.sn === sn);
+      if (idx >= 0) {
+        allONTs[idx].wan_ip = d.ip;
+        allONTs[idx].wan_status = d.status || '';
+        allONTs[idx].wan_vlan = d.vlan || '';
+      }
       if (w) {
         try { w.location.href = target; } catch (_) { window.open(target, '_blank'); }
       } else {
@@ -4241,3 +4285,4 @@ init();
 
 </body>
 </html>
+  const ontId = (btn?.dataset?.ontid || row.ont_id || '').toString().trim();

@@ -101,7 +101,7 @@ from(bucket: "{INFLUX_BUCKET}")
   |> range(start: -48h)
   |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "down_cause" or r._field == "vlan"))
   |> last()
-  |> keep(columns: ["sn", "pon", "description", "_field", "_value"])
+  |> keep(columns: ["sn", "pon", "ont_id", "description", "_field", "_value"])
 '''
 
     # Latest optical per ONT — only rx_power and temp fields
@@ -113,9 +113,18 @@ from(bucket: "{INFLUX_BUCKET}")
   |> last()
   |> keep(columns: ["sn", "_field", "_value"])
 '''
+    flux_wan = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -72h)
+  |> filter(fn: (r) => r._measurement == "ont_wan" and
+      (r._field == "ipv4_address" or r._field == "connection_status" or r._field == "network_vlan"))
+  |> last()
+  |> keep(columns: ["sn", "_field", "_value"])
+'''
 
     status_rows  = influx_query(flux_status)
     optical_rows = influx_query(flux_optical)
+    wan_rows     = influx_query(flux_wan)
 
     # Index optical by sn — collect all fields
     optical = {}
@@ -139,8 +148,11 @@ from(bucket: "{INFLUX_BUCKET}")
         val   = r.get("_value",      "").strip()
         if not sn:
             continue
+        ont_id = r.get("ont_id", "").strip()
         if sn not in status_map:
-            status_map[sn] = {"pon": pon, "name": name, "online": "0", "down_cause": "", "vlan": ""}
+            status_map[sn] = {"pon": pon, "ont_id": ont_id, "name": name, "online": "0", "down_cause": "", "vlan": ""}
+        elif ont_id and not status_map[sn].get("ont_id"):
+            status_map[sn]["ont_id"] = ont_id
         if field == "online":
             status_map[sn]["online"] = val
         elif field == "down_cause":
@@ -148,9 +160,26 @@ from(bucket: "{INFLUX_BUCKET}")
         elif field == "vlan":
             status_map[sn]["vlan"] = val
 
+    wan_map = {}
+    for r in wan_rows:
+        sn = r.get("sn", "").strip()
+        field = r.get("_field", "").strip()
+        val = r.get("_value", "").strip()
+        if not sn:
+            continue
+        if sn not in wan_map:
+            wan_map[sn] = {"wan_ip": "", "wan_status": "", "wan_vlan": ""}
+        if field == "ipv4_address":
+            wan_map[sn]["wan_ip"] = val
+        elif field == "connection_status":
+            wan_map[sn]["wan_status"] = val
+        elif field == "network_vlan":
+            wan_map[sn]["wan_vlan"] = val
+
     onts = []
     for sn, s in status_map.items():
         opt  = optical.get(sn, {})
+        wan  = wan_map.get(sn, {})
         rx   = (opt.get("rx_power") or opt.get("rx_signal") or opt.get("rx") or "-")
         temp = (opt.get("temperature") or opt.get("temp") or "-")
         is_online = s["online"] in ("1", "online", "true")
@@ -165,6 +194,7 @@ from(bucket: "{INFLUX_BUCKET}")
             detail_status = "offline"
         onts.append({
             "pon":        s["pon"],
+            "ont_id":     s.get("ont_id", ""),
             "name":       s["name"],
             "sn":         sn,
             "status":     detail_status,
@@ -172,6 +202,9 @@ from(bucket: "{INFLUX_BUCKET}")
             "rx":         rx,
             "temp":       temp,
             "vlan":       s.get("vlan", ""),
+            "wan_ip":     wan.get("wan_ip", ""),
+            "wan_status": wan.get("wan_status", ""),
+            "wan_vlan":   wan.get("wan_vlan", ""),
         })
     return onts
 
@@ -958,6 +991,7 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path.startswith('/ont/wan-ip'):
             sn  = params.get('sn',  [''])[0].strip()
             pon = params.get('pon', [''])[0].strip()
+            ont_id = (params.get('ont_id', [''])[0] or '').strip()
             if not sn:
                 self.send_json(400, {'error': 'sn required'}); return
             try:
@@ -977,7 +1011,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not olts:
                     self.send_json(404, {'error': 'No OLTs configured'}); return
                 o = olts[0]
-                live = olt.get_ont_wan_live(o['ip'], o['username'], o['password'], sn, pon)
+                # Faster path when table already knows exact location
+                if pon and ont_id.isdigit():
+                    live = olt.get_ont_wan_live_by_path(o['ip'], o['username'], o['password'], pon, int(ont_id), sn=sn)
+                else:
+                    live = olt.get_ont_wan_live(o['ip'], o['username'], o['password'], sn, pon)
                 if not live.get('ok'):
                     self.send_json(200, {'ip': '-', 'sn': sn, 'error': live.get('error', 'Live WAN check failed')}); return
 

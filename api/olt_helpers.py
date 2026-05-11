@@ -550,6 +550,80 @@ def get_ont_wan_live(ip, username, password, sn, pon_hint=''):
             pass
 
 
+def get_ont_wan_live_by_path(ip, username, password, pon, ont_id, sn=''):
+    """
+    Faster WAN resolver when ONT location is already known from cache/table.
+    pon format: 0/slot/port (example: 0/4/2)
+    """
+    conn = olt_ssh(ip, username, password)
+    try:
+        parts = str(pon).split('/')
+        if len(parts) != 3:
+            return {'ok': False, 'error': f'invalid pon: {pon}'}
+        slot_port = '/'.join(parts[:2])   # 0/4
+        port = int(parts[2])              # 2
+        ont_id = int(ont_id)
+        fsp = f'{slot_port}/{port}'
+
+        details = {"wan": {}, "raw_sections": []}
+        sp_section = _olt_command(
+            conn,
+            f'display service-port port {fsp} ont {ont_id}',
+            delay=1,
+            wait_prompt=True,
+            max_rounds=10,
+        )
+        if 'Parameter error' not in sp_section and 'Unknown command' not in sp_section:
+            details["raw_sections"].append("SERVICE_PORT")
+            details["wan"].update(_parse_service_port(sp_section))
+
+        conn.write_channel(f'interface gpon {slot_port}\r\n')
+        time.sleep(1)
+        conn.read_channel()
+
+        wan_section = _olt_command(
+            conn,
+            f'display ont wan-info {port} {ont_id}',
+            delay=1,
+            wait_prompt=True,
+            max_rounds=12,
+        )
+        details["raw_sections"].append("WAN_INFO")
+
+        _ip = re.search(r'IPv4 address\s*:\s*(\S+)', wan_section, re.I)
+        _st = re.search(r'IPv4 Connection status\s*:\s*(\S.*)', wan_section, re.I)
+        _at = re.search(r'IPv4 access type\s*:\s*(\S.*)', wan_section, re.I)
+        _mv = re.search(r'Manage VLAN\s*:\s*(\S+)', wan_section, re.I)
+        if _ip and _ip.group(1) not in ('-', '0.0.0.0'):
+            details["wan"]["ipv4_address"] = _ip.group(1).strip()
+        if _st:
+            details["wan"]["connection_status"] = _st.group(1).strip()
+        if _at:
+            details["wan"]["access_type"] = _at.group(1).strip()
+        if _mv:
+            details["wan"]["manage_vlan"] = _mv.group(1).strip()
+
+        conn.write_channel('quit\r\n')
+        time.sleep(0.6)
+        conn.read_channel()
+
+        return {
+            'ok': True,
+            'sn': sn,
+            'fsp': fsp,
+            'ont_id': ont_id,
+            'details': details,
+            'raw': '[SERVICE_PORT]\\n' + sp_section + '\\n[WAN_INFO]\\n' + wan_section,
+        }
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+    finally:
+        try:
+            conn.disconnect()
+        except Exception:
+            pass
+
+
 # ── SNMP provisioning helpers ──────────────────────────────────────────────────
 
 def _sn_to_snmp_hex(sn):

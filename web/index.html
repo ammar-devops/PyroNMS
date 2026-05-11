@@ -132,12 +132,12 @@
   .pon-tag { display: inline-block; background: #1e3a5f; color: #60a5fa; border-radius: 4px; padding: 2px 8px; font-size: 12px; font-weight: 600; cursor: pointer; }
   .customer-name { font-weight: 500; }
   .customer-link { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
-  .signal-badge { display: inline-block; border-radius: 5px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+  .signal-badge { display: inline-block; border-radius: 5px; padding: 3px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .sig-good    { background: #14532d; color: #4ade80; }
   .sig-weak    { background: #451a03; color: #fbbf24; }
   .sig-bad     { background: #450a0a; color: #f87171; }
-  .sig-offline { background: rgba(236,72,153,.18); color: #f9a8d4; }
-  .sig-fiber   { background: rgba(219,39,119,.22); color: #ec4899; }
+  .sig-offline { background: rgba(236,72,153,.20); color: #f9a8d4; white-space:nowrap; }
+  .sig-fiber   { background: rgba(185,28,28,.25); color: #fca5a5; white-space:nowrap; }
   .temp-cell { color: var(--muted); }
   .serial-cell { font-family: monospace; font-size: 12px; color: var(--muted); }
   .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
@@ -512,8 +512,7 @@
     }
     #section-ont .signal-badge {
       display: inline-flex;
-      max-width: 130px;
-      white-space: nowrap;
+      white-space: nowrap !important;
       justify-content: center;
       text-align: center;
     }
@@ -759,11 +758,11 @@
           <div style="background:linear-gradient(135deg,rgba(239,68,68,.1),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ef4444'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(239,68,68,.3)'">
             <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Offline ONTs</div>
             <div style="background:linear-gradient(135deg,rgba(249,115,22,.1),rgba(249,115,22,.02));border:1px solid rgba(249,115,22,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('ont');setOntFilter('power-failure')">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">🔌 Power Failure</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">⚡ Power Down</div>
             <div style="font-size:32px;font-weight:700;color:#f97316;" id="dash-power">0</div>
           </div>
           <div style="background:linear-gradient(135deg,rgba(239,68,68,.1),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('ont');setOntFilter('fiber-issue')">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">⚡ Fiber Issue</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Fiber Down</div>
             <div style="font-size:32px;font-weight:700;color:#ef4444;" id="dash-fiber">0</div>
           </div>
           </div>
@@ -816,8 +815,8 @@
     <select class="filter-select" id="ff-status" onchange="applyAdvFilters()">
       <option value="" id="ff-status-all">All ONTs</option>
       <option value="online" id="ff-status-active">Active ONTs</option>
-      <option value="power-failure" id="ff-status-power">Power Failure</option>
-      <option value="fiber-issue" id="ff-status-fiber">Fiber Issue</option>
+      <option value="power-failure" id="ff-status-power">Power Down</option>
+      <option value="fiber-issue" id="ff-status-fiber">Fiber Down</option>
       <option value="weak" id="ff-status-weak">-26 to -28 dBm</option>
       <option value="bad" id="ff-status-bad">-29 dBm or Kam</option>
     </select>
@@ -831,12 +830,12 @@
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Active</div>
       <div style="font-size:16px;font-weight:700;color:#22c55e;" id="fc-active">-</div>
     </div>
-    <div onclick="setOntFilter('power-failure')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="Power Failure">
-      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">🔌 Power</div>
+    <div onclick="setOntFilter('power-failure')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="Power Down">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">⚡ Power Down</div>
       <div style="font-size:16px;font-weight:700;color:#f97316;" id="fc-power">-</div>
     </div>
-    <div onclick="setOntFilter('fiber-issue')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);min-width:60px;" title="Fiber Issue">
-      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">⚡ Fiber</div>
+    <div onclick="setOntFilter('fiber-issue')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);min-width:60px;" title="Fiber Down">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Fiber Down</div>
       <div style="font-size:16px;font-weight:700;color:#ef4444;" id="fc-fiber">-</div>
     </div>
     <div onclick="setStatFilter('weak')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(245,158,11,.3);background:rgba(245,158,11,.08);min-width:60px;" title="-26 to -28 dBm">
@@ -982,8 +981,8 @@ function updateDashboard() {
   setEl('fc-weak', weak); setEl('fc-bad', critical);
   setEl('ff-status-all', `All ONTs (${total})`);
   setEl('ff-status-active', `Active ONTs (${active})`);
-  setEl('ff-status-power', `Power Failure (${power})`);
-  setEl('ff-status-fiber', `Fiber Issue (${fiber})`);
+  setEl('ff-status-power', `Power Down (${power})`);
+  setEl('ff-status-fiber', `Fiber Down (${fiber})`);
   setEl('ff-status-weak', `-26 to -28 dBm (${weak})`);
   setEl('ff-status-bad', `-29 dBm or Kam (${critical})`);
   setEl('dash-total', total);
@@ -2922,7 +2921,7 @@ ${reason}`, 'warn');
 
 function signalBadge(o) {
   if (o.status === 'power-failure') return { cls:'sig-offline', text:'⚡ Power Down' };
-  if (o.status === 'fiber-issue')   return { cls:'sig-offline sig-fiber', text:'⚡ Power Down' };
+  if (o.status === 'fiber-issue')   return { cls:'sig-offline sig-fiber', text:'Fiber Down' };
   if (o.status !== 'online')        return { cls:'sig-offline', text:'OFFLINE' };
   const rx = parseFloat(o.rx);
   if (isNaN(rx))        return { cls:'sig-bad',  text: o.rx || '-' };

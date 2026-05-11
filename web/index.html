@@ -873,7 +873,7 @@
         <th style="width:150px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('rx')" id="fth-rx">Status / Signal</th>
         <th style="width:70px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('temp')" id="fth-temp">Temp</th>
         <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-sn">Serial Number</th>
-        <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">VLAN</th>
+        <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('vlan')" id="fth-vlan">VLAN</th>
         <th style="width:86px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Settings</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Router</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
@@ -892,7 +892,7 @@
         <th style="width:140px" onclick="sortTable('rx')"  id="th-rx">RX Signal</th>
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
-        <th style="width:60px">VLAN</th>
+        <th style="width:60px" onclick="sortTable('vlan')" id="th-vlan" style="cursor:pointer">VLAN</th>
         <th style="width:86px">Settings</th>
         <th style="width:90px">Router</th>
         <th style="width:90px">Refresh</th>
@@ -1515,6 +1515,7 @@ function getSortedFiltered(){
     if(sortCol==='pon'){va=a.pon||'';vb=b.pon||'';}
     else if(sortCol==='name'){va=(a.name||'').toLowerCase();vb=(b.name||'').toLowerCase();}
     else if(sortCol==='sn'){va=a.sn||'';vb=b.sn||'';}
+    else if(sortCol==='vlan'){va=parseInt(a.vlan)||0;vb=parseInt(b.vlan)||0;return(va-vb)*sortDir;}
     else return 0;
     return va<vb?-sortDir:va>vb?sortDir:0;
   });

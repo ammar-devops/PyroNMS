@@ -2120,15 +2120,18 @@ async function loadONTs() {
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 function updateStats() {
+  // Legacy stats bar (v-* IDs) was removed in favor of dashboard cards (dash-* IDs).
+  // Kept as a safe no-op so existing call sites don't throw. updateDashboard() does the work now.
+  const setIf = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   const active  = allONTs.filter(o => o.status === 'online').length;
   const offline = allONTs.filter(o => o.status !== 'online').length;
   const weak    = allONTs.filter(o => o.status==='online' && parseFloat(o.rx) >= -28 && parseFloat(o.rx) < -26).length;
   const bad     = allONTs.filter(o => o.status==='online' && parseFloat(o.rx) < -29).length;
-  document.getElementById('v-total').textContent   = allONTs.length;
-  document.getElementById('v-active').textContent  = active;
-  document.getElementById('v-offline').textContent = offline;
-  document.getElementById('v-weak').textContent    = weak;
-  document.getElementById('v-bad').textContent     = bad;
+  setIf('v-total',   allONTs.length);
+  setIf('v-active',  active);
+  setIf('v-offline', offline);
+  setIf('v-weak',    weak);
+  setIf('v-bad',     bad);
 }
 
 function setStatFilter(f) {

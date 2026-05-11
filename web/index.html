@@ -390,6 +390,9 @@
     .main-section > div[style*="padding:24px"] { padding: 14px !important; }
 
     #section-dashboard > div { padding: 14px !important; }
+  #dash-cards { grid-template-columns: repeat(auto-fill,minmax(130px,1fr)) !important; gap:10px !important; }
+  #dash-cards .dash-card { padding:14px 12px !important; }
+  #dash-cards .dash-card [style*="font-size:34px"] { font-size:26px !important; }
     #section-dashboard [style*="font-size:22px"] { font-size: 20px !important; }
     #section-dashboard [style*="min-width:160px"] {
       min-width: calc(50% - 8px) !important;
@@ -740,43 +743,46 @@
         </div>
 
         <!-- Stats Cards Grid -->
-        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:24px;">
-          
-          <div style="background:linear-gradient(135deg,rgba(59,130,246,.1),rgba(59,130,246,.02));border:1px solid rgba(59,130,246,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('all')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#3b82f6'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(59,130,246,.3)'">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Total ONTs</div>
-            <div style="font-size:32px;font-weight:700;color:#3b82f6;" id="dash-total">0</div>
+        <div id="dash-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:24px;">
+
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(59,130,246,.12),rgba(59,130,246,.03));border:1px solid rgba(59,130,246,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');resetAdvFilters()" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#3b82f6'" onmouseout="this.style.transform='';this.style.borderColor='rgba(59,130,246,.35)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Total ONTs</div>
+            <div style="font-size:34px;font-weight:800;color:#3b82f6;line-height:1;" id="dash-total">0</div>
           </div>
 
-          <div style="background:linear-gradient(135deg,rgba(34,197,94,.1),rgba(34,197,94,.02));border:1px solid rgba(34,197,94,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('active')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#22c55e'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(34,197,94,.3)'">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Active ONTs</div>
-            <div style="font-size:32px;font-weight:700;color:#22c55e;" id="dash-active">0</div>
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(34,197,94,.12),rgba(34,197,94,.03));border:1px solid rgba(34,197,94,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('active')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#22c55e'" onmouseout="this.style.transform='';this.style.borderColor='rgba(34,197,94,.35)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Active ONTs</div>
+            <div style="font-size:34px;font-weight:800;color:#22c55e;line-height:1;" id="dash-active">0</div>
           </div>
 
-          <div style="background:linear-gradient(135deg,rgba(239,68,68,.1),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ef4444'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(239,68,68,.3)'">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Offline ONTs</div>
-            <div style="background:linear-gradient(135deg,rgba(249,115,22,.1),rgba(249,115,22,.02));border:1px solid rgba(249,115,22,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('ont');setOntFilter('power-failure')">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">⚡ Power Down</div>
-            <div style="font-size:32px;font-weight:700;color:#f97316;" id="dash-power">0</div>
-          </div>
-          <div style="background:linear-gradient(135deg,rgba(239,68,68,.1),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('ont');setOntFilter('fiber-issue')">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Fiber Down</div>
-            <div style="font-size:32px;font-weight:700;color:#ef4444;" id="dash-fiber">0</div>
-          </div>
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(100,116,139,.12),rgba(100,116,139,.03));border:1px solid rgba(100,116,139,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#64748b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(100,116,139,.35)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Offline ONTs</div>
+            <div style="font-size:34px;font-weight:800;color:#94a3b8;line-height:1;" id="dash-offline">0</div>
           </div>
 
-          <div style="background:linear-gradient(135deg,rgba(245,158,11,.1),rgba(245,158,11,.02));border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;min-width:160px;flex:1;" onclick="switchSection('dashboard');setOntFilter('weak')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f59e0b'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(245,158,11,.3)'">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">-26 to -28 dBm</div>
-            <div style="font-size:32px;font-weight:700;color:#f59e0b;" id="dash-weak">0</div>
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(236,72,153,.14),rgba(236,72,153,.03));border:1px solid rgba(236,72,153,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('power-failure')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ec4899'" onmouseout="this.style.transform='';this.style.borderColor='rgba(236,72,153,.4)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">⚡ Power Down</div>
+            <div style="font-size:34px;font-weight:800;color:#f9a8d4;line-height:1;" id="dash-power">0</div>
           </div>
 
-          <div style="background:linear-gradient(135deg,rgba(249,115,22,.1),rgba(249,115,22,.02));border:1px solid rgba(249,115,22,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;" onclick="switchSection('dashboard');setOntFilter('critical')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f97316'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(249,115,22,.3)'">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">-29 dBm or kam</div>
-            <div style="font-size:32px;font-weight:700;color:#f97316;" id="dash-bad">0</div>
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(185,28,28,.14),rgba(185,28,28,.03));border:1px solid rgba(239,68,68,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('fiber-issue')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ef4444'" onmouseout="this.style.transform='';this.style.borderColor='rgba(239,68,68,.4)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Fiber Down</div>
+            <div style="font-size:34px;font-weight:800;color:#fca5a5;line-height:1;" id="dash-fiber">0</div>
           </div>
 
-          <div style="background:linear-gradient(135deg,rgba(168,85,247,.1),rgba(168,85,247,.02));border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:18px;cursor:pointer;transition:all .2s;" onclick="switchSection('unreg')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#a855f7'" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(168,85,247,.3)'">
-            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Unregistered</div>
-            <div style="font-size:32px;font-weight:700;color:#a855f7;" id="dash-unreg">0</div>
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(245,158,11,.03));border:1px solid rgba(245,158,11,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('weak')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f59e0b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(245,158,11,.35)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">-26 to -28 dBm</div>
+            <div style="font-size:34px;font-weight:800;color:#f59e0b;line-height:1;" id="dash-weak">0</div>
+          </div>
+
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(249,115,22,.12),rgba(249,115,22,.03));border:1px solid rgba(249,115,22,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('critical')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f97316'" onmouseout="this.style.transform='';this.style.borderColor='rgba(249,115,22,.35)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">-29 dBm or Kam</div>
+            <div style="font-size:34px;font-weight:800;color:#f97316;line-height:1;" id="dash-bad">0</div>
+          </div>
+
+          <div class="dash-card" style="background:linear-gradient(135deg,rgba(168,85,247,.12),rgba(168,85,247,.03));border:1px solid rgba(168,85,247,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('unreg')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#a855f7'" onmouseout="this.style.transform='';this.style.borderColor='rgba(168,85,247,.35)'">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Unregistered</div>
+            <div style="font-size:34px;font-weight:800;color:#a855f7;line-height:1;" id="dash-unreg">—</div>
           </div>
 
         </div>
@@ -1519,7 +1525,7 @@ function getSortedFiltered(){
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────
-let sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
+let sidebarCollapsed = localStorage.getItem('sidebar_collapsed') !== 'false';
 
 function isMobileView() {
   return window.matchMedia && window.matchMedia('(max-width: 768px)').matches;

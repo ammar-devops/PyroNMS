@@ -977,37 +977,23 @@ class Handler(BaseHTTPRequestHandler):
                 if not olts:
                     self.send_json(404, {'error': 'No OLTs configured'}); return
                 o = olts[0]
-                ok, out = olt.apply_ont_settings(o['ip'], o['username'], o['password'], {
+                live = olt.get_ont_wan_live(o['ip'], o['username'], o['password'], sn, pon)
+                if not live.get('ok'):
+                    self.send_json(200, {'ip': '-', 'sn': sn, 'error': live.get('error', 'Live WAN check failed')}); return
+
+                wan = (live.get('details') or {}).get('wan') or {}
+                ip = (wan.get('ipv4_address') or '').strip() or '-'
+                status = (wan.get('connection_status') or '').strip()
+                vlan = (wan.get('network_vlan') or wan.get('manage_vlan') or '').strip()
+                access_type = (wan.get('access_type') or '').strip()
+                self.send_json(200, {
+                    'ip': ip,
                     'sn': sn,
-                    'kind': 'check',
-                    'action': 'check',
-                    'method': 'ssh',
-                    'pon': pon,
+                    'status': status,
+                    'vlan': vlan,
+                    'access_type': access_type,
+                    'source': 'ssh-live'
                 })
-                if not ok:
-                    self.send_json(200, {'ip': '-', 'sn': sn, 'error': out}); return
-
-                ip = '-'
-                status = ''
-                vlan = ''
-
-                m = re.search(r'\[ONT_DETAILS_JSON\]\s*(\{[^\n]+\})', out)
-                if m:
-                    try:
-                        details = json.loads(m.group(1))
-                        wan = (details or {}).get('wan') or {}
-                        ip = (wan.get('ipv4_address') or '').strip() or ip
-                        status = (wan.get('connection_status') or '').strip() or status
-                        vlan = (wan.get('network_vlan') or '').strip() or vlan
-                    except Exception:
-                        pass
-
-                if ip == '-':
-                    m2 = re.search(r'IPv4 address\s*:\s*([^\s]+)', out, re.I)
-                    if m2:
-                        ip = m2.group(1).strip()
-
-                self.send_json(200, {'ip': ip, 'sn': sn, 'status': status, 'vlan': vlan, 'source': 'ssh'})
             except Exception as e:
                 self.send_json(200, {'ip': '-', 'sn': sn, 'error': str(e)})
 

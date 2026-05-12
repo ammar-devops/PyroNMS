@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link id="favicon" rel="icon" type="image/png" href="/favicon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PyroNMS — User Management</title>
+<style>
+:root {
+  --bg:#0b0e18;--bg2:#12151f;--bg3:#1a1e2e;--bg4:#222638;
+  --border:#2c3150;--text:#dde3f5;--muted:#6b7394;
+  --accent:#4f8ef7;--green:#26d97f;--red:#f25c5c;--yellow:#f5b83a;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;}
+.header{display:flex;align-items:center;gap:14px;padding:10px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;}
+.header-title{font-size:15px;font-weight:700;}
+.header-back{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 14px;font-size:13px;cursor:pointer;text-decoration:none;}
+.header-back:hover{border-color:var(--accent);}
+.user-info{margin-left:auto;font-size:13px;color:var(--muted);}
+.btn-logout{background:none;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;margin-left:10px;}
+.btn-logout:hover{border-color:var(--red);color:var(--red);}
+.container{max-width:1000px;margin:0 auto;padding:24px;}
+.section-title{font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text);}
+.btn-add{background:#0d2e1a;border:1px solid #26d97f55;color:var(--green);border-radius:7px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:20px;}
+.btn-add:hover{background:#1a4a2a;}
+table{width:100%;border-collapse:collapse;}
+.table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.table-scroll table{min-width:820px;}
+th{background:var(--bg2);color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);}
+td{padding:11px 14px;border-bottom:1px solid #1c2035;vertical-align:middle;}
+tr:hover td{background:var(--bg3);}
+.role-badge{display:inline-block;border-radius:5px;padding:2px 9px;font-size:11px;font-weight:700;}
+.role-superadmin{background:#1a2550;color:#6ba3f7;}
+.role-admin{background:#1a3a2a;color:#4dffaa;}
+.role-viewer{background:#2a2a1a;color:#f5c84a;}
+.role-pon_operator{background:#2a1a2a;color:#c084fc;}
+.status-on{color:var(--green);font-weight:600;}
+.status-off{color:var(--red);}
+.btn-edit{background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;}
+.btn-edit:hover{border-color:var(--accent);color:var(--accent);}
+.btn-del{background:#2d0e0e;border:1px solid #f25c5c44;color:var(--red);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;margin-left:6px;}
+.btn-del:hover{background:#3d1010;}
+
+/* Modal */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;align-items:center;justify-content:center;}
+.overlay.open{display:flex;}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:14px;width:520px;max-width:95vw;padding:28px 32px;box-shadow:0 24px 80px rgba(0,0,0,.6);}
+.modal-title{font-size:17px;font-weight:700;margin-bottom:20px;color:var(--accent);}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+.form-group{display:flex;flex-direction:column;gap:6px;}
+.form-group.full{grid-column:1/-1;}
+.form-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+.form-input,.form-select{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;width:100%;}
+.form-input:focus,.form-select:focus{outline:none;border-color:var(--accent);}
+.form-hint{font-size:11px;color:var(--muted);margin-top:2px;}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;}
+.btn-save{background:#1a5c2e;color:var(--green);border:1px solid #26d97f55;border-radius:7px;padding:9px 22px;font-size:13px;font-weight:700;cursor:pointer;}
+.btn-save:hover{background:#1f7035;}
+.btn-cancel{background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;}
+.btn-cancel:hover{border-color:var(--muted);}
+.msg{padding:10px 14px;border-radius:7px;font-size:13px;margin-bottom:16px;display:none;}
+.msg.ok{background:#0d2e1a;border:1px solid #26d97f44;color:var(--green);display:block;}
+.msg.err{background:#2d0e0e;border:1px solid #f25c5c44;color:var(--red);display:block;}
+.pon-help{font-size:11px;color:var(--muted);margin-top:4px;}
+@media (max-width:768px){
+  body{overflow-x:hidden;}
+  .header{flex-wrap:wrap;gap:8px;padding:10px 14px;}
+  .header img{height:24px!important;}
+  .header>div[style*="line-height"]{flex:1 1 calc(100% - 40px);min-width:0;}
+  .header-back{order:3;}
+  .user-info{margin-left:0;width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .container{max-width:100%;padding:22px 14px 32px;}
+  .section-title{font-size:18px;margin-bottom:18px;}
+  .btn-add{width:auto;max-width:100%;font-size:14px;padding:10px 18px;}
+  .table-scroll{margin:0 -14px;padding:0 14px;}
+  .table-scroll table{min-width:760px;}
+  th,td{padding:9px 10px;}
+  .modal{width:94vw;max-height:90dvh;overflow-y:auto;padding:18px;}
+  .form-row{grid-template-columns:1fr;}
+  .modal-actions{flex-wrap:wrap;justify-content:stretch;}
+  .modal-actions button{flex:1 1 120px;}
+}
+</style>
+</head>
+<body>
+<script>
+  if (window.location.search.includes('embedded=1')) {
+    document.documentElement.classList.add('embedded');
+    document.addEventListener('DOMContentLoaded', function() {
+      const header = document.querySelector('.header');
+      if (header) header.style.display = 'none';
+      const backBtn = document.querySelector('a[href*="index"]') || document.querySelector('.back-btn');
+      if (backBtn) backBtn.style.display = 'none';
+    });
+  }
+</script>
+
+<div class="header">
+  <img src="/pyronet-logo.png" alt="PyroNet" style="height:28px;object-fit:contain;opacity:.8;filter:brightness(1.2);">
+  <div style="line-height:1.2;"><div class="header-title">⚙ User Management</div><div style="font-size:10px;color:var(--muted);">PyroNMS · Indus Broadband</div></div>
+  <a href="/index.html" class="header-back">← Dashboard</a>
+  <div class="user-info">
+    <span id="headerUser">—</span>
+    <button class="btn-logout" onclick="doLogout()">Logout</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="section-title">Users</div>
+  <div id="globalMsg" class="msg"></div>
+  <button class="btn-add" onclick="openModal()">＋ Add New User</button>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Username</th>
+        <th>Full Name</th>
+        <th>Role</th>
+        <th>PON Access</th>
+        <th>Can Edit</th>
+        <th>Status</th>
+        <th>Last Login</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="userTable"></tbody>
+  </table>
+  </div>
+</div>
+
+<!-- User Modal -->
+<div class="overlay" id="overlay" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title" id="modalTitle">Add User</div>
+    <div id="modalMsg" class="msg"></div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input class="form-input" id="fUsername" placeholder="e.g. ali.hassan">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Full Name</label>
+        <input class="form-input" id="fFullname" placeholder="e.g. Ali Hassan">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input class="form-input" type="text" id="fPassword" placeholder="Leave blank to keep current">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Role</label>
+        <select class="form-select" id="fRole" onchange="onRoleChange()">
+          <option value="superadmin">Super Admin</option>
+          <option value="admin">Admin</option>
+          <option value="pon_operator" selected>PON Operator</option>
+          <option value="viewer">Viewer (Read Only)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group full">
+        <label class="form-label">PON Access</label>
+        <input class="form-input" id="fPonAccess" placeholder="* for all, or: 0/1,0/2,0/4">
+        <div class="pon-help">
+          Use <strong>*</strong> for all PONs &nbsp;|&nbsp;
+          Specific: <strong>0/1,0/2</strong> &nbsp;|&nbsp;
+          Single port: <strong>0/1/5</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Can Edit ONTs</label>
+        <select class="form-select" id="fCanEdit">
+          <option value="1">Yes — Can edit</option>
+          <option value="0" selected>No — View only</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Account Status</label>
+        <select class="form-select" id="fActive">
+          <option value="1">Active</option>
+          <option value="0">Disabled</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-save" onclick="saveUser()">Save User</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://172.20.101.160:8088';
+let currentUser = null;
+let editingId = null;
+
+async function init() {
+  const token = localStorage.getItem('ont_token');
+  if (!token) { window.location.href='/login.html'; return; }
+
+  const r = await fetch(API+'/auth/me', {headers:{'Authorization':'Bearer '+token}});
+  if (!r.ok) { window.location.href='/login.html'; return; }
+
+  currentUser = await r.json();
+  if (currentUser.role !== 'superadmin') {
+    alert('Access denied. Superadmin only.');
+    window.location.href='/index.html';
+    return;
+  }
+  document.getElementById('headerUser').textContent = currentUser.username + ' (superadmin)';
+  loadUsers();
+}
+
+async function loadUsers() {
+  const token = localStorage.getItem('ont_token');
+  const r = await fetch(API+'/admin/users', {headers:{'Authorization':'Bearer '+token}});
+  const data = await r.json();
+  renderUsers(data.users||[]);
+}
+
+function renderUsers(users) {
+  const tbody = document.getElementById('userTable');
+  tbody.innerHTML = users.map((u,i) => {
+    const roleClass = `role-${u.role}`;
+    const lastLogin = u.last_login ? new Date(u.last_login*1000).toLocaleString() : 'Never';
+    const pons = u.pon_access==='*'||u.pon_access==='["*"]' ? '<span style="color:var(--green)">All PONs</span>' : u.pon_access;
+    return `<tr>
+      <td style="color:var(--muted)">${i+1}</td>
+      <td style="font-weight:600">${u.username}</td>
+      <td>${u.full_name||'—'}</td>
+      <td><span class="role-badge ${roleClass}">${u.role}</span></td>
+      <td style="font-size:12px;font-family:monospace">${pons}</td>
+      <td>${u.can_edit ? '<span style="color:var(--green)">✓ Yes</span>' : '<span style="color:var(--muted)">✗ No</span>'}</td>
+      <td class="${u.active?'status-on':'status-off'}">${u.active?'Active':'Disabled'}</td>
+      <td style="font-size:12px;color:var(--muted)">${lastLogin}</td>
+      <td>
+        <button class="btn-edit" onclick="editUser(${u.id})">✎ Edit</button>
+        ${u.username!=='admin'?`<button class="btn-del" onclick="delUser(${u.id},'${u.username}')">✕</button>`:''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function openModal(user=null) {
+  editingId = user ? user.id : null;
+  document.getElementById('modalTitle').textContent = user ? 'Edit User' : 'Add New User';
+  document.getElementById('fUsername').value   = user?.username || '';
+  document.getElementById('fFullname').value   = user?.full_name || '';
+  document.getElementById('fPassword').value   = '';
+  document.getElementById('fRole').value       = user?.role || 'pon_operator';
+  document.getElementById('fCanEdit').value    = user ? String(user.can_edit) : '0';
+  document.getElementById('fActive').value     = user ? String(user.active) : '1';
+  document.getElementById('fUsername').disabled = !!user;
+
+  // PON access
+  let pa = user?.pon_access || '*';
+  if (Array.isArray(pa)) pa = pa.join(',');
+  if (pa==='["*"]'||pa==='*') pa='*';
+  document.getElementById('fPonAccess').value = pa;
+
+  document.getElementById('modalMsg').className = 'msg';
+  document.getElementById('overlay').classList.add('open');
+  onRoleChange();
+}
+
+function editUser(id) {
+  const token = localStorage.getItem('ont_token');
+  fetch(API+'/admin/users', {headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json())
+    .then(data=>{
+      const u = data.users.find(x=>x.id===id);
+      if (u) openModal(u);
+    });
+}
+
+function closeModal(e) {
+  if (e && e.target!==document.getElementById('overlay')) return;
+  document.getElementById('overlay').classList.remove('open');
+  editingId = null;
+}
+
+function onRoleChange() {
+  const role = document.getElementById('fRole').value;
+  const ponField = document.getElementById('fPonAccess');
+  const editField = document.getElementById('fCanEdit');
+  if (role==='superadmin'||role==='admin') {
+    ponField.value='*'; ponField.disabled=true;
+    editField.value='1'; editField.disabled=true;
+  } else if (role==='viewer') {
+    ponField.disabled=false;
+    editField.value='0'; editField.disabled=true;
+  } else {
+    ponField.disabled=false; editField.disabled=false;
+  }
+}
+
+async function saveUser() {
+  const token = localStorage.getItem('ont_token');
+  const username = document.getElementById('fUsername').value.trim();
+  const password = document.getElementById('fPassword').value;
+  const full_name = document.getElementById('fFullname').value.trim();
+  const role = document.getElementById('fRole').value;
+  const can_edit = parseInt(document.getElementById('fCanEdit').value);
+  const active = parseInt(document.getElementById('fActive').value);
+  let pon_access = document.getElementById('fPonAccess').value.trim() || '*';
+  if (pon_access!=='*') pon_access = pon_access.split(',').map(s=>s.trim()).filter(Boolean);
+
+  if (!editingId && !username) { showModalMsg('Username required','err'); return; }
+  if (!editingId && !password) { showModalMsg('Password required for new user','err'); return; }
+
+  const payload = {full_name, role, pon_access, can_edit, active};
+  if (!editingId) { payload.username=username; payload.password=password; }
+  else if (password) { payload.password=password; }
+
+  const url = editingId ? `${API}/admin/user?id=${editingId}` : `${API}/admin/users`;
+  const method = editingId ? 'PUT' : 'POST';
+
+  const r = await fetch(url, {
+    method,
+    headers: {'Content-Type':'application/json','Authorization':'Bearer '+token},
+    body: JSON.stringify(payload),
+  });
+  const data = await r.json();
+
+  if (r.ok) {
+    document.getElementById('overlay').classList.remove('open');
+    showGlobalMsg(editingId?'User updated':'User created','ok');
+    loadUsers();
+  } else {
+    showModalMsg(data.error||'Failed','err');
+  }
+}
+
+async function delUser(id, username) {
+  if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+  const token = localStorage.getItem('ont_token');
+  const r = await fetch(`${API}/admin/user?id=${id}`, {
+    method:'DELETE',
+    headers:{'Authorization':'Bearer '+token},
+  });
+  const data = await r.json();
+  if (r.ok) { showGlobalMsg('User deleted','ok'); loadUsers(); }
+  else showGlobalMsg(data.error||'Failed','err');
+}
+
+function doLogout() {
+  const token = localStorage.getItem('ont_token');
+  fetch(API+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+token}});
+  localStorage.clear();
+  window.location.href='/login.html';
+}
+
+function showModalMsg(msg, type) {
+  const el = document.getElementById('modalMsg');
+  el.textContent = msg; el.className='msg '+type;
+}
+
+function showGlobalMsg(msg, type) {
+  const el = document.getElementById('globalMsg');
+  el.textContent = msg; el.className='msg '+type;
+  setTimeout(()=>el.className='msg', 3000);
+}
+
+init();
+</script>
+</body>
+</html>

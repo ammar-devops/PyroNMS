@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link id="favicon" rel="icon" type="image/png" href="/favicon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PyroNMS — Login</title>
+<style>
+:root {
+  --bg:     #0b0e18;
+  --bg2:    #12151f;
+  --bg3:    #1a1e2e;
+  --border: #2c3150;
+  --text:   #dde3f5;
+  --muted:  #6b7394;
+  --accent: #4f8ef7;
+  --green:  #26d97f;
+  --red:    #f25c5c;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-image: radial-gradient(ellipse at 20% 50%, #1a2550 0%, transparent 60%),
+                    radial-gradient(ellipse at 80% 20%, #0d2e1a 0%, transparent 50%);
+}
+
+/* ── BRANDING — edit this section for your logo/company ── */
+.brand {
+  text-align: center;
+  margin-bottom: 32px;
+}
+.brand-logo {
+  width: 64px;
+  height: 64px;
+  background: linear-gradient(135deg, #1a5c2e, #0d2e4a);
+  border: 2px solid #26d97f44;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin: 0 auto 14px;
+  /* REPLACE: add your logo image here */
+  /* background-image: url('/logo.png'); background-size: cover; */
+}
+.brand-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: .5px;
+  /* REPLACE: your company name */
+}
+.brand-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+  /* REPLACE: your tagline */
+}
+/* ── END BRANDING ── */
+
+.login-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 36px 40px;
+  width: 380px;
+  max-width: 95vw;
+  box-shadow: 0 32px 80px rgba(0,0,0,.5);
+}
+.login-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.login-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 28px;
+}
+.form-group {
+  margin-bottom: 18px;
+}
+.form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 7px;
+}
+.form-input {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 11px 14px;
+  font-size: 14px;
+  transition: border-color .15s;
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px #4f8ef722;
+}
+.form-input::placeholder { color: var(--muted); }
+
+.pass-wrap { position: relative; }
+.pass-toggle {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+}
+.pass-toggle:hover { color: var(--text); }
+
+.btn-login {
+  width: 100%;
+  background: #1a5c2e;
+  color: var(--green);
+  border: 1px solid #26d97f55;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .15s;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-login:hover { background: #1f7035; border-color: var(--green); }
+.btn-login:disabled { opacity: .5; cursor: default; }
+
+.error-msg {
+  background: #2d0e0e;
+  border: 1px solid #f25c5c44;
+  color: var(--red);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+  display: none;
+}
+.error-msg.show { display: block; }
+
+.footer {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.version-badge {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  font-size: 11px;
+  color: #3a4060;
+}
+</style>
+</head>
+<body>
+
+<!-- ── BRANDING — customize this block ── -->
+<div class="brand">
+  <div class="brand-logo" style="background:none;border:none;width:120px;height:120px;">
+    <img src="/logo.png" data-client-logo alt="Indus Broadband" style="width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 12px #26d97f44);">
+  </div>
+  <div class="brand-name" data-company>Indus Broadband Pvt Ltd</div>
+  <div class="brand-sub">Powered by <span data-sysname>PyroNMS</span></div>
+</div>
+<!-- ── END BRANDING ── -->
+
+<div class="login-card">
+  <div class="login-title">Welcome back</div>
+  <div class="login-sub">Sign in to access the ONT dashboard</div>
+
+  <div class="error-msg" id="errorMsg"></div>
+
+  <div class="form-group">
+    <label class="form-label">Username</label>
+    <input class="form-input" type="text" id="username"
+           placeholder="Enter username" autocomplete="username" autofocus>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label">Password</label>
+    <div class="pass-wrap">
+      <input class="form-input" type="password" id="password"
+             placeholder="Enter password" autocomplete="current-password">
+      <button class="pass-toggle" onclick="togglePass()" tabindex="-1" title="Show/hide">👁</button>
+    </div>
+  </div>
+
+  <button class="btn-login" id="loginBtn" onclick="doLogin()">
+    Sign In
+  </button>
+
+  <div class="footer">
+    PyroNMS v2.2 &nbsp;·&nbsp; Indus Broadband Pvt Ltd
+  </div>
+</div>
+
+<div style="text-align:center;margin-top:20px;opacity:.5;">
+  <img src="/pyronet-logo.png" alt="PyroNet Solutions" style="height:28px;object-fit:contain;filter:brightness(1.2);">
+  <div style="font-size:10px;color:#4a5580;margin-top:4px;">PyroNMS · Powered by PyroNet Solutions</div>
+</div>
+
+<div class="version-badge">v2.2</div>
+
+<script>
+const API = 'http://172.20.101.160:8088';
+const THEMES = {
+  pyro: {'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c'},
+  dark: {'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444'},
+  light: {'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626'},
+};
+(function(){
+  const t = THEMES[localStorage.getItem('pyronms_theme')||'pyro']||THEMES.pyro;
+  Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));
+  const b = JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
+  if (b.clientLogo) document.querySelectorAll('img[data-client-logo]').forEach(el=>el.src=b.clientLogo);
+  if (b.company) document.querySelectorAll('[data-company]').forEach(el=>el.textContent=b.company);
+  const fav=document.getElementById('favicon');
+  if(fav){if(b.favicon)fav.href=b.favicon;else if(b.clientLogo)fav.href=b.clientLogo;}
+})();
+
+// If already logged in, redirect to dashboard
+const existingToken = localStorage.getItem('ont_token');
+if (existingToken) {
+  fetch(API + '/auth/me', {
+    headers: { 'Authorization': 'Bearer ' + existingToken }
+  }).then(r => {
+    if (r.ok) window.location.href = '/index.html';
+  }).catch(() => {});
+}
+
+function togglePass() {
+  const p = document.getElementById('password');
+  p.type = p.type === 'password' ? 'text' : 'password';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+async function doLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const btn      = document.getElementById('loginBtn');
+  const err      = document.getElementById('errorMsg');
+
+  if (!username || !password) {
+    showError('Please enter username and password');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner">⟳</span> Signing in…';
+  err.classList.remove('show');
+
+  try {
+    const r = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await r.json();
+
+    if (r.ok && data.token) {
+      localStorage.setItem('ont_token',    data.token);
+      localStorage.setItem('ont_user',     JSON.stringify(data.user));
+      localStorage.setItem('ont_expires',  data.expires_at);
+      window.location.href = '/index.html';
+    } else {
+      showError(data.error || 'Login failed');
+    }
+  } catch(e) {
+    showError('Cannot connect to server. Check API is running.');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Sign In';
+  }
+}
+
+function showError(msg) {
+  const err = document.getElementById('errorMsg');
+  err.textContent = '⚠ ' + msg;
+  err.classList.add('show');
+  document.getElementById('password').value = '';
+  document.getElementById('password').focus();
+}
+</script>
+</body>
+</html>

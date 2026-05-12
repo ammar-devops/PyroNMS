@@ -607,10 +607,20 @@ def apply_ont_settings(ip, username, password, payload):
 
     if kind in ('wifi', 'lan'):
         if kind == 'wifi':
-            outputs.append(f"[WIFI_CAPTURED] band={payload.get('band','')} ssid={payload.get('ssid','')} channel={payload.get('channel','')} width={payload.get('channel_width','')} country={payload.get('country','')} enabled={payload.get('enabled')}")
+            ssid_index = int(payload.get('ssid_index', 1))
+            wpa_pass   = _safe_cli_value(payload.get('password', ''), 'WiFi password')
+            if not wpa_pass:
+                conn.disconnect()
+                return False, 'WiFi password is required'
+            conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+            time.sleep(1); outputs.append(conn.read_channel())
+            wlan_cmd = f'ont wlan-config {ont["port"]} {ont["ont_id"]} ssid-index {ssid_index} wpa-passwd {wpa_pass}'
+            outputs.append(_olt_command(conn, wlan_cmd, delay=3))
+            outputs.append('[WLAN_PASSWD_SENT] WiFi password command sent to OLT.')
+            conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
         else:
             outputs.append(f"[LAN_CAPTURED] lan_ip={payload.get('lan_ip','')} dhcp_start={payload.get('dhcp_start','')} dhcp_end={payload.get('dhcp_end','')} dhcp_enabled={payload.get('dhcp_enabled')}")
-        outputs.append(f"[{kind.upper()}_STATUS] Template pending for terminal model-specific write commands.")
+            outputs.append('[LAN_STATUS] Template pending for terminal model-specific write commands.')
 
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.disconnect()

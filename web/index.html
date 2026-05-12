@@ -664,6 +664,13 @@
   .wlan-state { font-size:10px; font-weight:700; padding:1px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:.4px; }
   .wlan-state.ok  { background:rgba(34,197,94,.18); color:#86efac; }
   .wlan-state.off { background:rgba(148,163,184,.18); color:#cbd5e1; }
+  /* ── Edit mode (v3.0.0) ─────────────────────────────────────── */
+  .cfg-action-bar { display:flex; align-items:center; gap:8px; padding:10px 0 2px; flex-wrap:wrap; }
+  .cfg-edit-label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); width:100%; }
+  .cfg-pwd-wrap   { display:flex; align-items:center; gap:4px; }
+  .cfg-pwd-wrap .edit-input { flex:1; }
+  .cfg-eye-btn    { background:none; border:1px solid var(--border); border-radius:5px; padding:3px 7px; color:var(--muted); cursor:pointer; font-size:13px; line-height:1; }
+  .cfg-eye-btn:hover { color:var(--fg); border-color:var(--accent); }
   @media (max-width:640px) {
     .ontmgr-box { max-height:96vh; border-radius:10px; }
     .ontmgr-head { padding:14px 16px; gap:10px; }
@@ -4533,8 +4540,9 @@ function renderOntManager(d) {
   loadOntConfig(d.sn);
 }
 
-// ─── ONT Configuration (WAN + WLAN, v2.9.0) ────────────────────────────────
+// ─── ONT Configuration (WAN + WLAN, v3.0.0) ────────────────────────────────
 let _ontCfgReq = 0;
+let _ontCfgData = null;   // last loaded config data, used by edit mode
 
 async function loadOntConfig(sn) {
   const myReq = ++_ontCfgReq;
@@ -4551,7 +4559,9 @@ async function loadOntConfig(sn) {
       box.innerHTML = `<div class="ontmgr-config-error">⚠ ${escHtml(data.error || 'Failed to load config')}</div>`;
       return;
     }
+    _ontCfgData = data;
     box.innerHTML = renderOntConfigCards(data);
+    _wireOntConfigEdit(data, sn);
   } catch(e) {
     if (myReq !== _ontCfgReq) return;
     const box = document.getElementById('ontmgrConfig');
@@ -4562,14 +4572,13 @@ async function loadOntConfig(sn) {
 }
 
 function renderOntConfigCards(d) {
-  const wan = d.wan || {};
+  const wan  = d.wan  || {};
   const wlan = d.wlan || { ssids: [], bands_present: [] };
-  const mgmt = d.mgmt || {};
-  const row = (k, v) => `<div class="ontmgr-row"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(String(v ?? '—'))}</span></div>`;
+  const row  = (k, v) => `<div class="ontmgr-row"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(String(v ?? '—'))}</span></div>`;
   const modeLabel = ({pppoe:'PPPoE',static:'Static IP','ip-routed':'IP Routed',dhcp:'DHCP',bridge:'Bridge'}[wan.mode] || (wan.mode || '—'));
-  const modeClass = (wan.mode === 'bridge' ? 'mode-bridge' : (wan.mode === 'pppoe' ? 'mode-pppoe' : 'mode-static'));
+  const modeClass  = (wan.mode === 'bridge' ? 'mode-bridge' : (wan.mode === 'pppoe' ? 'mode-pppoe' : 'mode-static'));
 
-  // WAN card content
+  // ── WAN card ──────────────────────────────────────────────────────────────
   let wanInner = '';
   if (!wan.mode && !wan.ipv4) {
     wanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">No WAN configuration reported</span></div>`;
@@ -4579,21 +4588,35 @@ function renderOntConfigCards(d) {
       ${row('Connection Type', wan.connection_type)}
       ${row('Service Type',    wan.service_type)}
       ${wan.mode === 'pppoe' ? `
-        ${row('PPPoE Username', wan.pppoe_user || '— (not exposed by OLT)')}
+        <div class="ontmgr-row cfg-view-row" id="cfgViewPppoeUser">
+          <span class="k">PPPoE Username</span>
+          <span class="v">${escHtml(wan.pppoe_user || '— (not exposed by OLT)')}</span>
+        </div>
+        <div class="ontmgr-row cfg-edit-row" id="cfgEditPppoe" style="display:none;flex-direction:column;gap:6px;padding:6px 0">
+          <label class="cfg-edit-label">PPPoE Username
+            <input id="cfgInputPppoeUser" class="edit-input" type="text" placeholder="username" autocomplete="off" value="${escHtml(wan.pppoe_user || '')}">
+          </label>
+          <label class="cfg-edit-label">PPPoE Password
+            <span class="cfg-pwd-wrap">
+              <input id="cfgInputPppoePass" class="edit-input" type="password" placeholder="new password" autocomplete="new-password">
+              <button type="button" class="cfg-eye-btn" data-target="cfgInputPppoePass">👁</button>
+            </span>
+          </label>
+        </div>
       ` : ''}
-      ${row('IPv4 Address',  wan.ipv4)}
-      ${row('Subnet Mask',   wan.subnet)}
+      ${row('IPv4 Address',    wan.ipv4)}
+      ${row('Subnet Mask',     wan.subnet)}
       ${row('Default Gateway', wan.gateway)}
-      ${row('Primary DNS',   wan.dns1)}
-      ${row('Secondary DNS', wan.dns2)}
-      ${row('Manage VLAN',   wan.vlan)}
-      ${row('MAC Address',   wan.mac)}
-      ${row('NAT',           wan.nat)}
-      ${row('Status',        wan.status)}
+      ${row('Primary DNS',     wan.dns1)}
+      ${row('Secondary DNS',   wan.dns2)}
+      ${row('Manage VLAN',     wan.vlan)}
+      ${row('MAC Address',     wan.mac)}
+      ${row('NAT',             wan.nat)}
+      ${row('Status',          wan.status)}
     `;
   }
 
-  // WLAN per-band cards
+  // ── WLAN card ─────────────────────────────────────────────────────────────
   let wlanInner = '';
   if (wlan.supported === false) {
     wlanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">⚠ This ONT model does not expose WLAN data via OLT CLI.<br><small style="color:var(--muted)">Older models (HG8245, bridge-mode ONUs) report "The ONT can not support" — WiFi info is stored on the device only.</small></span></div>`;
@@ -4604,20 +4627,37 @@ function renderOntConfigCards(d) {
       `<span class="band-chip band-${b === '5G' ? '5g' : '24g'}">${escHtml(b)}</span>`
     ).join(' ');
     wlanInner = `<div class="wlan-bands-row">${bandsHtml}</div>`;
-    wlanInner += wlan.ssids.map(s => `
+    wlanInner += wlan.ssids.map((s, i) => `
       <div class="wlan-ssid-block">
         <div class="wlan-ssid-head">
           <span class="band-chip band-${s.band === '5G' ? '5g' : '24g'}">${escHtml(s.band || '?')}</span>
           <span class="wlan-ssid-name">${escHtml(s.ssid || '—')}</span>
           <span class="wlan-state ${s.enabled ? 'ok' : 'off'}">${s.enabled ? 'enabled' : 'disabled'}</span>
         </div>
-        ${row('SSID Index',         s.index)}
-        ${row('Wireless Standard',  s.wireless_standard)}
-        ${row('Operational',        s.operational ? 'up' : 'down')}
-        ${row('Connected Clients',  (s.current_clients ?? '—') + ' / ' + (s.max_clients ?? '—'))}
+        ${row('Wireless Standard', s.wireless_standard)}
+        ${row('Connected Clients', (s.current_clients ?? '—') + ' / ' + (s.max_clients ?? '—'))}
+        <div class="ontmgr-row cfg-edit-row" id="cfgEditWifi${i}" style="display:none;flex-direction:column;gap:6px;padding:6px 0"
+             data-ssid-index="${escHtml(String(s.index ?? i+1))}">
+          <label class="cfg-edit-label">WiFi Password
+            <span class="cfg-pwd-wrap">
+              <input id="cfgInputWifiPass${i}" class="edit-input" type="password" placeholder="new password" autocomplete="new-password">
+              <button type="button" class="cfg-eye-btn" data-target="cfgInputWifiPass${i}">👁</button>
+            </span>
+          </label>
+        </div>
       </div>
     `).join('');
   }
+
+  // ── Edit action bar ───────────────────────────────────────────────────────
+  const canEdit = (wan.mode === 'pppoe') || (wlan.supported !== false && wlan.ssids && wlan.ssids.length > 0);
+  const editBar = canEdit ? `
+    <div id="cfgActionBar" class="cfg-action-bar">
+      <button id="cfgEditBtn"   class="edit-btn">✎ Edit Config</button>
+      <button id="cfgSaveBtn"   class="btn-save"        style="display:none">💾 Save Changes</button>
+      <button id="cfgCancelBtn" class="btn-cancel-edit" style="display:none">✕ Cancel</button>
+      <div    id="cfgStatus"    class="save-status"></div>
+    </div>` : '';
 
   return `
     <div class="ontmgr-grid">
@@ -4630,7 +4670,141 @@ function renderOntConfigCards(d) {
         ${wlanInner}
       </div>
     </div>
+    ${editBar}
   `;
+}
+
+// Wire up Edit / Cancel / Save after innerHTML is set
+function _wireOntConfigEdit(d, sn) {
+  const wan  = d.wan  || {};
+  const wlan = d.wlan || { ssids: [] };
+
+  // Eye-button toggles
+  document.querySelectorAll('.cfg-eye-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = document.getElementById(btn.dataset.target);
+      if (inp) inp.type = inp.type === 'password' ? 'text' : 'password';
+    });
+  });
+
+  const editBtn   = document.getElementById('cfgEditBtn');
+  const saveBtn   = document.getElementById('cfgSaveBtn');
+  const cancelBtn = document.getElementById('cfgCancelBtn');
+  const status    = document.getElementById('cfgStatus');
+  if (!editBtn) return;
+
+  function enterEdit() {
+    editBtn.style.display   = 'none';
+    saveBtn.style.display   = '';
+    cancelBtn.style.display = '';
+    status.textContent = '';
+    status.className   = 'save-status';
+    // Show PPPoE edit row
+    const pppoeEdit = document.getElementById('cfgEditPppoe');
+    const pppoeView = document.getElementById('cfgViewPppoeUser');
+    if (pppoeEdit) { pppoeEdit.style.display = 'flex'; }
+    if (pppoeView) { pppoeView.style.display = 'none'; }
+    // Show WiFi password rows
+    document.querySelectorAll('[id^="cfgEditWifi"]').forEach(el => el.style.display = 'flex');
+  }
+
+  function exitEdit() {
+    editBtn.style.display   = '';
+    saveBtn.style.display   = 'none';
+    cancelBtn.style.display = 'none';
+    status.textContent = '';
+    status.className   = 'save-status';
+    const pppoeEdit = document.getElementById('cfgEditPppoe');
+    const pppoeView = document.getElementById('cfgViewPppoeUser');
+    if (pppoeEdit) { pppoeEdit.style.display = 'none'; }
+    if (pppoeView) { pppoeView.style.display = ''; }
+    document.querySelectorAll('[id^="cfgEditWifi"]').forEach(el => el.style.display = 'none');
+  }
+
+  editBtn.addEventListener('click', enterEdit);
+  cancelBtn.addEventListener('click', exitEdit);
+
+  saveBtn.addEventListener('click', async () => {
+    status.textContent = '⟳ Saving…';
+    status.className   = 'save-status saving';
+    saveBtn.disabled   = true;
+    cancelBtn.disabled = true;
+
+    let anyError = false;
+    let anySuccess = false;
+
+    // ── PPPoE save ──────────────────────────────────────────────────────────
+    if (wan.mode === 'pppoe') {
+      const uEl = document.getElementById('cfgInputPppoeUser');
+      const pEl = document.getElementById('cfgInputPppoePass');
+      const uVal = (uEl ? uEl.value.trim() : '');
+      const pVal = (pEl ? pEl.value.trim() : '');
+      if (uVal || pVal) {
+        if (!uVal || !pVal) {
+          status.textContent = '✗ Both PPPoE username and password are required';
+          status.className   = 'save-status fail';
+          saveBtn.disabled   = false;
+          cancelBtn.disabled = false;
+          return;
+        }
+        try {
+          _barStart();
+          const r = await fetch(`${API}/ont/settings/wan`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sn, kind: 'wan', mode: 'pppoe',
+              pppoe_username: uVal, pppoe_password: pVal,
+              vlan_id: String(wan.vlan || '') })
+          });
+          const data = await r.json();
+          _barDone();
+          if (r.ok && data.ok !== false) { anySuccess = true; }
+          else { anyError = true; showToast('✗ PPPoE save failed: ' + escHtml(data.error || 'OLT error'), 'err'); }
+        } catch(e) { _barDone(); anyError = true; showToast('✗ Network error: ' + escHtml(e.message), 'err'); }
+      }
+    }
+
+    // ── WiFi saves (one per SSID with a non-empty password) ─────────────────
+    const wifiRows = document.querySelectorAll('[id^="cfgEditWifi"]');
+    for (let i = 0; i < wifiRows.el; i++) { /* handled below */ }
+    for (const row of wifiRows) {
+      const idx  = parseInt(row.dataset.ssidIndex || '1', 10);
+      const pInp = row.querySelector('input[type="password"], input[type="text"]');
+      const pVal = pInp ? pInp.value.trim() : '';
+      if (!pVal) continue;
+      try {
+        _barStart();
+        const r = await fetch(`${API}/ont/settings/wifi`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sn, kind: 'wifi', ssid_index: idx, password: pVal })
+        });
+        const data = await r.json();
+        _barDone();
+        if (r.ok && data.ok !== false) { anySuccess = true; }
+        else { anyError = true; showToast('✗ WiFi save failed: ' + escHtml(data.error || 'OLT error'), 'err'); }
+      } catch(e) { _barDone(); anyError = true; showToast('✗ Network error: ' + escHtml(e.message), 'err'); }
+    }
+
+    saveBtn.disabled   = false;
+    cancelBtn.disabled = false;
+
+    if (!anySuccess && !anyError) {
+      status.textContent = 'Nothing to save — enter a value first';
+      status.className   = 'save-status';
+      return;
+    }
+    if (anyError && !anySuccess) {
+      status.textContent = '✗ Save failed — see toast above';
+      status.className   = 'save-status fail';
+      return;
+    }
+
+    status.textContent = '✓ Saved — reloading config…';
+    status.className   = 'save-status ok';
+    if (anySuccess) showToast('✓ Config saved', 'ok');
+    setTimeout(() => { exitEdit(); loadOntConfig(sn); }, 900);
+  });
 }
 
 

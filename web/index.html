@@ -140,8 +140,12 @@
   .sig-fiber   { background: rgba(185,28,28,.25); color: #fca5a5; white-space:nowrap; }
   .temp-cell { color: var(--muted); }
   .serial-cell { font-family: monospace; font-size: 12px; color: var(--muted); }
-  .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
-  .btn-row-refresh:hover { border-color: var(--accent); }
+  .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .btn-row-refresh:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-row-refresh:disabled { opacity: .5; cursor: default; }
+  .row-refresh-icon { display:inline-block; width:11px; height:11px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; flex-shrink:0; }
+  .btn-row-refresh:not(:disabled) .row-refresh-icon { border-top-color: currentColor; border-bottom-color: transparent; }
+  .btn-row-refresh:disabled .row-refresh-icon, .row-refresh-icon.spin { animation: spin .7s linear infinite; border-top-color: transparent; }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #pyro-bar { position:fixed; top:0; left:0; height:4px; width:0%; background:var(--green); z-index:99999; transition:width .3s ease,opacity .3s ease; border-radius:0 3px 3px 0; box-shadow:0 0 10px var(--green),0 0 4px var(--green); opacity:0; pointer-events:none; }
@@ -2831,7 +2835,7 @@ function renderTable() {
         <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
         <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
-          <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>&#x27F3;</span> Refresh</button>
+          <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span class="row-refresh-icon"></span>Refresh</button>
         </td>
       </tr>`;
     }).join('');

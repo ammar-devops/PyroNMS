@@ -4596,7 +4596,9 @@ function renderOntConfigCards(d) {
 
   // WLAN per-band cards
   let wlanInner = '';
-  if (!wlan.ssids || wlan.ssids.length === 0) {
+  if (wlan.supported === false) {
+    wlanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">⚠ This ONT model does not expose WLAN data via OLT CLI.<br><small style="color:var(--muted)">Older models (HG8245, bridge-mode ONUs) report "The ONT can not support" — WiFi info is stored on the device only.</small></span></div>`;
+  } else if (!wlan.ssids || wlan.ssids.length === 0) {
     wlanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">No WLAN SSIDs reported (ONT may not have WiFi)</span></div>`;
   } else {
     const bandsHtml = (wlan.bands_present || []).map(b =>

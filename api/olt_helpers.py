@@ -1303,13 +1303,21 @@ def get_ont_config(ip, username, password, sn):
         _hard_drain(conn, settle_rounds=6, max_seconds=15)
 
         wan  = _parse_wan_full(wan_raw)
-        wlan = _parse_wlan_full(wlan_raw)
         mgmt = _parse_ont_ipconfig(ipcfg_raw)
+
+        # Detect OLT-level "this ONT model doesn't support WLAN reporting"
+        _wlan_unsupported = 'The ONT can not support' in wlan_raw or 'Failure:' in wlan_raw
+        if _wlan_unsupported:
+            wlan = {'ssids': [], 'bands_present': [], 'total': 0, 'supported': False}
+            warnings.append('WLAN not supported — this ONT model does not expose WLAN data via OLT CLI (HG8245 / bridge-mode devices)')
+        else:
+            wlan = _parse_wlan_full(wlan_raw)
+            wlan['supported'] = True
+            if not wlan.get('ssids'):
+                warnings.append('WLAN section empty — ONT may not have WiFi or is not reporting it')
 
         if not wan:
             warnings.append('WAN section empty — ONT may be bridge-mode or offline')
-        if not wlan.get('ssids'):
-            warnings.append('WLAN section empty — ONT may not have WiFi or is not reporting it')
 
         result = {
             'sn': sn,

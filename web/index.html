@@ -144,7 +144,7 @@
   .btn-row-refresh:hover { border-color: var(--accent); }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #pyro-bar { position:fixed; top:0; left:0; height:3px; width:0%; background:var(--accent); z-index:9999; transition:width .25s ease,opacity .4s ease; border-radius:0 2px 2px 0; box-shadow:0 0 8px var(--accent); opacity:0; pointer-events:none; }
+  #pyro-bar { position:fixed; top:0; left:0; height:4px; width:0%; background:var(--green); z-index:99999; transition:width .3s ease,opacity .3s ease; border-radius:0 3px 3px 0; box-shadow:0 0 10px var(--green),0 0 4px var(--green); opacity:0; pointer-events:none; }
   #pyro-bar.running { opacity:1; }
   .btn-spinner { display:inline-block; width:12px; height:12px; border:2px solid rgba(255,255,255,.3); border-top-color:currentColor; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:5px; }
 
@@ -2831,7 +2831,7 @@ function renderTable() {
         <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
         <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
-          <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>?</span> Refresh</button>
+          <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span>&#x27F3;</span> Refresh</button>
         </td>
       </tr>`;
     }).join('');

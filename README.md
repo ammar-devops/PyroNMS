@@ -4,7 +4,7 @@
 
 ### Network Management System for ISPs
 
-[![Version](https://img.shields.io/badge/version-2.8.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
+[![Version](https://img.shields.io/badge/version-2.9.1-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
 [![Status](https://img.shields.io/badge/status-active-success.svg)]()
 [![License](https://img.shields.io/badge/license-Private-red.svg)]()
 [![Built for](https://img.shields.io/badge/OLT-Huawei%20MA5603T-orange.svg)]()
@@ -140,9 +140,11 @@ PyroNMS/
 | 🟢 v2.8.1  | Status overlay refinements                                 |
 | ⏳ v2.8.2  | Refresh buttons overhaul — top progress bar, button spinners, fixed row Refresh icon |
 | 🌐 v2.9.0  | ONT WAN + WLAN configuration view in popup (read-only, no TR-069) |
+| 🩹 v2.9.1  | Hotfix: WLAN card graceful degradation for HG8245 / bridge-mode ONTs that don't expose WLAN via OLT CLI |
 
-### 🔭 Current Release — `v2.9.0`
+### 🔭 Current Release — `v2.9.1`
 
+- 🩹 **WLAN unsupported graceful UI** — HG8245 and bridge-mode ONUs that return `Failure: The ONT can not support` to `display ont wlan-info` now show a clear explanatory message instead of a blank card
 - 🌐 **WAN Configuration card** — mode pill (PPPoE / Static / Bridge / IP-Routed), IPv4 address, subnet, gateway, DNS1/DNS2, manage VLAN, MAC, NAT, connection status, service type — all read via OLT SSH
 - 📶 **WLAN Configuration card** — per-band sub-cards with auto-detected 2.4G / 5G bands (Huawei SSID-Index 1-4 → 2.4G, 5-8 → 5G), SSID name, wireless standard, enabled/disabled state, client counts
 - 🚫 **GenieACS / TR-069 dependency removed** — all config reads use OLT SSH only; GenieACS services stopped + disabled on the live host (binaries kept for emergency re-enable)

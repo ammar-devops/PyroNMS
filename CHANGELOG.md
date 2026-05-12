@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.9.1 (2026-05-12)
+
+### Hotfix: WLAN card graceful degradation for unsupported ONT models
+- **Root cause identified**: Huawei HG8245 (and bridge-mode ONUs) return `Failure: The ONT can not support` to `display ont wlan-info` — this is an OLT-level hardware limitation, not a credential or parser issue
+- **Backend** (`api/olt_helpers.py`): `get_ont_config()` now detects the failure string and returns `wlan.supported = false` with a descriptive warning instead of an empty parsed dict
+- **Frontend** (`web/index.html`): `renderOntConfigCards()` now checks `wlan.supported === false` first and renders an explanatory message ("This ONT model does not expose WLAN data via OLT CLI") instead of a blank WLAN card
+- Verified with probe script on live OLT — both `pollerslot5` and `pollerslot1` credentials returned identical failure; confirmed hardware-level limitation
+
 ## v2.9.0 (2026-05-12)
 
 ### ONT WAN + WLAN configuration view (read-only, no TR-069)

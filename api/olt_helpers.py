@@ -605,6 +605,23 @@ def apply_ont_settings(ip, username, password, payload):
         outputs.append(f"[GENERAL_ONT_VAS_PROFILE] {vas_profile}")
         outputs.append(f"[SERVICE_DESCRIPTION] {service_description}")
 
+    # ── Lightweight PPPoE credential update (no service-port, no VAS profile) ──
+    if kind == 'pppoe_creds':
+        ppp_user = _safe_cli_value(payload.get('pppoe_username', ''), 'PPPoE username')
+        ppp_pass = _safe_cli_value(payload.get('pppoe_password', ''), 'PPPoE password')
+        if not ppp_user or not ppp_pass:
+            conn.disconnect()
+            return False, 'PPPoE username and password are both required'
+        vlan = str(payload.get('vlan_id') or '10')
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1); outputs.append(conn.read_channel())
+        ipconfig_cmd = (f'ont ipconfig {ont["port"]} {ont["ont_id"]} ip-index 1 '
+                        f'pppoe user-account username {ppp_user} password {ppp_pass} '
+                        f'vlan {vlan} priority 0')
+        outputs.append(_olt_command(conn, ipconfig_cmd, delay=4))
+        outputs.append('[PPPOE_CREDS_UPDATED] PPPoE username/password sent via ont ipconfig only.')
+        conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
+
     if kind in ('wifi', 'lan'):
         if kind == 'wifi':
             ssid_index = int(payload.get('ssid_index', 1))

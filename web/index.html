@@ -4749,10 +4749,10 @@ function _wireOntConfigEdit(d, sn) {
         }
         try {
           _barStart();
-          const r = await fetch(`${API}/ont/settings/wan`, {
+          const r = await fetch(`${API}/ont/settings/pppoe_creds`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sn, kind: 'wan', mode: 'pppoe',
+            body: JSON.stringify({ sn, kind: 'pppoe_creds',
               pppoe_username: uVal, pppoe_password: pVal,
               vlan_id: String(wan.vlan || '') })
           });

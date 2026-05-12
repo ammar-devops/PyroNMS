@@ -643,6 +643,27 @@
   .status-online   { background:rgba(34,197,94,.18); color:#86efac; }
   .status-offline  { background:rgba(148,163,184,.18); color:#cbd5e1; }
   .status-fault    { background:rgba(239,68,68,.20); color:#fca5a5; }
+  /* ── Configuration section (v2.9.0 WAN/WLAN view) ────────────────────── */
+  .ontmgr-config-section { margin-top:6px; }
+  .ontmgr-config-loading { display:flex; align-items:center; justify-content:center; gap:10px; padding:24px; color:var(--muted); font-size:13px; }
+  .ontmgr-config-error { padding:14px 16px; background:rgba(239,68,68,.10); border:1px solid rgba(239,68,68,.35); border-radius:8px; color:#fca5a5; font-size:13px; margin-bottom:14px; }
+  .ontmgr-config-warn { padding:10px 14px; background:rgba(251,146,60,.10); border:1px solid rgba(251,146,60,.35); border-radius:8px; color:#fdba74; font-size:12px; margin-bottom:14px; }
+  .ontmgr-config-note { margin-top:6px; padding:10px 14px; background:rgba(79,142,247,.06); border-left:3px solid var(--accent); color:var(--muted); font-size:11.5px; line-height:1.55; border-radius:0 6px 6px 0; }
+  .cfg-pill { display:inline-block; border-radius:5px; padding:2px 10px; font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; font-family:monospace; }
+  .cfg-pill.mode-pppoe  { background:rgba(34,197,94,.18); color:#86efac; border:1px solid rgba(34,197,94,.4); }
+  .cfg-pill.mode-static { background:rgba(79,142,247,.18); color:#93c5fd; border:1px solid rgba(79,142,247,.4); }
+  .cfg-pill.mode-bridge { background:rgba(251,146,60,.18); color:#fdba74; border:1px solid rgba(251,146,60,.4); }
+  .wlan-bands-row { display:flex; gap:6px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px dashed rgba(255,255,255,.06); }
+  .band-chip { display:inline-block; border-radius:5px; padding:2px 9px; font-size:11px; font-weight:700; font-family:monospace; }
+  .band-chip.band-24g { background:rgba(34,197,94,.18); color:#86efac; border:1px solid rgba(34,197,94,.4); }
+  .band-chip.band-5g  { background:rgba(168,85,247,.18); color:#d8b4fe; border:1px solid rgba(168,85,247,.4); }
+  .wlan-ssid-block { margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,.05); }
+  .wlan-ssid-block:first-of-type { margin-top:0; padding-top:0; border-top:none; }
+  .wlan-ssid-head { display:flex; align-items:center; gap:8px; padding:4px 0 8px 0; }
+  .wlan-ssid-name { color:var(--text); font-weight:700; font-size:13px; font-family:monospace; flex:1; word-break:break-all; }
+  .wlan-state { font-size:10px; font-weight:700; padding:1px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:.4px; }
+  .wlan-state.ok  { background:rgba(34,197,94,.18); color:#86efac; }
+  .wlan-state.off { background:rgba(148,163,184,.18); color:#cbd5e1; }
   @media (max-width:640px) {
     .ontmgr-box { max-height:96vh; border-radius:10px; }
     .ontmgr-head { padding:14px 16px; gap:10px; }
@@ -4500,9 +4521,122 @@ function renderOntManager(d) {
         ${liveRow('Last Down',     d.last_down_cause)}
       </div>
     </div>
+    <div id="ontmgrConfig" class="ontmgr-config-section">
+      <div class="ontmgr-config-loading"><span class="spin" style="display:inline-block">⟳</span> Loading WAN + WLAN configuration via SSH…</div>
+    </div>
     <div class="ontmgr-actions">
       <button class="primary" onclick="loadOntManagerData('${escAttr(d.sn)}')" title="Re-run display ont info via SSH">⟳ Refresh</button>
       ${wanIp ? `<button onclick="window.open('http://${escAttr(wanIp)}','_blank')" title="Open ONT web UI in new tab">🌐 Open Web UI (${escHtml(wanIp)})</button>` : ''}
+    </div>
+  `;
+  // Fire the WAN+WLAN config fetch in parallel (don't block popup render)
+  loadOntConfig(d.sn);
+}
+
+// ─── ONT Configuration (WAN + WLAN, v2.9.0) ────────────────────────────────
+let _ontCfgReq = 0;
+
+async function loadOntConfig(sn) {
+  const myReq = ++_ontCfgReq;
+  const mySn  = sn;
+  _barStart();
+  try {
+    const r = await fetch(`${API}/ont/config?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
+    const data = await r.json();
+    if (myReq !== _ontCfgReq) return;
+    if (!_ontMgrCurrent || _ontMgrCurrent.sn !== mySn) return;
+    const box = document.getElementById('ontmgrConfig');
+    if (!box) return;
+    if (!r.ok || !data.ok) {
+      box.innerHTML = `<div class="ontmgr-config-error">⚠ ${escHtml(data.error || 'Failed to load config')}</div>`;
+      return;
+    }
+    box.innerHTML = renderOntConfigCards(data);
+  } catch(e) {
+    if (myReq !== _ontCfgReq) return;
+    const box = document.getElementById('ontmgrConfig');
+    if (box) box.innerHTML = `<div class="ontmgr-config-error">⚠ Network error: ${escHtml(e.message)}</div>`;
+  } finally {
+    _barDone();
+  }
+}
+
+function renderOntConfigCards(d) {
+  const wan = d.wan || {};
+  const wlan = d.wlan || { ssids: [], bands_present: [] };
+  const mgmt = d.mgmt || {};
+  const row = (k, v) => `<div class="ontmgr-row"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(String(v ?? '—'))}</span></div>`;
+  const modeLabel = ({pppoe:'PPPoE',static:'Static IP','ip-routed':'IP Routed',dhcp:'DHCP',bridge:'Bridge'}[wan.mode] || (wan.mode || '—'));
+  const modeClass = (wan.mode === 'bridge' ? 'mode-bridge' : (wan.mode === 'pppoe' ? 'mode-pppoe' : 'mode-static'));
+
+  // WAN card content
+  let wanInner = '';
+  if (!wan.mode && !wan.ipv4) {
+    wanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">No WAN configuration reported</span></div>`;
+  } else {
+    wanInner = `
+      <div class="ontmgr-row"><span class="k">Mode</span><span class="v"><span class="cfg-pill ${modeClass}">${escHtml(modeLabel)}</span></span></div>
+      ${row('Connection Type', wan.connection_type)}
+      ${row('Service Type',    wan.service_type)}
+      ${wan.mode === 'pppoe' ? `
+        ${row('PPPoE Username', wan.pppoe_user || '— (not exposed by OLT)')}
+        <div class="ontmgr-row"><span class="k">PPPoE Password</span><span class="v" style="color:var(--muted);font-style:italic">stored on ONT — Phase 2</span></div>
+      ` : ''}
+      ${row('IPv4 Address',  wan.ipv4)}
+      ${row('Subnet Mask',   wan.subnet)}
+      ${row('Default Gateway', wan.gateway)}
+      ${row('Primary DNS',   wan.dns1)}
+      ${row('Secondary DNS', wan.dns2)}
+      ${row('Manage VLAN',   wan.vlan)}
+      ${row('MAC Address',   wan.mac)}
+      ${row('NAT',           wan.nat)}
+      ${row('Status',        wan.status)}
+    `;
+  }
+
+  // WLAN per-band cards
+  let wlanInner = '';
+  if (!wlan.ssids || wlan.ssids.length === 0) {
+    wlanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">No WLAN SSIDs reported (ONT may not have WiFi)</span></div>`;
+  } else {
+    const bandsHtml = (wlan.bands_present || []).map(b =>
+      `<span class="band-chip band-${b === '5G' ? '5g' : '24g'}">${escHtml(b)}</span>`
+    ).join(' ');
+    wlanInner = `<div class="wlan-bands-row">${bandsHtml}</div>`;
+    wlanInner += wlan.ssids.map(s => `
+      <div class="wlan-ssid-block">
+        <div class="wlan-ssid-head">
+          <span class="band-chip band-${s.band === '5G' ? '5g' : '24g'}">${escHtml(s.band || '?')}</span>
+          <span class="wlan-ssid-name">${escHtml(s.ssid || '—')}</span>
+          <span class="wlan-state ${s.enabled ? 'ok' : 'off'}">${s.enabled ? 'enabled' : 'disabled'}</span>
+        </div>
+        ${row('SSID Index',         s.index)}
+        ${row('Wireless Standard',  s.wireless_standard)}
+        ${row('Operational',        s.operational ? 'up' : 'down')}
+        ${row('Connected Clients',  (s.current_clients ?? '—') + ' / ' + (s.max_clients ?? '—'))}
+        <div class="ontmgr-row"><span class="k">WiFi Password</span><span class="v" style="color:var(--muted);font-style:italic">stored on ONT — Phase 2</span></div>
+        <div class="ontmgr-row"><span class="k">Security / Channel</span><span class="v" style="color:var(--muted);font-style:italic">not exposed by OLT — Phase 2</span></div>
+      </div>
+    `).join('');
+  }
+
+  const warningsHtml = (d.warnings && d.warnings.length) ?
+    `<div class="ontmgr-config-warn">⚠ ${d.warnings.map(w => escHtml(w)).join('<br>')}</div>` : '';
+
+  return `
+    ${warningsHtml}
+    <div class="ontmgr-grid">
+      <div class="ontmgr-card">
+        <h4>🌐 WAN Configuration</h4>
+        ${wanInner}
+      </div>
+      <div class="ontmgr-card">
+        <h4>📶 WLAN Configuration</h4>
+        ${wlanInner}
+      </div>
+    </div>
+    <div class="ontmgr-config-note">
+      ℹ️ PPPoE password, WiFi password, security mode, channel and country are stored on the ONT itself and not exposed by the OLT. They'll be readable in Phase 2 via direct ONT access.
     </div>
   `;
 }

@@ -276,7 +276,149 @@ def summarize_ont(ont):
     ]
     return '\n'.join(lines)
 
+def _detect_wlan_band(ssid_dict):
+    """Detect 2.4G vs 5G from wireless standard or SSID index. Returns '2.4G'/'5G'/None."""
+    std = (ssid_dict.get('wireless_standard') or '').lower()
+    if 'ac' in std or 'ax' in std or '802.11a' in std and 'b/g' not in std:
+        return '5G'
+    if 'b/g' in std or '802.11n' in std and 'ac' not in std:
+        return '2.4G'
+    # Fallback by index (Huawei convention: 1-4 = 2.4G, 5-8 = 5G)
+    try:
+        idx = int(ssid_dict.get('index', '0'))
+        return '5G' if idx >= 5 else '2.4G'
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_wlan_full(output):
+    """Parse `display ont wlan-info` into list of band-tagged SSID dicts."""
+    ssids = []
+    current = None
+    for line in output.splitlines():
+        m = re.search(r'SSID Index\s*:\s*(\d+)', line, re.I)
+        if m:
+            if current is not None:
+                current['band'] = _detect_wlan_band(current)
+                ssids.append(current)
+            current = {'index': m.group(1)}
+            continue
+        if current is None:
+            continue
+        m = re.search(r'^\s*SSID\s*:\s*(.+?)\s*$', line, re.I)
+        if m:
+            current['ssid'] = m.group(1).strip()
+            continue
+        m = re.search(r'Wireless Standard\s*:\s*(.+?)\s*$', line, re.I)
+        if m:
+            current['wireless_standard'] = m.group(1).strip()
+            continue
+        m = re.search(r'Administrative state\s*:\s*(\S+)', line, re.I)
+        if m:
+            current['enabled'] = m.group(1).strip().lower() == 'enable'
+            continue
+        m = re.search(r'Operational state\s*:\s*(\S+)', line, re.I)
+        if m:
+            current['operational'] = m.group(1).strip().lower() == 'up'
+            continue
+        m = re.search(r'Maximum associate number\s*:\s*(\d+)', line, re.I)
+        if m:
+            current['max_clients'] = int(m.group(1))
+            continue
+        m = re.search(r'Current associate number\s*:\s*(\d+)', line, re.I)
+        if m:
+            current['current_clients'] = int(m.group(1))
+            continue
+    if current:
+        current['band'] = _detect_wlan_band(current)
+        ssids.append(current)
+    bands_present = sorted({s.get('band') for s in ssids if s.get('band')})
+    return {'ssids': ssids, 'bands_present': bands_present, 'total': len(ssids)}
+
+
+def _parse_wan_full(output):
+    """Parse `display ont wan-info` into a single WAN connection dict.
+
+    Returns the FIRST WAN entry (most ONTs have one Internet WAN).
+    Fields filled best-effort; unparsed fields are absent from the dict.
+    """
+    wan = {}
+    # Match common Huawei field lines
+    rules = [
+        ('index',         r'^\s*Index\s*:\s*(\d+)'),
+        ('name',          r'^\s*Name\s*:\s*(.+?)\s*$'),
+        ('service_type',  r'^\s*Service type\s*:\s*(.+?)\s*$'),
+        ('connection_type', r'^\s*Connection type\s*:\s*(.+?)\s*$'),
+        ('status',        r'^\s*IPv4 Connection status\s*:\s*(.+?)\s*$'),
+        ('access_type',   r'^\s*IPv4 access type\s*:\s*(.+?)\s*$'),
+        ('ipv4',          r'^\s*IPv4 address\s*:\s*(\S+)'),
+        ('subnet',        r'^\s*Subnet mask\s*:\s*(\S+)'),
+        ('gateway',       r'^\s*Default gateway\s*:\s*(\S+)'),
+        ('dns1',          r'^\s*Primary DNS\s*:\s*(\S+)'),
+        ('dns2',          r'^\s*Secondary DNS\s*:\s*(\S+)'),
+        ('vlan',          r'^\s*Manage VLAN\s*:\s*(\S+)'),
+        ('priority',      r'^\s*Manage priority\s*:\s*(\S+)'),
+        ('multicast_vlan',r'^\s*Multicast VLAN\s*:\s*(\S+)'),
+        ('nat',           r'^\s*NAT switch\s*:\s*(\S+)'),
+        ('mac',           r'^\s*MAC address\s*:\s*(\S+)'),
+        ('l2_encap',      r'^\s*L2 encap-type\s*:\s*(\S+)'),
+        ('switch',        r'^\s*Switch\s*:\s*(\S+)'),
+    ]
+    for line in output.splitlines():
+        for key, pat in rules:
+            if key in wan:
+                continue
+            m = re.search(pat, line, re.I)
+            if m:
+                wan[key] = m.group(1).strip()
+                break
+    # Derive a normalized 'mode' for the frontend
+    conn = (wan.get('connection_type') or '').lower()
+    access = (wan.get('access_type') or '').lower()
+    if 'bridge' in conn:
+        wan['mode'] = 'bridge'
+    elif 'pppoe' in access or 'pppoe' in (wan.get('l2_encap') or '').lower():
+        wan['mode'] = 'pppoe'
+    elif 'static' in access:
+        wan['mode'] = 'static'
+    elif 'dhcp' in access:
+        wan['mode'] = 'dhcp'
+    elif 'routed' in conn:
+        wan['mode'] = 'ip-routed'
+    else:
+        wan['mode'] = ''
+    return wan
+
+
+def _parse_ont_ipconfig(output):
+    """Parse `display ont ipconfig` (ONT management IP block)."""
+    out = {}
+    rules = [
+        ('mgmt_ip',     r'^\s*ONT IP\s*:\s*(\S+)'),
+        ('mgmt_subnet', r'^\s*ONT subnet mask\s*:\s*(\S+)'),
+        ('mgmt_gateway',r'^\s*ONT gateway\s*:\s*(\S+)'),
+        ('mgmt_dns1',   r'^\s*ONT primary DNS\s*:\s*(\S+)'),
+        ('mgmt_dns2',   r'^\s*ONT slave DNS\s*:\s*(\S+)'),
+        ('mgmt_mac',    r'^\s*ONT MAC\s*:\s*(\S+)'),
+        ('mgmt_vlan',   r'^\s*ONT manage VLAN\s*:\s*(\S+)'),
+    ]
+    for line in output.splitlines():
+        for key, pat in rules:
+            if key in out:
+                continue
+            m = re.search(pat, line, re.I)
+            if m:
+                out[key] = m.group(1).strip()
+                break
+    return out
+
+
 def _parse_wlan_info(output):
+    """LEGACY parser kept for backward-compat with apply_ont_settings(kind='check').
+
+    Returns the same shape as before: {'ssids': [...], 'ssid': <first>}.
+    New code should use _parse_wlan_full() which is band-aware and richer.
+    """
     ssids = []
     current = {}
     for line in output.splitlines():
@@ -1090,6 +1232,99 @@ def get_ont_full_info(ip, username, password, sn):
         }
     except Exception as e:
         return {'ok': False, 'error': f'parse failed: {e}'}
+    finally:
+        try: conn.disconnect()
+        except Exception: pass
+
+
+def get_ont_config(ip, username, password, sn):
+    """Read WAN + WLAN configuration of an ONT via OLT SSH (read-only).
+
+    Returns (ok: bool, result: dict). On success result has:
+        {
+          'sn', 'fsp', 'ont_id', 'model',
+          'wan': {... parsed from `display ont wan-info` ...},
+          'wlan': {'ssids': [...], 'bands_present': [...], 'total': N},
+          'mgmt': {... parsed from `display ont ipconfig` ...},
+          'warnings': [...]
+        }
+
+    Note: Huawei OLT does NOT expose PPPoE password, WiFi password, WiFi
+    security mode, channel, width, or country. Those live on the ONT itself
+    and require direct ONT access (Phase 2).
+    """
+    sn = (sn or '').strip()
+    if not sn:
+        return False, {'error': 'SN is required'}
+
+    warnings = []
+    def _hard_drain(conn, settle_rounds=3, max_seconds=8):
+        """Drain channel until we get N consecutive empty reads OR timeout.
+        Handles slow Huawei pager-tail output without sending control chars."""
+        empty = 0
+        end = time.time() + max_seconds
+        while time.time() < end and empty < settle_rounds:
+            time.sleep(0.4)
+            chunk = conn.read_channel()
+            if chunk:
+                # If we still see a More pager, push it past with space
+                if '---- More' in chunk:
+                    conn.write_channel(' ')
+                empty = 0
+            else:
+                empty += 1
+
+    conn = olt_ssh(ip, username, password)
+    try:
+        find_out = _olt_command(conn, f'display ont info by-sn {sn}', delay=2, wait_prompt=True)
+        fsp_m = re.search(r'F/S/P\s*:\s*(\S+)', find_out)
+        id_m  = re.search(r'ONT-ID\s*:\s*(\d+)', find_out)
+        if not fsp_m or not id_m:
+            return False, {'error': 'ONT not found on OLT', 'sn': sn}
+        fsp = fsp_m.group(1)
+        parts = fsp.split('/')
+        slot_port = '/'.join(parts[:2])
+        port = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        ont_id = int(id_m.group(1))
+        eq_m = re.search(r'(?:Equipment-ID|Ont EquipmentID)\s*:\s*(\S+)', find_out)
+        model = (eq_m.group(1) if eq_m else '').strip()
+
+        _hard_drain(conn)
+        _olt_command(conn, f'interface gpon {slot_port}', delay=2, wait_prompt=True)
+        _hard_drain(conn)
+
+        # WLAN and ipconfig produce SHORT output that doesn't trigger pager — run them first.
+        # WAN is heavy and may leave the OLT in pager state, so run it last.
+        wlan_raw  = _olt_command(conn, f'display ont wlan-info {port} {ont_id}', delay=2, wait_prompt=True)
+        _hard_drain(conn)
+        ipcfg_raw = _olt_command(conn, f'display ont ipconfig {port} {ont_id}', delay=2, wait_prompt=True)
+        _hard_drain(conn)
+        wan_raw   = _olt_command(conn, f'display ont wan-info {port} {ont_id}', delay=2, wait_prompt=True)
+        _hard_drain(conn, settle_rounds=6, max_seconds=15)
+
+        wan  = _parse_wan_full(wan_raw)
+        wlan = _parse_wlan_full(wlan_raw)
+        mgmt = _parse_ont_ipconfig(ipcfg_raw)
+
+        if not wan:
+            warnings.append('WAN section empty — ONT may be bridge-mode or offline')
+        if not wlan.get('ssids'):
+            warnings.append('WLAN section empty — ONT may not have WiFi or is not reporting it')
+
+        result = {
+            'sn': sn,
+            'fsp': fsp,
+            'ont_id': ont_id,
+            'model': model,
+            'wan': wan,
+            'wlan': wlan,
+            'mgmt': mgmt,
+            'warnings': warnings,
+            'note': 'PPPoE password, WiFi password, security, and channel are not exposed by OLT — Phase 2 will fetch via direct ONT access',
+        }
+        return True, result
+    except Exception as e:
+        return False, {'error': str(e), 'sn': sn}
     finally:
         try: conn.disconnect()
         except Exception: pass

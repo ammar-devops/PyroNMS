@@ -1071,6 +1071,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json(500, {"error": str(e)})
 
+        # ── GET /ont/config?sn=XXXX — WAN + WLAN config read via OLT SSH ─────
+        elif parsed.path == "/ont/config":
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip()
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+            try:
+                olts = olt.get_olts()
+                if not olts:
+                    return self.send_json(404, {"error": "No OLTs configured"})
+                o = olts[0]
+                ok, data = olt.get_ont_config(o["ip"], o["username"], o["password"], sn)
+                payload = {"ok": ok, **(data if isinstance(data, dict) else {})}
+                return self.send_json(200 if ok else 404, payload)
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
         # ── GET /device — DEPRECATED in v2.7.0 (GenieACS removed) ────────────
         elif parsed.path == "/device":
             return self.send_json(410, {"error": "GenieACS removed in v2.7.0 — use /ont/info?sn=..."})

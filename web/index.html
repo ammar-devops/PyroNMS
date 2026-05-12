@@ -4580,7 +4580,6 @@ function renderOntConfigCards(d) {
       ${row('Service Type',    wan.service_type)}
       ${wan.mode === 'pppoe' ? `
         ${row('PPPoE Username', wan.pppoe_user || '— (not exposed by OLT)')}
-        <div class="ontmgr-row"><span class="k">PPPoE Password</span><span class="v" style="color:var(--muted);font-style:italic">stored on ONT — Phase 2</span></div>
       ` : ''}
       ${row('IPv4 Address',  wan.ipv4)}
       ${row('Subnet Mask',   wan.subnet)}
@@ -4616,17 +4615,11 @@ function renderOntConfigCards(d) {
         ${row('Wireless Standard',  s.wireless_standard)}
         ${row('Operational',        s.operational ? 'up' : 'down')}
         ${row('Connected Clients',  (s.current_clients ?? '—') + ' / ' + (s.max_clients ?? '—'))}
-        <div class="ontmgr-row"><span class="k">WiFi Password</span><span class="v" style="color:var(--muted);font-style:italic">stored on ONT — Phase 2</span></div>
-        <div class="ontmgr-row"><span class="k">Security / Channel</span><span class="v" style="color:var(--muted);font-style:italic">not exposed by OLT — Phase 2</span></div>
       </div>
     `).join('');
   }
 
-  const warningsHtml = (d.warnings && d.warnings.length) ?
-    `<div class="ontmgr-config-warn">⚠ ${d.warnings.map(w => escHtml(w)).join('<br>')}</div>` : '';
-
   return `
-    ${warningsHtml}
     <div class="ontmgr-grid">
       <div class="ontmgr-card">
         <h4>🌐 WAN Configuration</h4>
@@ -4636,9 +4629,6 @@ function renderOntConfigCards(d) {
         <h4>📶 WLAN Configuration</h4>
         ${wlanInner}
       </div>
-    </div>
-    <div class="ontmgr-config-note">
-      ℹ️ PPPoE password, WiFi password, security mode, channel and country are stored on the ONT itself and not exposed by the OLT. They'll be readable in Phase 2 via direct ONT access.
     </div>
   `;
 }

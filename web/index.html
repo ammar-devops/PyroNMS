@@ -148,8 +148,10 @@
   .btn-row-refresh:disabled .row-refresh-icon, .row-refresh-icon.spin { animation: spin .7s linear infinite; border-top-color: transparent; }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #pyro-bar { position:fixed; top:0; left:0; height:4px; width:0%; background:var(--green); z-index:99999; transition:width .3s ease,opacity .3s ease; border-radius:0 3px 3px 0; box-shadow:0 0 10px var(--green),0 0 4px var(--green); opacity:0; pointer-events:none; }
+  #pyro-bar { position:fixed; top:0; left:0; right:0; height:4px; z-index:99999; background:rgba(34,197,94,.18); opacity:0; pointer-events:none; transition:opacity .2s ease; overflow:hidden; }
   #pyro-bar.running { opacity:1; }
+  #pyro-bar::before { content:''; position:absolute; top:0; bottom:0; left:0; width:40%; background:linear-gradient(90deg, transparent 0%, var(--green) 50%, transparent 100%); box-shadow:0 0 12px var(--green), 0 0 6px var(--green); transform:translateX(-100%); animation:pyro-sweep 1.1s infinite linear; }
+  @keyframes pyro-sweep { 0% { transform:translateX(-100%); } 100% { transform:translateX(350%); } }
   .btn-spinner { display:inline-block; width:12px; height:12px; border:2px solid rgba(255,255,255,.3); border-top-color:currentColor; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:5px; }
 
   /* ── Modal ── */
@@ -1037,10 +1039,10 @@
 </div>
 
 <script>
-// ── Progress bar ──────────────────────────────────────────────────────────────
-let _pyroBarTimer=null,_pyroBarVal=0,_pyroBarRefs=0;
-function _barStart(){_pyroBarRefs++;const b=document.getElementById('pyro-bar');if(!b)return;if(_pyroBarRefs>1)return;clearInterval(_pyroBarTimer);_pyroBarVal=5;b.style.width=_pyroBarVal+'%';b.classList.add('running');_pyroBarTimer=setInterval(()=>{_pyroBarVal=Math.min(_pyroBarVal+Math.random()*8,88);b.style.width=_pyroBarVal+'%';},220);}
-function _barDone(){_pyroBarRefs=Math.max(0,_pyroBarRefs-1);if(_pyroBarRefs>0)return;const b=document.getElementById('pyro-bar');if(!b)return;clearInterval(_pyroBarTimer);b.style.width='100%';setTimeout(()=>{b.classList.remove('running');b.style.width='0%';},400);}
+// ── Progress bar (indeterminate sweep) ────────────────────────────────────────
+let _pyroBarRefs=0;
+function _barStart(){_pyroBarRefs++;const b=document.getElementById('pyro-bar');if(b)b.classList.add('running');}
+function _barDone(){_pyroBarRefs=Math.max(0,_pyroBarRefs-1);if(_pyroBarRefs>0)return;const b=document.getElementById('pyro-bar');if(b)b.classList.remove('running');}
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const API = 'http://172.20.101.160:8088';

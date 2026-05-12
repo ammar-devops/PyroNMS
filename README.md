@@ -137,14 +137,17 @@ PyroNMS/
 | 🚀 v2.6.0  | SNMP-first architecture, dashboard rebuild, perf + UX overhaul |
 | 🧹 v2.7.0  | GenieACS removed, new ONT Manager popup, slimmer table     |
 | 🛠️ v2.8.0  | Bulk Actions (Enable/Disable/Reset/Restore/Delete), checkbox selection, robust ONT detail parsing, ONT/ONU detection |
+| 🟢 v2.8.1  | Status overlay refinements                                 |
+| ⏳ v2.8.2  | Refresh buttons overhaul — top progress bar, button spinners, fixed row Refresh icon |
 
-### 🔭 Current Release — `v2.8.0`
+### 🔭 Current Release — `v2.8.2`
 
-- 🛠️ **U2000-style bulk Actions** — checkbox column + `▾ Actions` dropdown (Enable, Disable, Reset, Restore, Delete) with type-to-confirm for destructive actions
-- 🪟 **Popup renamed** — "ONT Details and Configuration", with ONT/ONU device-type pill
-- 🔍 **Robust SSH parsing** — handles Huawei pager, uses `interface gpon` mode for version, parses model from `OntProductDescription`
-- 🧠 **Smart model detection** — Huawei HG/EG/HS/HN/MA prefixes and ZTE F-series mapped to themed UI
-- 🚀 **New endpoint** — `POST /ont/action` (admin) wraps all 5 lifecycle actions
+- ⏳ **Top progress bar** — NProgress-style 4px green bar at the very top of the page, sweeps left→right on every refresh action (zero JS libraries)
+- 🔄 **Refresh All button** — disables + shows inline circle spinner + "Refreshing…" while loading
+- 🎯 **Row Refresh button** — replaced corrupted unicode icon with a pure CSS circle that spins while the row fetches
+- 🪟 **Modal Refresh** — inline spinner replaces stale "⟳ …" text during GenieACS reloads
+- 🌐 **Page loads** — Unregistered scan, OLT Config, Backup Manager, OLT Monitor, Worker Manager, and ONT Manager all now trigger the top bar
+- 🧮 **Ref-counted bar** — parallel refreshes share one bar; it hides only when all are done
 
 ---
 

@@ -2875,7 +2875,7 @@ function renderTable() {
         if (ev.target.closest('button, a, input, select, textarea, label')) return;
         const sn = tr.dataset.sn || '';
         const name = tr.dataset.name || sn;
-        if (sn) openOntManager(sn, name);
+        if (sn) window.location.href = `/ont-manager.html?sn=${encodeURIComponent(sn)}`;
       });
     });
 

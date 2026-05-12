@@ -622,18 +622,46 @@ def apply_ont_settings(ip, username, password, payload):
         outputs.append('[PPPOE_CREDS_UPDATED] PPPoE username/password sent via ont ipconfig only.')
         conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
 
+    # ── Static IP update (lightweight, no service-port changes) ─────────────
+    if kind == 'static_ip':
+        ip_addr = _safe_cli_value(payload.get('ip', ''), 'IP address')
+        subnet  = _safe_cli_value(payload.get('subnet', ''), 'Subnet mask')
+        gateway = _safe_cli_value(payload.get('gateway', ''), 'Gateway')
+        vlan    = str(payload.get('vlan_id') or '10')
+        dns1    = _safe_cli_value(payload.get('dns1', ''), 'Primary DNS')
+        dns2    = _safe_cli_value(payload.get('dns2', ''), 'Secondary DNS')
+        if not ip_addr or not subnet or not gateway:
+            conn.disconnect()
+            return False, 'IP address, subnet mask and gateway are required'
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1); outputs.append(conn.read_channel())
+        cmd = (f'ont ipconfig {ont["port"]} {ont["ont_id"]} ip-index 1 static '
+               f'ip-address {ip_addr} subnet-mask {subnet} gateway {gateway} '
+               f'vlan {vlan} priority 0')
+        outputs.append(_olt_command(conn, cmd, delay=4))
+        outputs.append('[STATIC_IP_UPDATED] Static IP sent via ont ipconfig only.')
+        conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
+
     if kind in ('wifi', 'lan'):
         if kind == 'wifi':
             ssid_index = int(payload.get('ssid_index', 1))
-            wpa_pass   = _safe_cli_value(payload.get('password', ''), 'WiFi password')
-            if not wpa_pass:
+            wpa_pass   = _safe_cli_value(payload.get('password', ''),  'WiFi password')
+            ssid_name  = _safe_cli_value(payload.get('ssid_name', ''), 'SSID name')
+            enabled    = payload.get('enabled', None)   # None = not provided
+            if not wpa_pass and not ssid_name and enabled is None:
                 conn.disconnect()
-                return False, 'WiFi password is required'
+                return False, 'No WLAN fields to update'
             conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
             time.sleep(1); outputs.append(conn.read_channel())
-            wlan_cmd = f'ont wlan-config {ont["port"]} {ont["ont_id"]} ssid-index {ssid_index} wpa-passwd {wpa_pass}'
-            outputs.append(_olt_command(conn, wlan_cmd, delay=3))
-            outputs.append('[WLAN_PASSWD_SENT] WiFi password command sent to OLT.')
+            base = f'ont wlan-config {ont["port"]} {ont["ont_id"]} ssid-index {ssid_index}'
+            if wpa_pass:
+                outputs.append(_olt_command(conn, f'{base} wpa-passwd {wpa_pass}', delay=3))
+            if ssid_name:
+                outputs.append(_olt_command(conn, f'{base} ssid {ssid_name}', delay=3))
+            if enabled is not None:
+                flag = 'enable' if enabled else 'disable'
+                outputs.append(_olt_command(conn, f'{base} ssid-enable {flag}', delay=3))
+            outputs.append('[WLAN_UPDATED] WLAN settings sent to OLT.')
             conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
         else:
             outputs.append(f"[LAN_CAPTURED] lan_ip={payload.get('lan_ip','')} dhcp_start={payload.get('dhcp_start','')} dhcp_end={payload.get('dhcp_end','')} dhcp_enabled={payload.get('dhcp_enabled')}")

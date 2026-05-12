@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.8.2 (2026-05-12)
+
+### Refresh Buttons + Loading Indicators
+- Added NProgress-style 3px top progress bar (`#pyro-bar`) — pure CSS, no library, ref-counted for concurrent loads
+- Added `.btn-spinner` border-circle CSS class for consistent button loading state
+- **Refresh All**: button now disables + shows inline spinner while loading, re-enables on done/error
+- **Row Refresh**: top bar now fires alongside existing per-row spinning ⟳
+- **Modal Refresh**: inline spinner replaces plain text "⟳ …" while reloading GenieACS data
+- **Unregistered ONTs**: replaced static 🔄 emoji with animated spinning ⟳ + top bar
+- **OLT Config DB**: top bar now fires on every forced refresh
+- **Backup Manager**: top bar + inline spinner in loading row
+- **OLT Monitor**: top bar + inline spinner in loading row
+- **Worker Manager**: top bar + inline spinner in loading row
+- **ONT Manager**: top bar fires on SSH info fetch (race-condition guard preserved)
+- Version display updated to v2.8.2
+
 ## v2.8.0 (2026-05-12)
 
 ### ONT Manager popup

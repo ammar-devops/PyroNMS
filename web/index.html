@@ -144,6 +144,9 @@
   .btn-row-refresh:hover { border-color: var(--accent); }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  #pyro-bar { position:fixed; top:0; left:0; height:3px; width:0%; background:var(--accent); z-index:9999; transition:width .25s ease,opacity .4s ease; border-radius:0 2px 2px 0; box-shadow:0 0 8px var(--accent); opacity:0; pointer-events:none; }
+  #pyro-bar.running { opacity:1; }
+  .btn-spinner { display:inline-block; width:12px; height:12px; border:2px solid rgba(255,255,255,.3); border-top-color:currentColor; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:5px; }
 
   /* ── Modal ── */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 500; align-items: center; justify-content: center; }
@@ -682,6 +685,7 @@
 </style>
 </head>
 <body>
+<div id="pyro-bar"></div>
 
 <!-- Header -->
 <div class="header">
@@ -809,7 +813,7 @@
     <div class="sidebar-version" style="padding:10px 14px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;">
       <div id="sidebarFooter">
         <img src="/pyronet-logo.png" style="height:18px;opacity:.5;vertical-align:middle;"> 
-        <span style="vertical-align:middle;">PyroNMS v2.4</span>
+        <span style="vertical-align:middle;">PyroNMS v2.8.2</span>
       </div>
     </div>
   </div>
@@ -1029,6 +1033,11 @@
 </div>
 
 <script>
+// ── Progress bar ──────────────────────────────────────────────────────────────
+let _pyroBarTimer=null,_pyroBarVal=0,_pyroBarRefs=0;
+function _barStart(){_pyroBarRefs++;const b=document.getElementById('pyro-bar');if(!b)return;if(_pyroBarRefs>1)return;clearInterval(_pyroBarTimer);_pyroBarVal=5;b.style.width=_pyroBarVal+'%';b.classList.add('running');_pyroBarTimer=setInterval(()=>{_pyroBarVal=Math.min(_pyroBarVal+Math.random()*8,88);b.style.width=_pyroBarVal+'%';},220);}
+function _barDone(){_pyroBarRefs=Math.max(0,_pyroBarRefs-1);if(_pyroBarRefs>0)return;const b=document.getElementById('pyro-bar');if(!b)return;clearInterval(_pyroBarTimer);b.style.width='100%';setTimeout(()=>{b.classList.remove('running');b.style.width='0%';},400);}
+
 // ── Config ───────────────────────────────────────────────────────────────────
 const API = 'http://172.20.101.160:8088';
 
@@ -1725,9 +1734,10 @@ let unregLoading = false;
 async function loadUnregistered() {
   if (unregLoading) return;
   unregLoading = true;
+  _barStart();
   const tbl = document.getElementById('unregTable');
   tbl.innerHTML = `<div style="text-align:center;padding:60px 20px;">
-    <div style="font-size:28px;margin-bottom:12px;">🔄</div>
+    <div style="margin-bottom:12px;"><span class="spin" style="display:inline-block;font-size:28px;">⟳</span></div>
     <div style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:6px;">Scanning OLT for unregistered ONTs...</div>
     <div style="font-size:12px;color:var(--muted);">Checking all GPON ports via SSH — may take 30-60 seconds</div>
   </div>`;
@@ -1738,6 +1748,8 @@ async function loadUnregistered() {
     renderUnregistered(d.onts || []);
   } catch(e) {
     tbl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--red);">✗ Error: ${e.message}</div>`;
+  } finally {
+    _barDone();
   }
   unregLoading = false;
 }
@@ -1782,12 +1794,15 @@ let _oltCfgData = null;
 
 async function loadOltConfig(force) {
   if (_oltCfgData && !force) { renderOltConfig(_oltCfgData); return; }
+  _barStart();
   try {
     const r = await fetch(API+'/olt/profiles', {headers: authHeaders()});
     _oltCfgData = await r.json();
     renderOltConfig(_oltCfgData);
   } catch(e) {
     console.error('loadOltConfig:', e);
+  } finally {
+    _barDone();
   }
 }
 
@@ -2250,9 +2265,10 @@ let _workersLoading = false;
 async function loadWorkers() {
   if (_workersLoading) return;
   _workersLoading = true;
+  _barStart();
   const wb = document.getElementById('workersTable');
   const cb = document.getElementById('cronsTable');
-  if (wb) wb.innerHTML = `<tr><td colspan="5" style="padding:28px;text-align:center;color:var(--muted);">Loading…</td></tr>`;
+  if (wb) wb.innerHTML = `<tr><td colspan="5" style="padding:28px;text-align:center;color:var(--muted);"><span class="spin" style="display:inline-block;margin-right:8px;">⟳</span>Loading…</td></tr>`;
   try {
     const r = await fetch(`${API}/workers`, {headers: authHeaders()});
     if (!r.ok) throw new Error(`Server error ${r.status}`);
@@ -2397,6 +2413,7 @@ async function loadWorkers() {
     if (wb) wb.innerHTML = `<tr><td colspan="5" style="padding:28px;text-align:center;color:var(--red);">✗ ${e.message}</td></tr>`;
   } finally {
     _workersLoading = false;
+    _barDone();
   }
 }
 
@@ -2534,8 +2551,9 @@ async function loadBackups() {
   const count = document.getElementById('backupCount');
   const status = document.getElementById('backupStatus');
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);">Loading backups...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);"><span class="spin" style="display:inline-block;margin-right:8px;">⟳</span>Loading backups...</td></tr>`;
   if (status) status.textContent = '';
+  _barStart();
   try {
     const r = await fetch(`${API}/olt/backups`, {headers: authHeaders()});
     const d = await r.json();
@@ -2564,6 +2582,8 @@ async function loadBackups() {
   } catch(e) {
     if (count) count.textContent = 'Error';
     tbody.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--red);">✗ ${escHtml(e.message)}</td></tr>`;
+  } finally {
+    _barDone();
   }
 }
 
@@ -2658,7 +2678,8 @@ async function loadOltMonitor() {
   const table = document.getElementById('oltMonTable');
   const hours = _oltRange();
   if (status) status.textContent = 'Loading...';
-  if (table) table.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);">Loading OLT stats...</td></tr>`;
+  if (table) table.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);"><span class="spin" style="display:inline-block;margin-right:8px;">⟳</span>Loading OLT stats...</td></tr>`;
+  _barStart();
   try {
     const [tempRes, cpuRes] = await Promise.all([
       fetch(`${API}/olt/stats?hours=${encodeURIComponent(hours)}`, {headers: authHeaders()}),
@@ -2712,6 +2733,8 @@ async function loadOltMonitor() {
     if (status) status.textContent = 'Error';
     if (table) table.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--red);">Error: ${escHtml(e.message)}</td></tr>`;
     console.error('OLT monitor error:', e);
+  } finally {
+    _barDone();
   }
 }
 
@@ -3084,6 +3107,7 @@ async function refreshRow(sn, btn) {
   const span = btn.querySelector('span');
   span?.classList.add('spin');
   btn.disabled = true;
+  _barStart();
   try {
     const r = await fetch(`${API}/ont/live?sn=${encodeURIComponent(sn)}`,{headers:authHeaders()});
     const d = await r.json();
@@ -3098,12 +3122,14 @@ ${e.message || e}`);
   } finally {
     span?.classList.remove('spin');
     btn.disabled = false;
+    _barDone();
   }
 }
 
 async function refreshAll() {
   const btn = document.querySelector('.btn-refresh-all');
-  if (btn) { btn.disabled = true; btn.textContent = '⟳ Refreshing…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner"></span>Refreshing…'; }
+  _barStart();
   try {
     await loadONTs();
     showToast('✓ Data refreshed — ' + allONTs.length + ' ONTs loaded', 'ok');
@@ -3111,6 +3137,7 @@ async function refreshAll() {
     showToast('⚠ Refresh failed: ' + e.message, 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⟳ Refresh All'; }
+    _barDone();
   }
 }
 
@@ -3143,10 +3170,15 @@ function switchTab(tab, render=true) {
 async function reloadModalData() {
   if (!currentDevice) return;
   const btn = document.getElementById('modalRefreshBtn');
-  if (btn) { btn.textContent = '⟳ …'; btn.disabled=true; }
+  if (btn) { btn.innerHTML = '<span class="btn-spinner"></span>…'; btn.disabled=true; }
   document.getElementById('modalBody').innerHTML = '<div class="modal-loading"><span class="spin" style="display:inline-block;font-size:18px">⟳</span>&nbsp; Refreshing from GenieACS…</div>';
-  await loadDeviceData(currentDevice.sn);
-  if (btn) { btn.textContent = '⟳ Refresh'; btn.disabled=false; }
+  _barStart();
+  try {
+    await loadDeviceData(currentDevice.sn);
+  } finally {
+    if (btn) { btn.textContent = '⟳ Refresh'; btn.disabled=false; }
+    _barDone();
+  }
 }
 
 async function loadDeviceData(sn) {
@@ -4382,6 +4414,7 @@ function closeOntManager(e) {
 async function loadOntManagerData(sn) {
   const myReq = ++_ontMgrReq;       // unique token for this call
   const mySn  = sn;                  // remember the SN this call is for
+  _barStart();
   try {
     const r = await fetch(`${API}/ont/info?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
     const data = await r.json();
@@ -4399,6 +4432,8 @@ async function loadOntManagerData(sn) {
     if (myReq !== _ontMgrReq) return;
     document.getElementById('ontmgrBody').innerHTML =
       `<div class="ontmgr-error">⚠ Network error: ${escHtml(e.message)}</div>`;
+  } finally {
+    _barDone();
   }
 }
 

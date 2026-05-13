@@ -311,61 +311,64 @@ def genie_request(method, path, body=None):
 
 
 def find_device_id(sn):
-    """Find GenieACS _id by matching SN suffix in _id field."""
-    sn_encoded = urllib.parse.quote(sn, safe="")
-    path = f"/devices/?projection=_id"
-    status, data = genie_request("GET", path)
-    if status != 200 or not isinstance(data, list):
+    """Find GenieACS _id matching the OLT-reported SN.
+
+    Handles 3rd-party ONTs where the OLT shows SN as full hex
+    (e.g. '58504F4E05845A00') but GenieACS stores it ASCII-prefixed
+    (e.g. 'XPON05845A00') because the firmware sends it that way via TR-069.
+    """
+    if not sn:
         return None
     sn_upper = sn.upper()
+    candidates = {sn_upper}
+
+    # If 16 hex chars (8 bytes), try ASCII-decode of the first 4 bytes
+    # to handle 3rd-party ONTs where vendor prefix is sent as ASCII
+    if len(sn) == 16 and re.match(r'^[0-9A-Fa-f]{16}$', sn):
+        try:
+            vendor = bytes.fromhex(sn[:8]).decode('ascii')
+            if vendor.isalnum() and vendor.isprintable():
+                candidates.add((vendor + sn[8:]).upper())
+        except (ValueError, UnicodeDecodeError):
+            pass
+
+    # Fetch all device IDs
+    status, data = genie_request("GET", "/devices/?projection=_id")
+    if status != 200 or not isinstance(data, list):
+        return None
+
     for dev in data:
         dev_id = dev.get("_id", "")
         # GenieACS stores: OUI-ProductClass-SerialNumber (URL-encoded)
         decoded = urllib.parse.unquote(dev_id).upper()
-        if decoded.endswith(sn_upper) or dev_id.upper().endswith(sn_upper):
-            return dev_id
+        raw     = dev_id.upper()
+        for cand in candidates:
+            if decoded.endswith(cand) or raw.endswith(cand) or cand in decoded:
+                return dev_id
     return None
 
 
 def fetch_device_data(device_id):
-    """Fetch full parameter projection for a device."""
+    """Fetch full parameter projection for a device.
+
+    NOTE: Using whole-subtree projections (LANDevice, WANDevice) instead of leaf paths
+    so we capture nested collections (Hosts.Host.*, WANPPPConnection.*, WLANConfiguration.*)
+    without enumerating every index.
+    """
     projection = ",".join([
         "_id",
         "_lastInform",
         "DeviceID",
         "summary",
         # Summary
-        "InternetGatewayDevice.DeviceInfo.SerialNumber",
-        "InternetGatewayDevice.DeviceInfo.Manufacturer",
-        "InternetGatewayDevice.DeviceInfo.ModelName",
-        "InternetGatewayDevice.DeviceInfo.HardwareVersion",
-        "InternetGatewayDevice.DeviceInfo.SoftwareVersion",
-        "InternetGatewayDevice.DeviceInfo.UpTime",
-        "InternetGatewayDevice.ManagementServer.URL",
-        "InternetGatewayDevice.ManagementServer.PeriodicInformInterval",
-        "InternetGatewayDevice.ManagementServer.ConnectionRequestURL",
-        # WAN
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.DefaultGateway",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.DNSServers",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Uptime",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.DefaultGateway",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.DNSServers",
-        # LAN
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPRouters",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DNSServers",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MinAddress",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MaxAddress",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.SubnetMask",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DHCPLeaseTime",
-        # WLAN (bands 1-5)
-        "InternetGatewayDevice.LANDevice.1.WLANConfiguration",
-        # TR-069
-        "InternetGatewayDevice.ManagementServer.Username",
-        "InternetGatewayDevice.ManagementServer.Password",
+        "InternetGatewayDevice.DeviceInfo",
+        "InternetGatewayDevice.ManagementServer",
+        # WAN — whole subtree to capture all connections + sub-params
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice",
+        # LAN — whole subtree (catches WLAN bands, Hosts, IPInterface)
+        "InternetGatewayDevice.LANDevice.1",
+        # User accounts (Huawei) — best-effort
+        "InternetGatewayDevice.UserInterface",
     ])
     # Use query filter to avoid URL double-encoding issues with device _id
     query = json.dumps({"_id": device_id})
@@ -439,7 +442,7 @@ def parse_device(raw):
     except Exception:
         uptime_str = uptime_sec
 
-    # WLAN bands
+    # WLAN bands — now includes BSSID, AutoChannel, TX power
     wlan_bands = []
     for band_num in sorted(wlan_all.keys(), key=lambda x: int(x) if x.isdigit() else 99):
         band = wlan_all[band_num]
@@ -449,26 +452,134 @@ def parse_device(raw):
         if ssid == "-":
             continue
         wlan_bands.append({
-            "band_index": band_num,
-            "ssid":       ssid,
-            "password":   extract_val(band, "KeyPassphrase") or extract_val(band, "PreSharedKey"),
-            "band":       extract_val(band, "OperatingFrequencyBand") or extract_val(band, "Standard"),
-            "channel":    extract_val(band, "Channel"),
-            "security":   extract_val(band, "BeaconType") or extract_val(band, "BasicAuthenticationMode"),
-            "enabled":    extract_val(band, "Enable"),
-            "clients":    extract_val(band, "TotalAssociations"),
+            "band_index":   band_num,
+            "ssid":         ssid,
+            "password":     extract_val(band, "KeyPassphrase") or extract_val(band, "PreSharedKey"),
+            "band":         extract_val(band, "OperatingFrequencyBand") or extract_val(band, "Standard"),
+            "channel":      extract_val(band, "Channel"),
+            "security":     extract_val(band, "BeaconType") or extract_val(band, "BasicAuthenticationMode"),
+            "enabled":      extract_val(band, "Enable"),
+            "clients":      extract_val(band, "TotalAssociations"),
+            "bssid":        extract_val(band, "BSSID"),
+            "auto_channel": extract_val(band, "AutoChannelEnable"),
+            "tx_power":     extract_val(band, "X_HW_TxPower") or extract_val(band, "TransmitPowerSupported"),
+            "ssid_broadcast": extract_val(band, "SSIDAdvertisementEnabled"),
         })
 
-    # WAN — prefer PPP over IP
-    wan_ip   = v(ppp, "ExternalIPAddress") or v(ip_conn, "ExternalIPAddress")
-    wan_gw   = v(ppp, "DefaultGateway")    or v(ip_conn, "DefaultGateway")
-    wan_dns  = v(ppp, "DNSServers")        or v(ip_conn, "DNSServers")
-    wan_user = v(ppp, "Username")
-    wan_up   = v(ppp, "Uptime")
+    # WAN — collect all connections (PPPoE + IPoE) from all WANConnectionDevice instances
+    wan_connections = []
+    wan_root = igd.get("WANDevice", {}).get("1", {}).get("WANConnectionDevice", {})
+    for wcd_key in sorted(wan_root.keys()):
+        if not wcd_key.isdigit():
+            continue
+        wcd = wan_root.get(wcd_key, {})
+        for ctype_key, ctype_name in [("WANPPPConnection", "PPPoE"), ("WANIPConnection", "IPoE")]:
+            ctype = wcd.get(ctype_key, {})
+            for conn_key in sorted(ctype.keys()):
+                if not conn_key.isdigit():
+                    continue
+                conn = ctype.get(conn_key, {})
+                if not isinstance(conn, dict):
+                    continue
+                wan_connections.append({
+                    "kind":        ctype_name,
+                    "wcd_index":   wcd_key,
+                    "conn_index":  conn_key,
+                    "name":        extract_val(conn, "Name"),
+                    "enabled":     extract_val(conn, "Enable"),
+                    "status":      extract_val(conn, "ConnectionStatus"),
+                    "conn_type":   extract_val(conn, "ConnectionType"),
+                    "service_list": extract_val(conn, "X_HW_SERVICELIST") or extract_val(conn, "X_HW_ServiceList"),
+                    "vlan":        extract_val(conn, "X_HW_VLAN"),
+                    "lan_bind":    extract_val(conn, "X_HW_LANBIND"),
+                    "ssid_bind":   extract_val(conn, "X_HW_SSIDBIND") or extract_val(conn, "SSID_BIND"),
+                    "nat":         extract_val(conn, "NATEnabled"),
+                    "ip":          extract_val(conn, "ExternalIPAddress"),
+                    "gateway":     extract_val(conn, "DefaultGateway"),
+                    "dns":         extract_val(conn, "DNSServers"),
+                    "mac":         extract_val(conn, "MACAddress"),
+                    "uptime":      extract_val(conn, "Uptime"),
+                    "username":    extract_val(conn, "Username"),
+                })
 
-    # LAN IP from IPInterface sub-object
+    # Primary WAN — first connection or PPPoE-preferred for top-level summary
+    primary = next((c for c in wan_connections if c["kind"] == "PPPoE"), None) or (wan_connections[0] if wan_connections else None) or {}
+
+    # LAN
     ip_iface = lan_cfg.get("IPInterface", {}).get("1", {})
-    lan_ip   = extract_val(ip_iface, "IPInterfaceIPAddress") if ip_iface else v(lan_cfg, "IPRouters")
+    lan_enabled       = extract_val(ip_iface, "Enable") if ip_iface else "-"
+    lan_addr_type     = extract_val(ip_iface, "IPInterfaceAddressingType") if ip_iface else "-"
+    dhcp_server_on    = v(lan_cfg, "DHCPServerEnable")
+
+    # ── Connected hosts (LAN + Wi-Fi clients) ─────────────────────────
+    clients = []
+    hosts_root = lan_dev.get("Hosts", {}).get("Host", {})
+    for hk in sorted(hosts_root.keys()):
+        if not hk.isdigit():
+            continue
+        h = hosts_root.get(hk, {})
+        if not isinstance(h, dict):
+            continue
+        clients.append({
+            "host_name":      extract_val(h, "HostName"),
+            "ip":             extract_val(h, "IPAddress"),
+            "mac":            extract_val(h, "MACAddress"),
+            "active":         extract_val(h, "Active"),
+            "interface_type": extract_val(h, "InterfaceType"),
+            "rssi":           extract_val(h, "X_HW_RSSI"),
+            "lease":          extract_val(h, "LeaseTimeRemaining"),
+            "rate":           extract_val(h, "X_HW_NegotiatedRate"),
+            "source":         "host",
+        })
+
+    # Also pull from WLAN.AssociatedDevice (some firmwares only report wifi clients here)
+    for band_num, band in wlan_all.items():
+        if not band_num.isdigit() or not isinstance(band, dict):
+            continue
+        ad_root = band.get("AssociatedDevice", {})
+        for ak in sorted(ad_root.keys()):
+            if not ak.isdigit():
+                continue
+            ad = ad_root.get(ak, {})
+            if not isinstance(ad, dict):
+                continue
+            mac = extract_val(ad, "AssociatedDeviceMACAddress")
+            if mac == "-":
+                continue
+            # Skip if already in clients (by MAC)
+            if any(c["mac"].upper() == mac.upper() for c in clients if c["mac"] != "-"):
+                continue
+            clients.append({
+                "host_name":      "—",
+                "ip":             extract_val(ad, "AssociatedDeviceIPAddress"),
+                "mac":            mac,
+                "active":         extract_val(ad, "AssociatedDeviceAuthenticationState") or "True",
+                "interface_type": f"Wi-Fi (band {band_num})",
+                "rssi":           extract_val(ad, "X_HW_RSSI"),
+                "lease":          "-",
+                "rate":           extract_val(ad, "LastDataDownlinkRate"),
+                "source":         "wifi",
+            })
+
+    # ── User accounts (Huawei: X_HW_WebUserInfo) ──────────────────────
+    users_root = igd.get("UserInterface", {}).get("X_HW_WebUserInfo", {})
+    if not isinstance(users_root, dict):
+        users_root = {}
+    user_accounts = []
+    for uk in sorted(users_root.keys()):
+        if not uk.isdigit():
+            continue
+        u = users_root.get(uk, {})
+        if not isinstance(u, dict):
+            continue
+        uname = extract_val(u, "UserName")
+        if uname == "-":
+            continue
+        user_accounts.append({
+            "index":    uk,
+            "username": uname,
+            "level":    extract_val(u, "UserLevel"),
+        })
 
     conn_req_url = v(mgmt, "ConnectionRequestURL")
 
@@ -485,14 +596,27 @@ def parse_device(raw):
             "conn_req_url":  conn_req_url,
             "periodic_interval": v(mgmt, "PeriodicInformInterval"),
         },
+        # Compact top-level WAN (primary connection) + full connections list
         "wan": {
-            "ip":          wan_ip,
-            "gateway":     wan_gw,
-            "dns":         wan_dns,
-            "pppoe_user":  wan_user,
-            "uptime":      wan_up,
+            "ip":         primary.get("ip", "-"),
+            "gateway":    primary.get("gateway", "-"),
+            "dns":        primary.get("dns", "-"),
+            "pppoe_user": primary.get("username", "-"),
+            "uptime":     primary.get("uptime", "-"),
+            "conn_type":  primary.get("conn_type", "-"),
+            "service":    primary.get("service_list", "-"),
+            "vlan":       primary.get("vlan", "-"),
+            "nat":        primary.get("nat", "-"),
+            "mac":        primary.get("mac", "-"),
+            "status":     primary.get("status", "-"),
+            "name":       primary.get("name", "-"),
+            "kind":       primary.get("kind", "-"),
         },
+        "wan_connections": wan_connections,
         "lan": {
+            "enabled":      lan_enabled,
+            "type":         lan_addr_type,
+            "dhcp_enabled": dhcp_server_on,
             "gateway_ip":   v(lan_cfg, "IPRouters"),
             "dhcp_min":     v(lan_cfg, "MinAddress"),
             "dhcp_max":     v(lan_cfg, "MaxAddress"),
@@ -500,7 +624,9 @@ def parse_device(raw):
             "lease_time":   v(lan_cfg, "DHCPLeaseTime"),
             "dns":          v(lan_cfg, "DNSServers"),
         },
-        "wlan": wlan_bands,
+        "wlan":    wlan_bands,
+        "clients": clients,
+        "users":   user_accounts,
         "tr069": {
             "acs_url":      v(mgmt, "URL"),
             "username":     v(mgmt, "Username"),
@@ -522,6 +648,12 @@ PARAM_MAP = {
     "wlan.{b}.channel":  "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.Channel",
     "wlan.{b}.enabled":  "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.Enable",
     "wlan.{b}.security": "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.BeaconType",
+    "wlan.{b}.auto_channel":   "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.AutoChannelEnable",
+    "wlan.{b}.ssid_broadcast": "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.SSIDAdvertisementEnabled",
+    "wlan.{b}.tx_power":       "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.X_HW_TxPower",
+    # User accounts (Huawei)
+    "user.1.password":         "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password",
+    "user.2.password":         "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.Password",
     # WAN PPPoE
     "wan.pppoe_user":    "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
     "wan.pppoe_pass":    "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password",
@@ -1066,7 +1198,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not olts:
                     return self.send_json(404, {"error": "No OLTs configured"})
                 o = olts[0]
-                data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn)
+                data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn,
+                                             snmp_community=o.get("snmp_community"))
                 return self.send_json(200 if data.get("ok") else 404, data)
             except Exception as e:
                 return self.send_json(500, {"error": str(e)})
@@ -1089,9 +1222,73 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /device — DEPRECATED in v2.7.0 (GenieACS removed) ────────────
+        # ── GET /device?sn=XXXX — restored in v3.3.0 with SSH fallback ───────
         elif parsed.path == "/device":
-            return self.send_json(410, {"error": "GenieACS removed in v2.7.0 — use /ont/info?sn=..."})
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip()
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+
+            # 1) Try GenieACS first (full editable view)
+            try:
+                device_id = find_device_id(sn)
+            except Exception as e:
+                device_id = None
+                print(f"[device] GenieACS lookup error for {sn}: {e}")
+
+            if device_id:
+                raw = fetch_device_data(device_id)
+                if raw:
+                    result = parse_device(raw)
+                    result["_device_id"] = device_id
+                    result["_source"]    = "genieacs"
+                    result["_editable"]  = True
+                    return self.send_json(200, result)
+
+            # 2) Fallback: ONT not in GenieACS → OLT SSH read-only view
+            olts = olt.get_olts()
+            if not olts:
+                return self.send_json(404, {"error": f"Device {sn} not in GenieACS and no OLTs configured"})
+            o = olts[0]
+            try:
+                ssh_data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn,
+                                                  snmp_community=o.get("snmp_community"))
+            except Exception as e:
+                return self.send_json(500, {"error": f"OLT SSH error: {e}"})
+
+            if not ssh_data.get("ok"):
+                return self.send_json(404, {
+                    "error": f"Device {sn} not found in GenieACS or on OLT",
+                    "detail": ssh_data.get("error", "")
+                })
+
+            return self.send_json(200, {
+                "_source":   "ssh",
+                "_editable": False,
+                "_message":  "ONT not registered with TR-069 — read-only OLT view",
+                "summary": {
+                    "serial_number": sn,
+                    "manufacturer":  ssh_data.get("vendor", "Huawei Technologies"),
+                    "model":         ssh_data.get("model", "-"),
+                    "oui":           "-",
+                    "hw_version":    ssh_data.get("hw_version", "-"),
+                    "sw_version":    ssh_data.get("sw_version", "-"),
+                    "uptime":        ssh_data.get("online_duration", "-"),
+                    "last_inform":   "-",
+                    "rx_power":      ssh_data.get("rx_power"),
+                    "tx_power":      ssh_data.get("tx_power"),
+                    "temp":          ssh_data.get("temp"),
+                    "distance_m":    ssh_data.get("distance_m"),
+                    "run_state":     ssh_data.get("run_state"),
+                    "fsp":           ssh_data.get("fsp"),
+                    "ont_id":        ssh_data.get("ont_id"),
+                },
+                "wan":   {},
+                "lan":   {},
+                "wlan":  [],
+                "tr069": {},
+            })
 
         elif parsed.path == "/ont/settings/templates":
             user = require_auth(self)
@@ -1317,7 +1514,7 @@ class Handler(BaseHTTPRequestHandler):
             if user.get("role") not in ("superadmin","admin","pon_operator"):
                 return self.send_json(403, {"error":"Not allowed"})
             kind = parsed.path.rsplit("/", 1)[-1]
-            if kind not in ("check", "wan", "wifi", "lan", "user"):
+            if kind not in ("check", "wan", "wifi", "lan", "user", "pppoe_creds", "static_ip", "wlan_radio"):
                 return self.send_json(404, {"error":"Unknown settings section"})
             length = int(self.headers.get("Content-Length",0))
             body = self.rfile.read(length)

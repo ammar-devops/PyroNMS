@@ -177,6 +177,11 @@
 <div id="pyro-bar"></div>
 
 <!-- Header -->
+<div style="background:rgba(245,158,11,.12);border-bottom:1px solid rgba(245,158,11,.3);color:#fcd34d;padding:10px 18px;font-size:13px;text-align:center">
+  ⚠ <strong>Deprecated in v3.3.0</strong> — this page now uses OLT SSH only. Use the
+  <a href="/" style="color:#fcd34d;text-decoration:underline;font-weight:600">dashboard popup</a>
+  for full GenieACS-backed editable view.
+</div>
 <div class="om-header">
   <a class="om-back" href="/">← Dashboard</a>
   <span class="om-vendor-pill" id="omVendorPill">ONT</span>
@@ -376,9 +381,12 @@ function renderOverview() {
   el.innerHTML = `
     <div class="om-grid">
       <div class="om-card">
-        <h4>📡 Live Signal</h4>
-        ${r('RX Power',    (row.rx && row.rx !== '-') ? row.rx + ' dBm' : '—')}
-        ${r('Temperature', row.temp ? row.temp + ' °C' : '—')}
+        <h4>📡 Live Signal
+          ${d.signal_source ? `<span style="font-size:10px;font-weight:400;margin-left:6px;color:var(--muted)">[${esc(d.signal_source.toUpperCase())}]</span>` : ''}
+        </h4>
+        ${r('RX Power',    d.rx_power  != null ? d.rx_power  + ' dBm' : ((row.rx && row.rx !== '-') ? row.rx + ' dBm' : '—'))}
+        ${r('TX Power',    d.tx_power  != null ? d.tx_power  + ' dBm' : '—')}
+        ${r('Temperature', d.temp      != null ? d.temp      + ' °C'  : (row.temp ? row.temp + ' °C' : '—'))}
         ${r('Distance',    d.distance_m != null ? d.distance_m + ' m' : '—')}
         ${r('Online for',  d.online_duration || '—')}
       </div>
@@ -591,6 +599,22 @@ function renderWlan() {
             <button type="button" class="cfg-eye-btn" data-target="${uid}-pass">👁</button>
           </span>
         </label>
+        <label class="cfg-edit-label">Authentication Mode
+          <select id="${uid}-auth" class="edit-input">
+            <option value="">— keep current —</option>
+            <option value="wpa2-psk">WPA2-PSK</option>
+            <option value="wpa-wpa2-psk">WPA / WPA2-PSK (Mixed)</option>
+            <option value="open">Open (no security)</option>
+          </select>
+        </label>
+        <label class="cfg-edit-label">Encryption Mode
+          <select id="${uid}-enc" class="edit-input">
+            <option value="">— keep current —</option>
+            <option value="aes">AES</option>
+            <option value="tkip">TKIP</option>
+            <option value="tkip-aes">TKIP + AES</option>
+          </select>
+        </label>
         <label class="ssid-edit-toggle">
           <input type="checkbox" id="${uid}-en" ${s.enabled ? 'checked' : ''}>
           Enable this SSID
@@ -603,10 +627,61 @@ function renderWlan() {
     </div>`;
   });
 
+  // ── Radio Settings section ──────────────────────────────────────────────────
+  const has5G = (wlan.bands_present || []).includes('5G');
+  const ch24opts = ['auto','1','2','3','4','5','6','7','8','9','10','11','12','13']
+    .map(v => `<option value="${v}">${v === 'auto' ? 'Auto' : v}</option>`).join('');
+  const ch5opts  = ['auto','36','40','44','48','52','56','60','64','149','153','157','161','165']
+    .map(v => `<option value="${v}">${v === 'auto' ? 'Auto' : v}</option>`).join('');
+  const widthOpts24 = ['auto','20mhz','40mhz']
+    .map(v=>`<option value="${v}">${v==='auto'?'Auto 20/40':v.toUpperCase()}</option>`).join('');
+  const widthOpts5  = ['auto','20mhz','40mhz','80mhz']
+    .map(v=>`<option value="${v}">${v==='auto'?'Auto':v.toUpperCase()}</option>`).join('');
+
+  html += `
+  <div class="section-title" style="margin-top:8px">📡 Radio Settings (Channel &amp; Width)</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div class="ssid-block" style="flex:1;min-width:220px">
+      <div class="ssid-head"><span class="band-chip band-24g">2.4G</span><span style="font-size:12px;color:var(--muted);margin-left:6px">Radio 1</span></div>
+      <label class="cfg-edit-label">Channel
+        <select id="radio24-ch" class="edit-input">${ch24opts}</select>
+      </label>
+      <label class="cfg-edit-label">Channel Width
+        <select id="radio24-w" class="edit-input">${widthOpts24}</select>
+      </label>
+      <div class="save-bar">
+        <button class="btn btn-success" id="radio24-save">💾 Save 2.4G Radio</button>
+        <span class="save-status" id="radio24-status"></span>
+      </div>
+    </div>
+    ${has5G ? `
+    <div class="ssid-block" style="flex:1;min-width:220px">
+      <div class="ssid-head"><span class="band-chip band-5g">5G</span><span style="font-size:12px;color:var(--muted);margin-left:6px">Radio 2</span></div>
+      <label class="cfg-edit-label">Channel
+        <select id="radio5-ch" class="edit-input">${ch5opts}</select>
+      </label>
+      <label class="cfg-edit-label">Channel Width
+        <select id="radio5-w" class="edit-input">${widthOpts5}</select>
+      </label>
+      <div class="save-bar">
+        <button class="btn btn-success" id="radio5-save">💾 Save 5G Radio</button>
+        <span class="save-status" id="radio5-status"></span>
+      </div>
+    </div>` : ''}
+  </div>`;
+
+  // ── Phase 2 notice ──────────────────────────────────────────────────────────
+  html += `
+  <div class="om-error" style="margin-top:16px;background:rgba(79,142,247,.07);border-color:rgba(79,142,247,.28);color:var(--muted)">
+    ℹ️ <strong>TX Power</strong>, <strong>WiFi Mode</strong> (802.11ax/ac), <strong>Beacon/DTIM period</strong>, and
+    <strong>ONT admin password</strong> are not exposed via OLT CLI.<br>
+    These will be configurable in Phase 2 via direct ONT HTTP access.
+  </div>`;
+
   el.innerHTML = html;
   wireEyes(el);
 
-  // Wire save buttons
+  // Wire SSID save buttons
   wlan.ssids.forEach((s, i) => {
     const uid = `ssid${i}`;
     const saveBtn  = document.getElementById(`${uid}-save`);
@@ -617,15 +692,18 @@ function renderWlan() {
       const nameVal = (document.getElementById(`${uid}-name`)?.value || '').trim();
       const passVal = (document.getElementById(`${uid}-pass`)?.value || '').trim();
       const enVal   = document.getElementById(`${uid}-en`)?.checked;
+      const authVal = document.getElementById(`${uid}-auth`)?.value || '';
+      const encVal  = document.getElementById(`${uid}-enc`)?.value  || '';
       const origEn  = s.enabled;
 
-      // Only send changed fields
       const body = { sn, kind: 'wifi', ssid_index: s.index ?? i+1 };
       if (nameVal && nameVal !== s.ssid) body.ssid_name = nameVal;
       if (passVal) body.password = passVal;
       if (enVal !== origEn) body.enabled = enVal;
+      if (authVal) body.auth_mode = authVal;
+      if (encVal)  body.encrypt_mode = encVal;
 
-      if (!body.ssid_name && !body.password && body.enabled === undefined) {
+      if (!body.ssid_name && !body.password && body.enabled === undefined && !body.auth_mode && !body.encrypt_mode) {
         statusEl.textContent = 'Nothing changed'; statusEl.className = 'save-status'; return;
       }
       statusEl.textContent = '⟳ Saving…'; statusEl.className = 'save-status saving';
@@ -650,6 +728,41 @@ function renderWlan() {
       saveBtn.disabled = false;
     });
   });
+
+  // Wire Radio save buttons
+  async function saveRadio(radioIndex, chId, widthId, statusId, btnId) {
+    const statusEl = document.getElementById(statusId);
+    const btn      = document.getElementById(btnId);
+    const channel  = document.getElementById(chId)?.value    || '';
+    const width    = document.getElementById(widthId)?.value  || '';
+    if (!channel && !width) { statusEl.textContent = 'Nothing changed'; return; }
+    statusEl.textContent = '⟳ Saving…'; statusEl.className = 'save-status saving';
+    btn.disabled = true;
+    try {
+      barStart();
+      const r = await fetch(`${API}/ont/settings/wlan_radio`, {
+        method: 'POST',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sn, kind: 'wlan_radio', radio_index: radioIndex, channel, channel_width: width })
+      });
+      const data = await r.json(); barDone();
+      if (r.ok && data.ok !== false) {
+        statusEl.textContent = '✓ Saved'; statusEl.className = 'save-status ok';
+        toast(`✓ Radio ${radioIndex === 1 ? '2.4G' : '5G'} settings saved`, 'ok');
+      } else {
+        statusEl.textContent = '✗ ' + (data.error || 'OLT error'); statusEl.className = 'save-status fail';
+        toast('✗ ' + (data.error || 'Radio save failed'), 'err');
+      }
+    } catch(e) { barDone(); statusEl.textContent = '✗ Network error'; statusEl.className = 'save-status fail'; }
+    btn.disabled = false;
+  }
+
+  document.getElementById('radio24-save')?.addEventListener('click',
+    () => saveRadio(1, 'radio24-ch', 'radio24-w', 'radio24-status', 'radio24-save'));
+  if (has5G) {
+    document.getElementById('radio5-save')?.addEventListener('click',
+      () => saveRadio(2, 'radio5-ch', 'radio5-w', 'radio5-status', 'radio5-save'));
+  }
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────

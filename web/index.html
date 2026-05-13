@@ -2218,7 +2218,7 @@ async function init() {
     }
   }
   if(!checkAuth()) return;
-  applyBranding();
+  // Brand-locked in v4.0.0 — applyBranding() removed; identity is hardcoded HTML
   // Apply sidebar state
   if (isMobileView()) {
     sidebarCollapsed = true;

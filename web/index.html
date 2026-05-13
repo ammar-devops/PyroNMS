@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <link id="favicon" rel="icon" type="image/png" href="/favicon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PyroNMS — Indus Broadband</title>
+<title>PyroNMS — PyroNet Solutions</title>
 <style>
   :root {
     --bg:       #0f1117;
@@ -136,8 +136,8 @@
   .sig-good    { background: #14532d; color: #4ade80; }
   .sig-weak    { background: #451a03; color: #fbbf24; }
   .sig-bad     { background: #450a0a; color: #f87171; }
-  .sig-offline { background: rgba(236,72,153,.20); color: #f9a8d4; white-space:nowrap; }
-  .sig-fiber   { background: rgba(185,28,28,.25); color: #fca5a5; white-space:nowrap; }
+  .sig-offline { background: var(--st-power-bg); color: var(--st-power-fg); border: 1px solid var(--st-power-border); white-space:nowrap; }
+  .sig-fiber   { background: var(--st-fiber-bg); color: var(--st-fiber-fg); border: 1px solid var(--st-fiber-border); white-space:nowrap; }
   .temp-cell { color: var(--muted); }
   .serial-cell { font-family: monospace; font-size: 12px; color: var(--muted); }
   .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
@@ -146,6 +146,31 @@
   .row-refresh-icon { display:inline-block; width:11px; height:11px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; flex-shrink:0; }
   .btn-row-refresh:not(:disabled) .row-refresh-icon { border-top-color: currentColor; border-bottom-color: transparent; }
   .btn-row-refresh:disabled .row-refresh-icon, .row-refresh-icon.spin { animation: spin .7s linear infinite; border-top-color: transparent; }
+  /* ── Open Router button (per-row, fetches WAN IP from OLT, bypasses GenieACS) ── */
+  .btn-row-open {
+    background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.35);
+    color: #93c5fd; padding: 5px 10px; border-radius: 6px; font-size: 11px;
+    font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+    transition: all .15s;
+  }
+  .btn-row-open:hover:not(:disabled) { background: rgba(59,130,246,.25); border-color: rgba(59,130,246,.55); }
+  .btn-row-open:disabled { opacity: .55; cursor: wait; }
+  .btn-row-open .open-icon.spin { display: inline-block; animation: spin .7s linear infinite; }
+  /* Dim Open Router button for ONUs — still clickable to show the explanation toast */
+  .btn-row-open.is-onu {
+    background: rgba(122,128,153,.10); border-color: rgba(122,128,153,.3); color: var(--muted); cursor: help;
+  }
+  .btn-row-open.is-onu:hover { background: rgba(122,128,153,.18); }
+
+  /* ── Device type pill (Type column) ─────────────────────────────────────── */
+  .type-pill {
+    display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px;
+    font-weight: 700; letter-spacing: .4px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    border: 1px solid;
+  }
+  .type-pill.type-ont { background: rgba(34,197,94,.14);  color: var(--st-online-fg, #86efac); border-color: var(--st-online-border, rgba(34,197,94,.4)); }
+  .type-pill.type-onu { background: rgba(59,130,246,.14); color: #93c5fd;                       border-color: rgba(59,130,246,.4); }
+  .type-pill.type-unk { background: rgba(122,128,153,.14);color: var(--muted, #7a8099);          border-color: rgba(122,128,153,.3); }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #pyro-bar { position:fixed; top:0; left:0; right:0; height:4px; z-index:99999; background:rgba(34,197,94,.18); opacity:0; pointer-events:none; transition:opacity .2s ease; overflow:hidden; }
@@ -725,8 +750,8 @@
 <div class="header">
   <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="openMobileSidebar()" title="Open navigation" aria-label="Open navigation">☰</button>
   <div class="header-dot"></div>
-  <img src="/logo.png" alt="Logo" style="height:32px;object-fit:contain;opacity:.9;filter:brightness(1.1);">
-  <div style="line-height:1.2;"><div class="header-title">Indus Broadband</div><div style="font-size:10px;color:var(--muted);letter-spacing:.3px;">PyroNMS by PyroNet Solutions</div></div>
+  <img src="/logo.png" alt="PyroNet Solutions" style="height:32px;object-fit:contain;opacity:.95;filter:brightness(1.1);">
+  <div style="line-height:1.2;"><div class="header-title">PyroNet Solutions</div><div style="font-size:10px;color:var(--muted);letter-spacing:.3px;">PyroNMS — Network Management System</div></div>
   <button class="btn-refresh-all" onclick="refreshAll()">⟳ Refresh All</button>
   
   <div style="position:relative;margin-left:auto;" id="profileWrap">
@@ -847,7 +872,7 @@
     <div class="sidebar-version" style="padding:10px 14px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;">
       <div id="sidebarFooter">
         <img src="/pyronet-logo.png" style="height:18px;opacity:.5;vertical-align:middle;"> 
-        <span style="vertical-align:middle;">PyroNMS v2.9.1</span>
+        <span style="vertical-align:middle;">PyroNMS v4.0.0</span>
       </div>
     </div>
   </div>
@@ -868,44 +893,44 @@
         <!-- Stats Cards Grid -->
         <div id="dash-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;">
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(59,130,246,.12),rgba(59,130,246,.03));border:1px solid rgba(59,130,246,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');resetAdvFilters()" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#3b82f6'" onmouseout="this.style.transform='';this.style.borderColor='rgba(59,130,246,.35)'">
+          <div class="dash-card" style="background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');resetAdvFilters()" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--accent)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(59,130,246,.4)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Total ONTs</div>
-            <div style="font-size:34px;font-weight:800;color:#3b82f6;line-height:1;" id="dash-total">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--accent);line-height:1;" id="dash-total">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(34,197,94,.12),rgba(34,197,94,.03));border:1px solid rgba(34,197,94,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('active')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#22c55e'" onmouseout="this.style.transform='';this.style.borderColor='rgba(34,197,94,.35)'">
+          <div class="dash-card" style="background:var(--st-online-bg);border:1px solid var(--st-online-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('active')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-online-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-online-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Active ONTs</div>
-            <div style="font-size:34px;font-weight:800;color:#22c55e;line-height:1;" id="dash-active">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-online-fg);line-height:1;" id="dash-active">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(100,116,139,.12),rgba(100,116,139,.03));border:1px solid rgba(100,116,139,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#64748b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(100,116,139,.35)'">
+          <div class="dash-card" style="background:rgba(100,116,139,.10);border:1px solid rgba(100,116,139,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#64748b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(100,116,139,.4)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Offline ONTs</div>
-            <div style="font-size:34px;font-weight:800;color:#94a3b8;line-height:1;" id="dash-offline">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--muted);line-height:1;" id="dash-offline">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(236,72,153,.14),rgba(236,72,153,.03));border:1px solid rgba(236,72,153,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('power-failure')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ec4899'" onmouseout="this.style.transform='';this.style.borderColor='rgba(236,72,153,.4)'">
+          <div class="dash-card" style="background:var(--st-power-bg);border:1px solid var(--st-power-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('power-failure')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-power-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-power-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">⚡ Power Down</div>
-            <div style="font-size:34px;font-weight:800;color:#f9a8d4;line-height:1;" id="dash-power">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-power-fg);line-height:1;" id="dash-power">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(185,28,28,.14),rgba(185,28,28,.03));border:1px solid rgba(239,68,68,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('fiber-issue')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ef4444'" onmouseout="this.style.transform='';this.style.borderColor='rgba(239,68,68,.4)'">
+          <div class="dash-card" style="background:var(--st-fiber-bg);border:1px solid var(--st-fiber-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('fiber-issue')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-fiber-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-fiber-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Fiber Down</div>
-            <div style="font-size:34px;font-weight:800;color:#fca5a5;line-height:1;" id="dash-fiber">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-fiber-fg);line-height:1;" id="dash-fiber">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(245,158,11,.03));border:1px solid rgba(245,158,11,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('weak')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f59e0b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(245,158,11,.35)'">
+          <div class="dash-card" style="background:var(--st-weak-bg);border:1px solid var(--st-weak-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('weak')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-weak-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-weak-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">-26 to -28 dBm</div>
-            <div style="font-size:34px;font-weight:800;color:#f59e0b;line-height:1;" id="dash-weak">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-weak-fg);line-height:1;" id="dash-weak">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(249,115,22,.12),rgba(249,115,22,.03));border:1px solid rgba(249,115,22,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('critical')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f97316'" onmouseout="this.style.transform='';this.style.borderColor='rgba(249,115,22,.35)'">
+          <div class="dash-card" style="background:var(--st-bad-bg);border:1px solid var(--st-bad-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('critical')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-bad-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-bad-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">-29 dBm or Kam</div>
-            <div style="font-size:34px;font-weight:800;color:#f97316;line-height:1;" id="dash-bad">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-bad-fg);line-height:1;" id="dash-bad">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(168,85,247,.12),rgba(168,85,247,.03));border:1px solid rgba(168,85,247,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('unreg')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#a855f7'" onmouseout="this.style.transform='';this.style.borderColor='rgba(168,85,247,.35)'">
+          <div class="dash-card" style="background:var(--st-unreg-bg);border:1px solid var(--st-unreg-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('unreg')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-unreg-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-unreg-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Unregistered</div>
-            <div style="font-size:34px;font-weight:800;color:#a855f7;line-height:1;" id="dash-unreg">—</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-unreg-fg);line-height:1;" id="dash-unreg">—</div>
           </div>
 
         </div>
@@ -952,25 +977,25 @@
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Total</div>
       <div style="font-size:16px;font-weight:700;color:var(--accent);" id="fc-total">-</div>
     </div>
-    <div onclick="setStatFilter('active')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(34,197,94,.3);background:rgba(34,197,94,.08);min-width:60px;" title="Active ONTs">
+    <div onclick="setStatFilter('active')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-online-border);background:var(--st-online-bg);min-width:60px;" title="Active ONTs">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Active</div>
-      <div style="font-size:16px;font-weight:700;color:#22c55e;" id="fc-active">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-online-fg);" id="fc-active">-</div>
     </div>
-    <div onclick="setOntFilter('power-failure')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="Power Down">
+    <div onclick="setOntFilter('power-failure')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-power-border);background:var(--st-power-bg);min-width:60px;" title="Power Down">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">⚡ Power Down</div>
-      <div style="font-size:16px;font-weight:700;color:#f97316;" id="fc-power">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-power-fg);" id="fc-power">-</div>
     </div>
-    <div onclick="setOntFilter('fiber-issue')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);min-width:60px;" title="Fiber Down">
+    <div onclick="setOntFilter('fiber-issue')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-fiber-border);background:var(--st-fiber-bg);min-width:60px;" title="Fiber Down">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Fiber Down</div>
-      <div style="font-size:16px;font-weight:700;color:#ef4444;" id="fc-fiber">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-fiber-fg);" id="fc-fiber">-</div>
     </div>
-    <div onclick="setStatFilter('weak')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(245,158,11,.3);background:rgba(245,158,11,.08);min-width:60px;" title="-26 to -28 dBm">
+    <div onclick="setStatFilter('weak')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-weak-border);background:var(--st-weak-bg);min-width:60px;" title="-26 to -28 dBm">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">-26/-28</div>
-      <div style="font-size:16px;font-weight:700;color:#f59e0b;" id="fc-weak">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-weak-fg);" id="fc-weak">-</div>
     </div>
-    <div onclick="setStatFilter('bad')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="-29 dBm or worse">
+    <div onclick="setStatFilter('bad')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-bad-border);background:var(--st-bad-bg);min-width:60px;" title="-29 dBm or worse">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">-29 kam</div>
-      <div style="font-size:16px;font-weight:700;color:#f97316;" id="fc-bad">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-bad-fg);" id="fc-bad">-</div>
     </div>
   </div>
 
@@ -1014,6 +1039,8 @@
         <th style="width:70px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('temp')" id="fth-temp">Temp</th>
         <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-sn">Serial Number</th>
         <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('vlan')" id="fth-vlan">VLAN</th>
+        <th style="width:70px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('type')" id="fth-type" title="Device type — ONT (router) vs ONU (bridge), from OLT">Type</th>
+        <th style="width:120px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" title="Open ONT router web UI (resolved via OLT, bypasses GenieACS)">Open Router</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
       </tr>
     </thead>
@@ -1033,6 +1060,8 @@
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
         <th style="width:60px" onclick="sortTable('vlan')" id="th-vlan" style="cursor:pointer">VLAN</th>
+        <th style="width:70px" onclick="sortTable('type')" id="th-type" title="Device type">Type</th>
+        <th style="width:120px" title="Open ONT router web UI">Open Router</th>
         <th style="width:90px">Refresh</th>
       </tr>
     </thead>
@@ -1411,29 +1440,37 @@ function normalizeSidebarProfileMenu() {
 }
 
 // ── Theme engine ──────────────────────────────────────────────────────────
+// Status color tokens — each theme provides foreground/background/border for
+// the 6 ONT status states so dashboards & badges remain readable on any bg.
+const STATUS_DARK = {
+  '--st-online-fg':'#86efac','--st-online-bg':'rgba(34,197,94,.14)','--st-online-border':'rgba(34,197,94,.4)',
+  '--st-power-fg' :'#f9a8d4','--st-power-bg' :'rgba(236,72,153,.14)','--st-power-border':'rgba(236,72,153,.4)',
+  '--st-fiber-fg' :'#fca5a5','--st-fiber-bg' :'rgba(185,28,28,.14)','--st-fiber-border':'rgba(239,68,68,.4)',
+  '--st-weak-fg'  :'#f59e0b','--st-weak-bg'  :'rgba(245,158,11,.12)','--st-weak-border':'rgba(245,158,11,.35)',
+  '--st-bad-fg'   :'#f97316','--st-bad-bg'   :'rgba(249,115,22,.12)','--st-bad-border':'rgba(249,115,22,.35)',
+  '--st-unreg-fg' :'#a855f7','--st-unreg-bg' :'rgba(168,85,247,.12)','--st-unreg-border':'rgba(168,85,247,.35)',
+};
+const STATUS_LIGHT = {
+  '--st-online-fg':'#15803d','--st-online-bg':'rgba(22,163,74,.10)','--st-online-border':'rgba(22,163,74,.45)',
+  '--st-power-fg' :'#9d174d','--st-power-bg' :'rgba(236,72,153,.10)','--st-power-border':'rgba(190,24,93,.5)',
+  '--st-fiber-fg' :'#b91c1c','--st-fiber-bg' :'rgba(220,38,38,.10)','--st-fiber-border':'rgba(220,38,38,.55)',
+  '--st-weak-fg'  :'#b45309','--st-weak-bg'  :'rgba(217,119,6,.12)','--st-weak-border':'rgba(217,119,6,.5)',
+  '--st-bad-fg'   :'#9a3412','--st-bad-bg'   :'rgba(194,65,12,.12)','--st-bad-border':'rgba(194,65,12,.5)',
+  '--st-unreg-fg' :'#6b21a8','--st-unreg-bg' :'rgba(126,34,206,.10)','--st-unreg-border':'rgba(126,34,206,.5)',
+};
 const THEMES = {
-  pyro: {'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'},
-  dark: {'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--bg4':'#1a1a1a','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444','--yellow':'#f59e0b'},
-  light: {'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--bg4':'#dde2e8','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626','--yellow':'#d97706'},
+  pyro:  Object.assign({'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'}, STATUS_DARK),
+  dark:  Object.assign({'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--bg4':'#1a1a1a','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444','--yellow':'#f59e0b'}, STATUS_DARK),
+  light: Object.assign({'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--bg4':'#dde2e8','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626','--yellow':'#d97706'}, STATUS_LIGHT),
 };
 function applyTheme(name){const t=THEMES[name]||THEMES.pyro;Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));}
 function loadTheme(){applyTheme(localStorage.getItem('pyronms_theme')||'pyro');}
 
-// ── Dynamic Favicon (from branding) ──────────────────────────────────────
-function applyFavicon() {
-  const b = JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
-  const favicon = document.getElementById('favicon');
-  if (!favicon) return;
-  if (b.favicon) favicon.href = b.favicon;
-  else if (b.clientLogo) favicon.href = b.clientLogo;
-}
-function applyBranding(){
-  const b=JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
-  if(b.clientLogo) document.querySelectorAll('img[data-client-logo]').forEach(el=>el.src=b.clientLogo);
-  if(b.company) document.querySelectorAll('[data-company]').forEach(el=>el.textContent=b.company);
-}
+// Brand-locked: identity is fixed at PyroNet Solutions. Clear any legacy
+// branding override stored by previous versions so old logos/favicons stop
+// rendering on first load after the v4.0.0 upgrade.
+try { localStorage.removeItem('pyronms_branding'); } catch(e) {}
 loadTheme();
-applyFavicon();
 
 // Receive theme changes from settings.html iframe
 window.addEventListener('message', function(e) {
@@ -1662,6 +1699,13 @@ function getSortedFiltered(){
     else if(sortCol==='name'){va=(a.name||'').toLowerCase();vb=(b.name||'').toLowerCase();}
     else if(sortCol==='sn'){va=a.sn||'';vb=b.sn||'';}
     else if(sortCol==='vlan'){va=parseInt(a.vlan)||0;vb=parseInt(b.vlan)||0;return(va-vb)*sortDir;}
+    else if(sortCol==='type'){
+      // ONT first (most useful), then ONU, then ? (offline/unknown)
+      const order = {'ONT': 0, 'ONU': 1, '?': 2};
+      va = order[a.device_type] ?? 3;
+      vb = order[b.device_type] ?? 3;
+      return (va-vb)*sortDir;
+    }
     else return 0;
     return va<vb?-sortDir:va>vb?sortDir:0;
   });
@@ -2864,6 +2908,12 @@ function renderTable() {
         <td class="temp-cell">${temp}</td>
         <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
         <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
+        <td style="text-align:center;">${deviceTypePill(o.device_type)}</td>
+        <td onclick="event.stopPropagation()" style="text-align:center;">
+          <button class="btn-row-open ${o.device_type === 'ONU' ? 'is-onu' : ''}" onclick="openRouter('${escAttr(o.sn)}','${escAttr(o.pon || '')}','${escAttr(o.ont_id || '')}','${escAttr(o.device_type || '')}',this)" title="${o.device_type === 'ONU' ? 'Bridge ONU — no router web UI available' : 'Open ONT router web UI'}">
+            <span class="open-icon">🛜</span> Open Router
+          </button>
+        </td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
           <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span class="row-refresh-icon"></span>Refresh</button>
         </td>
@@ -3135,6 +3185,56 @@ function signalBadge(o) {
   if (rx >= -26)        return { cls:'sig-good',  text: `${rx} dBm` };
   if (rx >= -28)        return { cls:'sig-weak',  text: `${rx} dBm` };
   return                       { cls:'sig-bad',   text: `${rx} dBm` };
+}
+
+// ── Device type pill (ONT router vs ONU bridge) ─────────────────────────────
+function deviceTypePill(type) {
+  const t = String(type || '?').toUpperCase();
+  if (t === 'ONT') return `<span class="type-pill type-ont" title="Router CPE — has WAN IP, web UI accessible">ONT</span>`;
+  if (t === 'ONU') return `<span class="type-pill type-onu" title="L2 bridge — no router web UI">ONU</span>`;
+  return `<span class="type-pill type-unk" title="Unknown (offline) — open the popup to detect">?</span>`;
+}
+
+// ── Open Router: resolve WAN IP from OLT (cache → SSH live), open in new tab ─
+// Bypasses GenieACS entirely — uses /ont/wan-ip endpoint which reads from
+// InfluxDB worker cache first, then falls back to direct SSH `display ont wan-info`.
+// For known ONUs (bridge mode) we short-circuit without an SSH round-trip.
+async function openRouter(sn, pon, ont_id, deviceType, btn) {
+  if (!sn || !btn) return;
+
+  // Short-circuit ONUs — they have no router web UI by definition
+  if (String(deviceType || '').toUpperCase() === 'ONU') {
+    if (typeof toast === 'function') toast(`ℹ This is an ONU (bridge mode) — no router web UI on the ONT itself. The customer's downstream router has its own admin page.`, 'err');
+    return;
+  }
+
+  const icon = btn.querySelector('.open-icon');
+  const origIcon = icon ? icon.textContent : '🛜';
+  btn.disabled = true;
+  if (icon) { icon.textContent = '⟳'; icon.classList.add('spin'); }
+  try {
+    const qs = new URLSearchParams({ sn, pon: pon || '', ont_id: ont_id || '' }).toString();
+    const r = await fetch(`${API}/ont/wan-ip?${qs}`, { headers: authHeaders() });
+    const data = await r.json();
+    const ip = (data && data.ip) || '';
+    if (!ip || ip === '-' || ip === '0.0.0.0') {
+      let reason = 'ONT may be offline, in bridge mode, or WAN cache not yet populated';
+      if (data.status) reason = `WAN status: ${data.status}`;
+      if (data.error)  reason = data.error;
+      if (typeof toast === 'function') toast(`✗ No WAN IP for ${sn} — ${reason}`, 'err');
+      else alert(`No WAN IP available for ${sn}\n${reason}`);
+      return;
+    }
+    window.open(`http://${ip}/`, '_blank', 'noopener,noreferrer');
+    const src = data.source === 'cache' ? 'cache' : (data.source || 'live SSH');
+    if (typeof toast === 'function') toast(`🛜 Opening ${ip} (from ${src})`, 'ok');
+  } catch (e) {
+    if (typeof toast === 'function') toast(`✗ Failed to resolve WAN IP: ${e.message}`, 'err');
+    else alert('Failed to resolve WAN IP: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    if (icon) { icon.textContent = origIcon; icon.classList.remove('spin'); }
+  }
 }
 
 async function refreshRow(sn, btn) {

@@ -4,16 +4,17 @@
 
 ### Network Management System for ISPs
 
-[![Version](https://img.shields.io/badge/version-2.9.1-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
-[![Status](https://img.shields.io/badge/status-active-success.svg)]()
-[![License](https://img.shields.io/badge/license-Private-red.svg)]()
+[![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
+[![Status](https://img.shields.io/badge/status-production-success.svg)]()
+[![License](https://img.shields.io/badge/license-Proprietary-red.svg)]()
 [![Built for](https://img.shields.io/badge/OLT-Huawei%20MA5603T-orange.svg)]()
 [![Python](https://img.shields.io/badge/python-3.x-yellow.svg)](https://www.python.org/)
 [![InfluxDB](https://img.shields.io/badge/InfluxDB-2.x-22ADF6.svg)](https://www.influxdata.com/)
+[![TR-069](https://img.shields.io/badge/TR--069-GenieACS-9333ea.svg)](https://genieacs.com/)
 
-**A purpose-built NMS for ISPs running Huawei GPON OLTs — real-time ONT monitoring, fault detection, and full provisioning lifecycle in one dashboard.**
+**A purpose-built NMS for ISPs running Huawei GPON OLTs — real-time ONT monitoring, fault detection, TR-069 device management, and full provisioning lifecycle in one dashboard.**
 
-🏢 *Developed by [PyroNet Solutions](https://github.com/PyroNet-Solutions)* &nbsp;•&nbsp; 🌐 *Powering Indus Broadband Pvt Ltd*
+🏢 *Developed and owned by [PyroNet Solutions](https://github.com/PyroNet-Solutions)* &nbsp;•&nbsp; 🔒 *Brand-locked productized release*
 
 </div>
 
@@ -141,24 +142,35 @@ PyroNMS/
 | ⏳ v2.8.2  | Refresh buttons overhaul — top progress bar, button spinners, fixed row Refresh icon |
 | 🌐 v2.9.0  | ONT WAN + WLAN configuration view in popup (read-only, no TR-069) |
 | 🩹 v2.9.1  | Hotfix: WLAN card graceful degradation for HG8245 / bridge-mode ONTs that don't expose WLAN via OLT CLI |
+| 🛠️ v3.0.0  | Edit mode for PPPoE credentials and WiFi password in popup            |
+| 🪟 v3.1.0  | Full-page ONT Manager (U2000-style) with 4 tabs                       |
+| 📡 v3.2.0  | Extended WLAN settings — auth mode, encryption, channel dropdowns     |
+| 🔁 v3.3.0  | GenieACS popup restored; SSH fallback for offline ONTs                |
+| 🎯 v3.4.0  | Router-admin popup, single Apply button, Clients tab, full data parse |
+| 🚀 **v4.0.0** | **Productized release** — brand lock, Open Router column, ONT/ONU type column, theme-aware status colors |
 
-### 🔭 Current Release — `v2.9.1`
+### 🔭 Current Release — `v4.0.0` (Productized)
 
-- 🩹 **WLAN unsupported graceful UI** — HG8245 and bridge-mode ONUs that return `Failure: The ONT can not support` to `display ont wlan-info` now show a clear explanatory message instead of a blank card
-- 🌐 **WAN Configuration card** — mode pill (PPPoE / Static / Bridge / IP-Routed), IPv4 address, subnet, gateway, DNS1/DNS2, manage VLAN, MAC, NAT, connection status, service type — all read via OLT SSH
-- 📶 **WLAN Configuration card** — per-band sub-cards with auto-detected 2.4G / 5G bands (Huawei SSID-Index 1-4 → 2.4G, 5-8 → 5G), SSID name, wireless standard, enabled/disabled state, client counts
-- 🚫 **GenieACS / TR-069 dependency removed** — all config reads use OLT SSH only; GenieACS services stopped + disabled on the live host (binaries kept for emergency re-enable)
-- 🧠 **Honest UI** — fields the OLT does NOT expose (PPPoE password, WiFi password, security mode, channel/width, country) are shown with "stored on ONT — Phase 2" placeholders rather than hidden
-- ⚙️ **Backend** — new `GET /ont/config?sn=<sn>` endpoint, new SSH parsers (`_parse_wan_full`, `_parse_wlan_full`, `_parse_ont_ipconfig`), reliable command sequencing with hard-drain between `display ont …` commands to avoid Huawei pager bleed-over
+- 🔒 **Brand-locked** — Product identity, logo, and company branding fixed to **PyroNet Solutions**. Branding edit UI removed from settings. White-label resale prevented.
+- 🌐 **Open Router column** — Per-row 🛜 button in ONT list that opens the customer's router web UI (`http://<wan-ip>`). Resolves WAN IP via **OLT direct** (InfluxDB worker cache → SSH `display ont wan-info` fallback). **Zero GenieACS dependency.**
+- 🏷️ **ONT/ONU column** — New Type column showing whether each device is an **ONT** (router CPE) or **ONU** (bridge L2). Derived from cached WAN state; confirmed via OLT `display ont info by-sn` when popup opens. Smart short-circuit — clicking Open Router on an ONU shows an explanatory toast instead of a wasted SSH call.
+- 🎨 **Theme-aware status colors** — Fiber Down, Power Down, Weak Signal, Critical, Unregistered badges now adapt to Light / Dark / Pyro themes. Status pill colors come from per-theme CSS tokens (`--st-{state}-fg/bg/border`) — readable on every background.
+- 🛰️ **GenieACS popup overhaul** (v3.3 → v3.4) — Router-admin style popup with sidebar nav (Status · Internet · LAN · Wi-Fi · Clients · Management), iOS-style toggles, security/channel/TX-power dropdowns, **single "Apply Changes" button** in header (no more per-field saves), pulsing status dot, last-seen relative time, source badge (`✓ GenieACS · editable` vs `⚠ OLT SSH · read-only`).
+- 👥 **Clients tab** — Per-ONT table of every connected device (LAN ethernet + Wi-Fi), merged from `LANDevice.1.Hosts.Host.*` and `WLAN.AssociatedDevice.*`, deduped by MAC. Stat tiles (Total · Wi-Fi · Ethernet · Active), RSSI signal pill colored by strength (green ≥ -50 dBm, amber -50…-70, red < -70).
+- 🔐 **ONT Web Admin Accounts** — When firmware exposes `UserInterface.X_HW_WebUserInfo`, popup shows admin/user accounts with editable password fields.
+- 🌍 **3rd-party ONT SN matching** — `find_device_id()` handles both raw-hex (Huawei) and ASCII-decoded SNs (XPON, ZTEG, etc).
+- 📡 **SNMP-first optical signal** — `get_ont_full_info` queries `hwGponDeviceOntOpticalInfoTable` col 4 (RxPower) via SNMP for fast read, falls back to SSH for TX power and temperature.
+- 🩹 **Lightweight PPPoE write path** (`kind='pppoe_creds'`) — fixed v3.0.0 bug where editing credentials triggered full re-provisioning and broke the WAN session.
 
 ---
 
-## 🛣️ Roadmap
+## 🛣️ Roadmap (post-v4.0.0)
 
-- 🔌 SNMP-first polling architecture (Phases 1–6 in progress)
-- 🤖 GenieACS deeper integration (TR-069 task automation)
 - 📡 Alerting & on-call notifications (email / Telegram / webhook)
 - 📊 Customer-facing portal (signal status, plan, support tickets)
+- 🐳 Docker / one-line installer
+- 🤖 GitHub Actions CI (lint, test, deploy preview)
+- 🔑 License-key gating for commercial deployments
 
 ---
 

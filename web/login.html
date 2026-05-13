@@ -184,13 +184,13 @@ body {
 </head>
 <body>
 
-<!-- ── BRANDING — customize this block ── -->
+<!-- ── BRANDING (locked to PyroNet Solutions in v4.0.0) ── -->
 <div class="brand">
   <div class="brand-logo" style="background:none;border:none;width:120px;height:120px;">
-    <img src="/logo.png" data-client-logo alt="Indus Broadband" style="width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 12px #26d97f44);">
+    <img src="/logo.png" alt="PyroNet Solutions" style="width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 12px #26d97f44);">
   </div>
-  <div class="brand-name" data-company>Indus Broadband Pvt Ltd</div>
-  <div class="brand-sub">Powered by <span data-sysname>PyroNMS</span></div>
+  <div class="brand-name">PyroNet Solutions</div>
+  <div class="brand-sub">PyroNMS — Network Management System</div>
 </div>
 <!-- ── END BRANDING ── -->
 
@@ -220,16 +220,16 @@ body {
   </button>
 
   <div class="footer">
-    PyroNMS v2.2 &nbsp;·&nbsp; Indus Broadband Pvt Ltd
+    PyroNMS v4.0.0 &nbsp;·&nbsp; PyroNet Solutions
   </div>
 </div>
 
 <div style="text-align:center;margin-top:20px;opacity:.5;">
   <img src="/pyronet-logo.png" alt="PyroNet Solutions" style="height:28px;object-fit:contain;filter:brightness(1.2);">
-  <div style="font-size:10px;color:#4a5580;margin-top:4px;">PyroNMS · Powered by PyroNet Solutions</div>
+  <div style="font-size:10px;color:#4a5580;margin-top:4px;">PyroNMS · © PyroNet Solutions</div>
 </div>
 
-<div class="version-badge">v2.2</div>
+<div class="version-badge">v4.0.0</div>
 
 <script>
 const API = 'http://172.20.101.160:8088';
@@ -241,11 +241,8 @@ const THEMES = {
 (function(){
   const t = THEMES[localStorage.getItem('pyronms_theme')||'pyro']||THEMES.pyro;
   Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));
-  const b = JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
-  if (b.clientLogo) document.querySelectorAll('img[data-client-logo]').forEach(el=>el.src=b.clientLogo);
-  if (b.company) document.querySelectorAll('[data-company]').forEach(el=>el.textContent=b.company);
-  const fav=document.getElementById('favicon');
-  if(fav){if(b.favicon)fav.href=b.favicon;else if(b.clientLogo)fav.href=b.clientLogo;}
+  // Brand-locked (v4.0.0+): wipe legacy branding overrides on first load
+  try { localStorage.removeItem('pyronms_branding'); } catch(e) {}
 })();
 
 // If already logged in, redirect to dashboard

@@ -192,19 +192,41 @@ from(bucket: "{INFLUX_BUCKET}")
             detail_status = "fiber-issue"
         else:
             detail_status = "offline"
+        # ── Device type heuristic (ONT router vs ONU bridge) ──────────
+        # Source-of-truth is OLT's `display ont info by-sn` (used by /ont/info),
+        # but doing that for every list refresh is too expensive. We infer from
+        # WAN-cache state instead — fast for the common case:
+        #   online + has WAN IP/status        → ONT (routes WAN traffic)
+        #   online + empty WAN cache          → ONU (bridge, no L3 to expose)
+        #   offline / power-fail / fiber-down → '?' (can't determine without OLT call)
+        # When the user opens the popup, /ont/info refreshes this with the real
+        # OntProductDescription → device_type override.
+        _wan_ip   = (wan.get("wan_ip") or "").strip()
+        _wan_stat = (wan.get("wan_status") or "").strip().lower()
+        if is_online:
+            if _wan_ip and _wan_ip != "-" and _wan_ip != "0.0.0.0":
+                device_type = "ONT"
+            elif _wan_stat in ("connected", "connecting", "disconnected") and _wan_stat:
+                device_type = "ONT"   # has WAN config, just no IP yet
+            else:
+                device_type = "ONU"   # online with no WAN at all → bridge
+        else:
+            device_type = "?"
+
         onts.append({
-            "pon":        s["pon"],
-            "ont_id":     s.get("ont_id", ""),
-            "name":       s["name"],
-            "sn":         sn,
-            "status":     detail_status,
-            "down_cause": cause,
-            "rx":         rx,
-            "temp":       temp,
-            "vlan":       s.get("vlan", ""),
-            "wan_ip":     wan.get("wan_ip", ""),
-            "wan_status": wan.get("wan_status", ""),
-            "wan_vlan":   wan.get("wan_vlan", ""),
+            "pon":         s["pon"],
+            "ont_id":      s.get("ont_id", ""),
+            "name":        s["name"],
+            "sn":          sn,
+            "status":      detail_status,
+            "down_cause":  cause,
+            "rx":          rx,
+            "temp":        temp,
+            "vlan":        s.get("vlan", ""),
+            "wan_ip":      wan.get("wan_ip", ""),
+            "wan_status":  wan.get("wan_status", ""),
+            "wan_vlan":    wan.get("wan_vlan", ""),
+            "device_type": device_type,
         })
     return onts
 

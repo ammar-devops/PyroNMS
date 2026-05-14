@@ -148,23 +148,28 @@ PyroNMS/
 | 🔁 v3.3.0  | GenieACS popup restored; SSH fallback for offline ONTs                |
 | 🎯 v3.4.0  | Router-admin popup, single Apply button, Clients tab, full data parse |
 | 🚀 **v4.0.0** | **Productized release** — brand lock, Open Router column, ONT/ONU type column, theme-aware status colors |
+| 🔒 **v4.1.0** | **Security & stability patch** — auth on all data endpoints, BrokenPipe crash fix, bulk actions fix, dynamic API URL, provisioning hardening |
 
-### 🔭 Current Release — `v4.0.0` (Productized)
+### 🔭 Current Release — `v4.1.0` (Final Stable)
 
-- 🔒 **Brand-locked** — Product identity, logo, and company branding fixed to **PyroNet Solutions**. Branding edit UI removed from settings. White-label resale prevented.
-- 🌐 **Open Router column** — Per-row 🛜 button in ONT list that opens the customer's router web UI (`http://<wan-ip>`). Resolves WAN IP via **OLT direct** (InfluxDB worker cache → SSH `display ont wan-info` fallback). **Zero GenieACS dependency.**
-- 🏷️ **ONT/ONU column** — New Type column showing whether each device is an **ONT** (router CPE) or **ONU** (bridge L2). Derived from cached WAN state; confirmed via OLT `display ont info by-sn` when popup opens. Smart short-circuit — clicking Open Router on an ONU shows an explanatory toast instead of a wasted SSH call.
-- 🎨 **Theme-aware status colors** — Fiber Down, Power Down, Weak Signal, Critical, Unregistered badges now adapt to Light / Dark / Pyro themes. Status pill colors come from per-theme CSS tokens (`--st-{state}-fg/bg/border`) — readable on every background.
-- 🛰️ **GenieACS popup overhaul** (v3.3 → v3.4) — Router-admin style popup with sidebar nav (Status · Internet · LAN · Wi-Fi · Clients · Management), iOS-style toggles, security/channel/TX-power dropdowns, **single "Apply Changes" button** in header (no more per-field saves), pulsing status dot, last-seen relative time, source badge (`✓ GenieACS · editable` vs `⚠ OLT SSH · read-only`).
-- 👥 **Clients tab** — Per-ONT table of every connected device (LAN ethernet + Wi-Fi), merged from `LANDevice.1.Hosts.Host.*` and `WLAN.AssociatedDevice.*`, deduped by MAC. Stat tiles (Total · Wi-Fi · Ethernet · Active), RSSI signal pill colored by strength (green ≥ -50 dBm, amber -50…-70, red < -70).
-- 🔐 **ONT Web Admin Accounts** — When firmware exposes `UserInterface.X_HW_WebUserInfo`, popup shows admin/user accounts with editable password fields.
-- 🌍 **3rd-party ONT SN matching** — `find_device_id()` handles both raw-hex (Huawei) and ASCII-decoded SNs (XPON, ZTEG, etc).
-- 📡 **SNMP-first optical signal** — `get_ont_full_info` queries `hwGponDeviceOntOpticalInfoTable` col 4 (RxPower) via SNMP for fast read, falls back to SSH for TX power and temperature.
-- 🩹 **Lightweight PPPoE write path** (`kind='pppoe_creds'`) — fixed v3.0.0 bug where editing credentials triggered full re-provisioning and broke the WAN session.
+**Tag:** `final-stable-20260514-2059` · **Commit:** `f5ff21bbe6818d97280fcf40d04a7af1901e9493`
+
+- 🔒 **Security patch** — `GET /onts`, `GET /ont/live`, `GET /server/stats` now require authentication (were fully open)
+- 🛠️ **Crash fix** — `send_json()` BrokenPipe guard prevents API process from restarting on every client disconnect
+- ✅ **Bulk actions fix** — `POST /ont/action` (enable/disable/reset/delete) was dead code (`if` vs `elif` bug) — now works
+- 🔧 **Provisioning hardening** — `provision_ont()` always returns 4-tuple, description field sanitized, batch `save` in delete
+- 🌐 **Dynamic API URL** — frontend no longer hardcodes server IP; auto-detects from `window.location.hostname`
+- 📚 **Documentation** — Added `docs/release-notes.md`, `docs/provisioning-flow.md`, `docs/deployment.md`, `docs/troubleshooting.md`
+
+#### Previous highlights (v4.0.0)
+- 🔒 **Brand-locked** — Product identity fixed to **PyroNet Solutions**
+- 🌐 **Open Router column** — Per-row button to open customer's router UI
+- 🏷️ **ONT/ONU type column** — Colored ONT / ONU / ? badges
+- 🎨 **Theme-aware status colors** — All badge states adapt to Light / Dark / Pyro theme
 
 ---
 
-## 🛣️ Roadmap (post-v4.0.0)
+## 🛣️ Roadmap (post-v4.1.0)
 
 - 📡 Alerting & on-call notifications (email / Telegram / webhook)
 - 📊 Customer-facing portal (signal status, plan, support tickets)

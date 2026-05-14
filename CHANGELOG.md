@@ -1,5 +1,41 @@
 # Changelog
 
+## v4.1.0 (2026-05-15) — Security patch & stability release 🔒
+
+**Tag:** `final-stable-20260514-2059` · **Commit:** `f5ff21bbe6818d97280fcf40d04a7af1901e9493`
+
+### Security fixes
+- `GET /onts` — added `require_auth()` (was fully open; exposed all ONT serial numbers, customer names, WAN IPs)
+- `GET /ont/live` — added `require_auth()` (was open)
+- `GET /server/stats` — added `require_auth()` (was open; exposed server CPU/RAM/disk)
+
+### Critical bug fixes
+- `send_json()` — wrapped `wfile.write()` in `try/except (BrokenPipeError, ConnectionResetError)`; API no longer restarts on client disconnect
+- `POST /ont/action` — changed `if` to `elif`; bulk enable/disable/reset/delete was always returning 404 (dead code)
+- `/olt/test` — fixed `NameError` (`olt_helpers` referenced instead of `olt`)
+- `/olt/stats`, `/olt/cpu`, `/server/history` — replaced 3× hardcoded `"my-super-secret-token"` with `INFLUX_TOKEN` constant
+
+### Provisioning fixes
+- `provision_ont()` — normalised to always return 4-tuple; failure path was returning 3-tuple causing caller crash
+- `provision_ont()` — sanitize `description` field (strip `"` and `'`, cap at 64 chars)
+- `delete_onts()` — moved `save` to after all deletions instead of per-ONT (reduces OLT flash write cycles)
+
+### Infrastructure
+- `ont-api.service` — removed duplicate `Restart=always` and `RestartSec=5` directives
+- Created `/opt/ont-monitor/workers/live_check.py` stub (missing file caused silent subprocess failures)
+
+### Frontend
+- Dynamic API URL: `const API = \`http://${window.location.hostname}:8088\`` (was hardcoded to `172.20.101.160`)
+- Removed dead `openRouter(sn, pon, btn)` 3-arg function (referenced undefined `ontId`)
+- Commented out 3 production `console.log()` statements
+- Version display updated to `v4.1.0` across sidebar, login, settings About card
+
+### Documentation
+- New: `docs/release-notes.md`, `docs/provisioning-flow.md`, `docs/deployment.md`, `docs/troubleshooting.md`
+- README updated: Current Release section, version history table, roadmap heading
+
+---
+
 ## v4.0.0 (2026-05-13) — Productized release 🚀
 
 ### Brand lock

@@ -135,19 +135,70 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
     <div id="themeMsg" class="msg"></div>
   </div>
 
+  <!-- Branding (superadmin only) -->
+  <div class="settings-card" id="brandingCard" style="display:none;">
+    <div class="card-title">🏢 Branding <span style="font-size:11px;color:var(--muted);font-weight:400;">(Superadmin only)</span></div>
+    <div class="card-sub">Customize company name, logos — applies to all pages for all users</div>
+    <div class="form-grid" style="margin-bottom:20px;">
+      <div class="form-group"><label class="form-label">Company Name</label><input class="form-input" id="b-company" placeholder="Indus Broadband Pvt Ltd"></div>
+
+      <div class="form-group" style="grid-column:1/-1;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:10px 14px;">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:4px;">Powered By (Permanent)</div>
+        <div style="font-size:14px;font-weight:600;color:var(--accent);">PyroNMS by PyroNet Solutions</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">This cannot be changed — product identity is protected</div>
+      </div>
+      <div class="form-group"><label class="form-label">Support Email</label><input class="form-input" id="b-email" placeholder="support@pyronet.pk"></div>
+
+    </div>
+    <hr class="card-divider">
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:14px;">Logo Upload</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div>
+        <div class="logo-preview-label">Client Logo (header + login page)</div>
+        <div class="logo-upload-area">
+          <input type="file" accept="image/*" onchange="previewLogo(this,'clientPreview','client')">
+          <div style="font-size:28px;margin-bottom:8px;">🖼</div>
+          <div style="font-size:13px;color:var(--muted);">Click to upload client logo</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">PNG · transparent background recommended</div>
+        </div>
+        <div class="logo-preview-box"><div class="logo-preview-label">Preview</div><img id="clientPreview" src="/logo.png" alt="Client"></div>
+      </div>
+
+    </div>
+    <hr class="card-divider">
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:14px;">Favicon</div>
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:16px;align-items:start;">
+      <div>
+        <div class="logo-upload-area" style="padding:16px;">
+          <input type="file" accept="image/png,image/ico,image/jpeg,image/webp" onchange="previewLogo(this,'faviconPreview','favicon')">
+          <div style="font-size:22px;margin-bottom:6px;">🌐</div>
+          <div style="font-size:12px;color:var(--muted);">Click to upload favicon</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">PNG · 32×32px recommended</div>
+        </div>
+      </div>
+      <div class="logo-preview-box">
+        <div class="logo-preview-label">Favicon Preview</div>
+        <img id="faviconPreview" src="/favicon.png" alt="Favicon" style="max-height:32px;">
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">Shows in browser tab</div>
+      </div>
+    </div>
+    <div id="brandMsg" class="msg"></div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn-save" onclick="saveBranding()">💾 Save Branding</button>
+      <button class="btn-danger" onclick="resetBranding()">↺ Reset Defaults</button>
+    </div>
+  </div>
+
   <!-- About -->
   <div class="settings-card">
     <div class="card-title">ℹ About PyroNMS</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;color:var(--text);">
       <div><span style="color:var(--muted);">Product:</span> <strong>PyroNMS</strong></div>
-      <div><span style="color:var(--muted);">Version:</span> <strong>v4.0.0</strong></div>
+      <div><span style="color:var(--muted);">Version:</span> <strong>v2.3</strong></div>
       <div><span style="color:var(--muted);">Developer:</span> <strong style="color:var(--accent);">PyroNet Solutions 🔒</strong></div>
       <div><span style="color:var(--muted);">License:</span> <strong>Proprietary</strong></div>
-      <div><span style="color:var(--muted);">Owner:</span> <strong>PyroNet Solutions</strong></div>
-      <div><span style="color:var(--muted);">Build:</span> <strong>2026.05.13</strong></div>
-    </div>
-    <div style="margin-top:14px;padding:10px 12px;background:rgba(59,130,246,.08);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;font-size:11.5px;color:var(--muted);line-height:1.5;">
-      🔒 <strong>Brand-locked release.</strong> Product identity, logo, and company branding are fixed to PyroNet Solutions and cannot be changed by deployments.
+      <div><span style="color:var(--muted);">Client:</span> <strong id="aboutClient">Indus Broadband</strong></div>
+      <div><span style="color:var(--muted);">Build:</span> <strong>2026.05.06</strong></div>
     </div>
   </div>
 
@@ -155,6 +206,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 <script>
 const API = 'http://172.20.101.160:8088';
 let currentUser = null;
+let logoData = {client:null, dev:null};
 
 const THEMES = {
   pyro: {'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'},
@@ -183,6 +235,53 @@ function selectTheme(name){
   setTimeout(()=>msg.className='msg',3000);
 }
 
+function loadBranding(){
+  const b=JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
+  document.getElementById('b-company').value = b.company||'Indus Broadband Pvt Ltd';
+
+  document.getElementById('b-email').value   = b.email||'';
+  document.getElementById('aboutClient').textContent = b.company||'Indus Broadband Pvt Ltd';
+  if(b.clientLogo){document.getElementById('clientPreview').src=b.clientLogo;document.querySelector('img[data-client-logo]').src=b.clientLogo;}
+  if(b.favicon) document.getElementById('faviconPreview').src=b.favicon;
+}
+
+function saveBranding(){
+  const existing=JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
+  const b={
+    company:  document.getElementById('b-company').value.trim(),
+
+    email:    document.getElementById('b-email').value.trim(),
+    clientLogo: logoData.client || existing.clientLogo || null,
+    favicon:    logoData.favicon || existing.favicon || null,
+  };
+  localStorage.setItem('pyronms_branding',JSON.stringify(b));
+  document.getElementById('aboutClient').textContent=b.company;
+  const msg=document.getElementById('brandMsg');
+  msg.textContent='✓ Branding saved — reload dashboard to apply'; msg.className='msg ok';
+}
+
+function resetBranding(){
+  if(!confirm('Reset all branding to PyroNMS defaults?'))return;
+  localStorage.removeItem('pyronms_branding');
+  loadBranding();
+  const msg=document.getElementById('brandMsg');
+  msg.textContent='✓ Reset to defaults'; msg.className='msg ok';
+}
+
+function previewLogo(input,previewId,type){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    document.getElementById(previewId).src=e.target.result;
+    logoData[type]=e.target.result;
+    // Live favicon preview
+    if(type==='favicon'){
+      document.getElementById('favicon').href=e.target.result;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
 async function init(){
   const token=getToken();
   if(!token){window.location.href='/login.html';return;}
@@ -190,11 +289,11 @@ async function init(){
   if(!r.ok){window.location.href='/login.html';return;}
   currentUser=await r.json();
   document.getElementById('hUser').textContent=currentUser.full_name||currentUser.username;
+  if(currentUser.role==='superadmin') document.getElementById('brandingCard').style.display='block';
   const saved=localStorage.getItem('pyronms_theme')||'pyro';
   applyTheme(saved);
   document.getElementById('theme-'+saved)?.classList.add('active');
-  // Brand-locked: wipe any stale localStorage branding from older versions
-  localStorage.removeItem('pyronms_branding');
+  loadBranding();
 }
 init();
 </script>

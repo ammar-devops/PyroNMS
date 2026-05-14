@@ -6,7 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PyroNMS — User Management</title>
 <style>
-/* Defaults match Pyro theme; runtime applyTheme() overrides per user setting */
 :root {
   --bg:#0b0e18;--bg2:#12151f;--bg3:#1a1e2e;--bg4:#222638;
   --border:#2c3150;--text:#dde3f5;--muted:#6b7394;
@@ -29,24 +28,19 @@ table{width:100%;border-collapse:collapse;}
 .table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
 .table-scroll table{min-width:820px;}
 th{background:var(--bg2);color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);}
-td{padding:13px 14px;border-bottom:1px solid var(--border);vertical-align:middle;}
+td{padding:11px 14px;border-bottom:1px solid #1c2035;vertical-align:middle;}
 tr:hover td{background:var(--bg3);}
-.role-badge{display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;border:1px solid;}
-.role-superadmin{background:rgba(59,130,246,.14);color:#6ba3f7;border-color:rgba(59,130,246,.4);}
-.role-admin{background:rgba(34,197,94,.14);color:#4dffaa;border-color:rgba(34,197,94,.4);}
-.role-viewer{background:rgba(245,158,11,.14);color:#f5c84a;border-color:rgba(245,158,11,.4);}
-.role-pon_operator{background:rgba(168,85,247,.14);color:#c084fc;border-color:rgba(168,85,247,.4);}
-.status-pill{display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:3px 9px;font-size:11px;font-weight:700;border:1px solid;}
-.status-pill.on{background:rgba(34,197,94,.14);color:#26d97f;border-color:rgba(34,197,94,.4);}
-.status-pill.off{background:rgba(122,128,153,.14);color:var(--muted);border-color:rgba(122,128,153,.3);}
-.status-pill::before{content:'●';font-size:8px;}
-.edit-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;font-family:ui-monospace,"SF Mono",Menlo,monospace;color:var(--muted);}
-.edit-pill.yes{color:#26d97f;}
-.edit-pill.no{color:var(--muted);}
-.btn-edit{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
-.btn-edit:hover{background:var(--bg4);border-color:var(--accent);color:var(--accent);}
-.btn-del{background:rgba(242,92,92,.10);border:1px solid rgba(242,92,92,.35);color:var(--red);border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;margin-left:6px;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
-.btn-del:hover{background:rgba(242,92,92,.25);border-color:var(--red);}
+.role-badge{display:inline-block;border-radius:5px;padding:2px 9px;font-size:11px;font-weight:700;}
+.role-superadmin{background:#1a2550;color:#6ba3f7;}
+.role-admin{background:#1a3a2a;color:#4dffaa;}
+.role-viewer{background:#2a2a1a;color:#f5c84a;}
+.role-pon_operator{background:#2a1a2a;color:#c084fc;}
+.status-on{color:var(--green);font-weight:600;}
+.status-off{color:var(--red);}
+.btn-edit{background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;}
+.btn-edit:hover{border-color:var(--accent);color:var(--accent);}
+.btn-del{background:#2d0e0e;border:1px solid #f25c5c44;color:var(--red);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;margin-left:6px;}
+.btn-del:hover{background:#3d1010;}
 
 /* Modal */
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;align-items:center;justify-content:center;}
@@ -91,18 +85,6 @@ tr:hover td{background:var(--bg3);}
 </head>
 <body>
 <script>
-  // ── Theme engine (synced with parent index.html via postMessage) ────────
-  const THEMES = {
-    pyro:  {'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'},
-    dark:  {'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--bg4':'#1a1a1a','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444','--yellow':'#f59e0b'},
-    light: {'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--bg4':'#dde2e8','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626','--yellow':'#d97706'},
-  };
-  function applyTheme(name){const t=THEMES[name]||THEMES.pyro;Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));}
-  applyTheme(localStorage.getItem('pyronms_theme')||'pyro');
-  window.addEventListener('message', function(e) {
-    if (e.data && e.data.type === 'setTheme') applyTheme(e.data.name);
-  });
-
   if (window.location.search.includes('embedded=1')) {
     document.documentElement.classList.add('embedded');
     document.addEventListener('DOMContentLoaded', function() {
@@ -116,7 +98,7 @@ tr:hover td{background:var(--bg3);}
 
 <div class="header">
   <img src="/pyronet-logo.png" alt="PyroNet" style="height:28px;object-fit:contain;opacity:.8;filter:brightness(1.2);">
-  <div style="line-height:1.2;"><div class="header-title">⚙ User Management</div><div style="font-size:10px;color:var(--muted);">PyroNMS · PyroNet Solutions</div></div>
+  <div style="line-height:1.2;"><div class="header-title">⚙ User Management</div><div style="font-size:10px;color:var(--muted);">PyroNMS · Indus Broadband</div></div>
   <a href="/index.html" class="header-back">← Dashboard</a>
   <div class="user-info">
     <span id="headerUser">—</span>
@@ -257,13 +239,13 @@ function renderUsers(users) {
       <td style="font-weight:600">${u.username}</td>
       <td>${u.full_name||'—'}</td>
       <td><span class="role-badge ${roleClass}">${u.role}</span></td>
-      <td style="font-size:12px;font-family:ui-monospace,monospace">${pons}</td>
-      <td><span class="edit-pill ${u.can_edit?'yes':'no'}">${u.can_edit ? '✓ Yes' : '✗ No'}</span></td>
-      <td><span class="status-pill ${u.active?'on':'off'}">${u.active?'Active':'Disabled'}</span></td>
+      <td style="font-size:12px;font-family:monospace">${pons}</td>
+      <td>${u.can_edit ? '<span style="color:var(--green)">✓ Yes</span>' : '<span style="color:var(--muted)">✗ No</span>'}</td>
+      <td class="${u.active?'status-on':'status-off'}">${u.active?'Active':'Disabled'}</td>
       <td style="font-size:12px;color:var(--muted)">${lastLogin}</td>
       <td>
-        <button class="btn-edit" onclick="editUser(${u.id})" title="Edit user">✎ Edit</button>
-        ${u.username!=='admin'?`<button class="btn-del" onclick="delUser(${u.id},'${u.username}')" title="Delete user">🗑</button>`:''}
+        <button class="btn-edit" onclick="editUser(${u.id})">✎ Edit</button>
+        ${u.username!=='admin'?`<button class="btn-del" onclick="delUser(${u.id},'${u.username}')">✕</button>`:''}
       </td>
     </tr>`;
   }).join('');

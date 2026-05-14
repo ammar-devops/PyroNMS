@@ -1,8 +1,58 @@
-*.db
-*.db-shm
+# ── Python ───────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
-*.bak
-avatars/
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── Databases ───────────────────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ── Logs ────────────────────────────────────────────────────────────────
 *.log
+logs/
+
+# ── Backups & archives ──────────────────────────────────────────────────
+*.bak
+*.bak.*
+backup-versions/
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# ── One-off probe / dev scripts (not part of release) ───────────────────
+probe_*.py
+scratch_*.py
+test_*.py.bak
+
+# ── OS / editor ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Runtime artifacts ───────────────────────────────────────────────────
+avatars/
 olt-config/olt_config_*.txt
+olt-config/*.cache
+
+# ── Local secrets (never commit) ────────────────────────────────────────
+.env
+.env.local
+config/secrets.py
+*.pem
+*.key

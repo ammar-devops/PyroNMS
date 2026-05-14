@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link id="favicon" rel="icon" type="image/png" href="/favicon.png">
+<title>ONT Manager — PyroNMS</title>
+<style>
+  :root {
+    --bg:     #0f1117;
+    --bg2:    #181b24;
+    --bg3:    #1e2130;
+    --border: #2a2f45;
+    --text:   #e2e6f0;
+    --muted:  #7a8099;
+    --accent: #3b82f6;
+    --green:  #22c55e;
+    --red:    #ef4444;
+    --yellow: #f59e0b;
+    --orange: #f97316;
+    --fg:     #e2e6f0;
+    --card:   #181b24;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+
+  /* ── Top progress bar ── */
+  #pyro-bar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 9999; pointer-events: none; }
+  #pyro-bar::before { content:''; position:absolute; inset:0; background:var(--accent); transform:scaleX(0); transform-origin:left; transition:transform .3s ease; }
+  #pyro-bar.running::before { animation: bar-sweep 1.4s ease-in-out infinite; }
+  @keyframes bar-sweep { 0%{transform:scaleX(0);transform-origin:left} 50%{transform:scaleX(.7);transform-origin:left} 50.01%{transform:scaleX(.7);transform-origin:right} 100%{transform:scaleX(0);transform-origin:right} }
+
+  /* ── Header ── */
+  .om-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px;
+    background: var(--bg2);
+    border-bottom: 2px solid var(--border);
+    position: sticky; top: 0; z-index: 200;
+    flex-wrap: wrap;
+  }
+  .om-back { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; transition: all .15s; }
+  .om-back:hover { color: var(--text); border-color: var(--accent); }
+  .om-vendor-pill { border-radius: 6px; padding: 3px 10px; font-size: 11px; font-weight: 700; letter-spacing: .5px; background: rgba(239,68,68,.18); color: #fca5a5; border: 1px solid rgba(239,68,68,.4); }
+  .om-header-name { font-size: 18px; font-weight: 700; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .om-header-meta { font-size: 12px; color: var(--muted); }
+  .om-status-pill { border-radius: 6px; padding: 4px 12px; font-size: 12px; font-weight: 700; letter-spacing: .5px; }
+  .om-status-pill.online  { background: rgba(34,197,94,.18); color: #86efac; border: 1px solid rgba(34,197,94,.4); }
+  .om-status-pill.offline { background: rgba(239,68,68,.18); color: #fca5a5; border: 1px solid rgba(239,68,68,.4); }
+  .om-status-pill.unknown { background: rgba(122,128,153,.18); color: var(--muted); border: 1px solid var(--border); }
+  .om-refresh-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 15px; transition: all .15s; }
+  .om-refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ── Tab bar ── */
+  .om-tabs {
+    display: flex; gap: 0;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    position: sticky; top: 57px; z-index: 190;
+  }
+  .om-tab-btn {
+    flex-shrink: 0; padding: 12px 22px;
+    background: none; border: none; border-bottom: 3px solid transparent;
+    color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer;
+    transition: all .15s; white-space: nowrap;
+  }
+  .om-tab-btn:hover { color: var(--text); }
+  .om-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+  /* ── Tab content ── */
+  .om-body { padding: 24px 20px; max-width: 1200px; margin: 0 auto; }
+  .om-tab-panel { display: none; }
+  .om-tab-panel.active { display: block; }
+
+  /* ── Card grid ── */
+  .om-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-bottom: 20px; }
+  .om-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  .om-card h4 { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 14px; }
+  .om-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid rgba(42,47,69,.5); gap: 12px; }
+  .om-row:last-child { border-bottom: none; }
+  .om-row .k { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  .om-row .v { font-size: 13px; font-weight: 500; text-align: right; word-break: break-word; }
+
+  /* ── Badges ── */
+  .cfg-pill { display:inline-block; border-radius:5px; padding:2px 10px; font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; font-family:monospace; }
+  .cfg-pill.mode-pppoe  { background:rgba(34,197,94,.18); color:#86efac; border:1px solid rgba(34,197,94,.4); }
+  .cfg-pill.mode-static { background:rgba(79,142,247,.18); color:#93c5fd; border:1px solid rgba(79,142,247,.4); }
+  .cfg-pill.mode-bridge { background:rgba(251,146,60,.18); color:#fdba74; border:1px solid rgba(251,146,60,.4); }
+  .band-chip { display:inline-block; border-radius:5px; padding:2px 9px; font-size:11px; font-weight:700; font-family:monospace; }
+  .band-chip.band-24g { background:rgba(34,197,94,.18); color:#86efac; border:1px solid rgba(34,197,94,.4); }
+  .band-chip.band-5g  { background:rgba(168,85,247,.18); color:#d8b4fe; border:1px solid rgba(168,85,247,.4); }
+  .wlan-state { font-size:10px; font-weight:700; padding:1px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:.4px; }
+  .wlan-state.ok  { background:rgba(34,197,94,.18); color:#86efac; }
+  .wlan-state.off { background:rgba(148,163,184,.18); color:#cbd5e1; }
+
+  /* ── Edit inputs ── */
+  .edit-input { background: var(--bg3); border: 1px solid var(--accent); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 100%; font-family: inherit; }
+  .edit-input:focus { outline: none; border-color: #60a5fa; }
+  .cfg-edit-label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+  .cfg-pwd-wrap { display: flex; align-items: center; gap: 4px; }
+  .cfg-pwd-wrap .edit-input { flex: 1; }
+  .cfg-eye-btn { background: none; border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; color: var(--muted); cursor: pointer; font-size: 13px; }
+  .cfg-eye-btn:hover { color: var(--fg); border-color: var(--accent); }
+
+  /* ── Buttons ── */
+  .btn { display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 7px; padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary  { background: var(--accent); color: #fff; }
+  .btn-success  { background: var(--green);  color: #fff; }
+  .btn-danger   { background: var(--red);    color: #fff; }
+  .btn-warn     { background: var(--yellow); color: #000; }
+  .btn-ghost    { background: var(--bg3); border: 1px solid var(--border); color: var(--text); }
+  .btn:hover:not(:disabled) { opacity: .85; }
+
+  /* ── Action bar / status ── */
+  .save-bar { display: flex; align-items: center; gap: 10px; padding: 12px 0 0; flex-wrap: wrap; }
+  .save-status { font-size: 12px; }
+  .save-status.ok   { color: var(--green); }
+  .save-status.fail { color: var(--red); }
+  .save-status.saving { color: var(--muted); }
+
+  /* ── SSID block ── */
+  .ssid-block { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .ssid-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .ssid-name-txt { font-size: 15px; font-weight: 600; flex: 1; }
+  .ssid-edit-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .ssid-edit-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .ssid-edit-toggle input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
+
+  /* ── Actions grid ── */
+  .actions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .action-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .action-card h4 { font-size: 13px; font-weight: 700; }
+  .action-card p  { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .action-card .btn { width: 100%; justify-content: center; }
+
+  /* ── Description edit ── */
+  .desc-edit-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .desc-edit-row .edit-input { flex: 1; min-width: 160px; }
+
+  /* ── Confirm overlay ── */
+  .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 500; display: none; align-items: center; justify-content: center; }
+  .confirm-overlay.open { display: flex; }
+  .confirm-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; width: 380px; max-width: 95vw; }
+  .confirm-box h3 { font-size: 16px; margin-bottom: 8px; }
+  .confirm-box p  { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 16px; }
+  .confirm-sn-input { width: 100%; margin-bottom: 14px; }
+  .confirm-btns { display: flex; gap: 10px; justify-content: flex-end; }
+
+  /* ── Toast ── */
+  #om-toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13px; z-index: 999; transform: translateY(20px); opacity: 0; transition: all .25s; pointer-events: none; max-width: 340px; }
+  #om-toast.show { transform: translateY(0); opacity: 1; }
+  #om-toast.ok   { border-color: var(--green); color: var(--green); }
+  #om-toast.err  { border-color: var(--red);   color: var(--red); }
+
+  /* ── Loading / error ── */
+  .om-loading { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 15px; }
+  .om-error   { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; border-radius: 10px; padding: 14px 18px; margin: 16px 0; }
+
+  /* ── Spinner ── */
+  .spin { display: inline-block; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Separator ── */
+  .section-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin: 20px 0 10px; }
+
+  @media (max-width: 640px) {
+    .om-body { padding: 16px 12px; }
+    .om-grid { grid-template-columns: 1fr; }
+    .actions-grid { grid-template-columns: 1fr 1fr; }
+    .om-header-name { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div id="pyro-bar"></div>
+
+<!-- Header -->
+<div style="background:rgba(245,158,11,.12);border-bottom:1px solid rgba(245,158,11,.3);color:#fcd34d;padding:10px 18px;font-size:13px;text-align:center">
+  ⚠ <strong>Deprecated in v4.0.0</strong> — this page now uses OLT SSH only. Use the
+  <a href="/" style="color:#fcd34d;text-decoration:underline;font-weight:600">dashboard popup</a>
+  for full GenieACS-backed editable view.
+</div>
+<div class="om-header">
+  <a class="om-back" href="/">← Dashboard</a>
+  <span class="om-vendor-pill" id="omVendorPill">ONT</span>
+  <div>
+    <div class="om-header-name" id="omName">Loading…</div>
+    <div class="om-header-meta" id="omMeta">—</div>
+  </div>
+  <span class="om-status-pill unknown" id="omStatus">…</span>
+  <button class="om-refresh-btn" id="omRefreshBtn" title="Reload all data">⟳</button>
+</div>
+
+<!-- Tab bar -->
+<div class="om-tabs">
+  <button class="om-tab-btn active" data-tab="overview">📡 Overview</button>
+  <button class="om-tab-btn" data-tab="wan">🌐 WAN Config</button>
+  <button class="om-tab-btn" data-tab="wlan">📶 WLAN Config</button>
+  <button class="om-tab-btn" data-tab="actions">⚡ Actions</button>
+</div>
+
+<!-- Body -->
+<div class="om-body">
+
+  <!-- Tab: Overview -->
+  <div class="om-tab-panel active" id="tab-overview">
+    <div id="overviewContent" class="om-loading"><span class="spin">⟳</span> Loading via SSH…</div>
+  </div>
+
+  <!-- Tab: WAN Config -->
+  <div class="om-tab-panel" id="tab-wan">
+    <div id="wanContent" class="om-loading"><span class="spin">⟳</span> Loading WAN config…</div>
+  </div>
+
+  <!-- Tab: WLAN Config -->
+  <div class="om-tab-panel" id="tab-wlan">
+    <div id="wlanContent" class="om-loading"><span class="spin">⟳</span> Loading WLAN config…</div>
+  </div>
+
+  <!-- Tab: Actions -->
+  <div class="om-tab-panel" id="tab-actions">
+    <div id="actionsContent" class="om-loading"><span class="spin">⟳</span> Loading…</div>
+  </div>
+
+</div>
+
+<!-- Confirm overlay -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <h3 id="confirmTitle">Confirm</h3>
+    <p id="confirmMsg"></p>
+    <input class="edit-input confirm-sn-input" id="confirmSnInput" placeholder="Type SN to confirm" style="display:none">
+    <div class="confirm-btns">
+      <button class="btn btn-ghost" id="confirmCancel">Cancel</button>
+      <button class="btn btn-danger" id="confirmOk">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="om-toast"></div>
+
+<script>
+'use strict';
+
+// ── Config ──────────────────────────────────────────────────────────────────
+const API = 'http://172.20.101.160:8088';
+const sn  = new URLSearchParams(location.search).get('sn') || '';
+if (!sn) { location.href = '/'; }
+const tok = localStorage.getItem('ont_token') || '';
+if (!tok) { location.href = '/'; }
+
+function auth() { return { 'Authorization': 'Bearer ' + tok }; }
+function enc(s) { return encodeURIComponent(s); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── Progress bar ──────────────────────────────────────────────────────────────
+let _refs = 0;
+function barStart() { _refs++; document.getElementById('pyro-bar').classList.add('running'); }
+function barDone()  { _refs = Math.max(0,_refs-1); if (!_refs) document.getElementById('pyro-bar').classList.remove('running'); }
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let _toastTimer;
+function toast(msg, type='ok') {
+  const el = document.getElementById('om-toast');
+  el.textContent = msg; el.className = 'show ' + type;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.className = '', 3500);
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+let _currentTab = 'overview';
+document.querySelectorAll('.om-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    _currentTab = tab;
+    document.querySelectorAll('.om-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.om-tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
+  });
+});
+
+// ── Eye toggle helper ─────────────────────────────────────────────────────────
+function wireEyes(root) {
+  (root || document).querySelectorAll('.cfg-eye-btn').forEach(btn => {
+    btn.onclick = () => {
+      const inp = document.getElementById(btn.dataset.target);
+      if (inp) inp.type = inp.type === 'password' ? 'text' : 'password';
+    };
+  });
+}
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+let _info = null;   // from /ont/info
+let _cfg  = null;   // from /ont/config
+let _row  = null;   // cached row data from allONTs (from localStorage)
+
+function getCachedRow() {
+  try {
+    const c = localStorage.getItem('onts_cache');
+    if (!c) return null;
+    const p = JSON.parse(c);
+    const arr = (p && p.onts) ? p.onts : (Array.isArray(p) ? p : []);
+    return arr.find(o => o.sn === sn) || null;
+  } catch { return null; }
+}
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+async function loadAll() {
+  barStart(); barStart();
+  _row = getCachedRow();
+
+  // Patch header immediately from cache
+  if (_row) {
+    document.getElementById('omName').textContent = _row.name || sn;
+    document.getElementById('omMeta').textContent = `SN ${sn}`;
+  } else {
+    document.getElementById('omName').textContent = sn;
+  }
+
+  const [infoR, cfgR] = await Promise.allSettled([
+    fetch(`${API}/ont/info?sn=${enc(sn)}`,   { headers: auth() }),
+    fetch(`${API}/ont/config?sn=${enc(sn)}`, { headers: auth() })
+  ]);
+
+  // Parse info
+  if (infoR.status === 'fulfilled' && infoR.value.ok) {
+    try { _info = await infoR.value.json(); } catch {}
+  }
+  barDone();
+
+  // Parse config
+  if (cfgR.status === 'fulfilled' && cfgR.value.ok) {
+    try { _cfg = await cfgR.value.json(); } catch {}
+  }
+  barDone();
+
+  renderHeader();
+  renderOverview();
+  renderWan();
+  renderWlan();
+  renderActions();
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+function renderHeader() {
+  const d = (_info && _info.ok) ? _info : {};
+  const row = _row || {};
+
+  // Vendor pill
+  const model = d.model || row.model || '';
+  document.getElementById('omVendorPill').textContent = (d.device_type || 'ONT') + (model ? ' · ' + model : '');
+
+  // Name + meta
+  document.getElementById('omName').textContent = row.name || d.description || sn;
+  document.getElementById('omMeta').textContent =
+    `SN ${sn}` +
+    (d.fsp     ? ` • PON ${d.fsp}`     : (row.pon ? ` • PON ${row.pon}` : '')) +
+    (d.ont_id  ? ` • ID ${d.ont_id}`   : (row.ont_id ? ` • ID ${row.ont_id}` : ''));
+
+  // Status
+  const rs = (d.run_state || row.status || '').toLowerCase();
+  const sp = document.getElementById('omStatus');
+  if (rs === 'online') { sp.className = 'om-status-pill online'; sp.textContent = 'Online'; }
+  else if (rs && (rs.includes('off') || rs.includes('down'))) { sp.className = 'om-status-pill offline'; sp.textContent = d.run_state || 'Offline'; }
+  else { sp.className = 'om-status-pill unknown'; sp.textContent = d.run_state || '…'; }
+}
+
+// ── Overview ──────────────────────────────────────────────────────────────────
+function renderOverview() {
+  const el = document.getElementById('overviewContent');
+  if (!_info || !_info.ok) {
+    el.innerHTML = `<div class="om-error">⚠ ${esc(_info && _info.error || 'Failed to load ONT info via SSH')}</div>`;
+    return;
+  }
+  const d   = _info;
+  const row = _row || {};
+  const r   = (k, v) => `<div class="om-row"><span class="k">${esc(k)}</span><span class="v">${esc(String(v??'—'))}</span></div>`;
+
+  el.innerHTML = `
+    <div class="om-grid">
+      <div class="om-card">
+        <h4>📡 Live Signal
+          ${d.signal_source ? `<span style="font-size:10px;font-weight:400;margin-left:6px;color:var(--muted)">[${esc(d.signal_source.toUpperCase())}]</span>` : ''}
+        </h4>
+        ${r('RX Power',    d.rx_power  != null ? d.rx_power  + ' dBm' : ((row.rx && row.rx !== '-') ? row.rx + ' dBm' : '—'))}
+        ${r('TX Power',    d.tx_power  != null ? d.tx_power  + ' dBm' : '—')}
+        ${r('Temperature', d.temp      != null ? d.temp      + ' °C'  : (row.temp ? row.temp + ' °C' : '—'))}
+        ${r('Distance',    d.distance_m != null ? d.distance_m + ' m' : '—')}
+        ${r('Online for',  d.online_duration || '—')}
+      </div>
+      <div class="om-card">
+        <h4>🛠️ Hardware</h4>
+        ${r('Device Type', d.device_type)}
+        ${r('Model',       d.model)}
+        ${r('Vendor',      d.vendor)}
+        ${r('HW Version',  d.hw_version)}
+        ${r('SW Version',  d.sw_version)}
+      </div>
+      <div class="om-card">
+        <h4>🔌 Service</h4>
+        ${r('Line Profile',    d.line_profile)}
+        ${r('Service Profile', d.service_profile)}
+        ${r('VLAN',            row.vlan)}
+        ${r('WAN IP',          row.wan_ip || d.wan_ip || '—')}
+      </div>
+      <div class="om-card">
+        <h4>📊 OLT State</h4>
+        ${r('Run State',    d.run_state)}
+        ${r('Config State', d.config_state)}
+        ${r('Match State',  d.match_state)}
+        ${r('Last Up',      d.last_up_time)}
+        ${r('Last Down',    d.last_down_cause)}
+      </div>
+    </div>`;
+}
+
+// ── WAN Config ────────────────────────────────────────────────────────────────
+function renderWan() {
+  const el  = document.getElementById('wanContent');
+  const cfg = (_cfg && _cfg.ok) ? _cfg : null;
+  if (!cfg) {
+    el.innerHTML = `<div class="om-error">⚠ ${esc(_cfg && _cfg.error || 'Failed to load WAN config')}</div>`;
+    return;
+  }
+  const wan = cfg.wan || {};
+  const modeLabel = ({pppoe:'PPPoE',static:'Static IP','ip-routed':'IP Routed',dhcp:'DHCP',bridge:'Bridge'}[wan.mode] || (wan.mode || '—'));
+  const modeClass  = wan.mode === 'pppoe' ? 'mode-pppoe' : wan.mode === 'bridge' ? 'mode-bridge' : 'mode-static';
+  const r = (k, v) => `<div class="om-row"><span class="k">${esc(k)}</span><span class="v">${esc(String(v??'—'))}</span></div>`;
+
+  let html = `
+    <div class="om-card" style="max-width:560px">
+      <h4>🌐 WAN Configuration</h4>
+      <div class="om-row"><span class="k">Mode</span><span class="v"><span class="cfg-pill ${modeClass}">${esc(modeLabel)}</span></span></div>
+      ${r('Connection Type', wan.connection_type)}
+      ${r('Service Type',    wan.service_type)}
+      ${r('IPv4 Address',    wan.ipv4)}
+      ${r('Subnet Mask',     wan.subnet)}
+      ${r('Default Gateway', wan.gateway)}
+      ${r('Primary DNS',     wan.dns1)}
+      ${r('Secondary DNS',   wan.dns2)}
+      ${r('Manage VLAN',     wan.vlan)}
+      ${r('MAC Address',     wan.mac)}
+      ${r('NAT',             wan.nat)}
+      ${r('Status',          wan.status)}
+    </div>`;
+
+  // Edit section
+  if (wan.mode === 'pppoe') {
+    html += `
+    <div class="section-title">Edit PPPoE Credentials</div>
+    <div class="om-card" style="max-width:560px">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <label class="cfg-edit-label">PPPoE Username
+          <input id="wanUser" class="edit-input" type="text" placeholder="username" autocomplete="off" value="${esc(wan.pppoe_user||'')}">
+        </label>
+        <label class="cfg-edit-label">PPPoE Password
+          <span class="cfg-pwd-wrap">
+            <input id="wanPass" class="edit-input" type="password" placeholder="new password" autocomplete="new-password">
+            <button type="button" class="cfg-eye-btn" data-target="wanPass">👁</button>
+          </span>
+        </label>
+        <label class="cfg-edit-label">VLAN
+          <input id="wanVlan" class="edit-input" type="text" placeholder="10" value="${esc(String(wan.vlan||'10'))}">
+        </label>
+      </div>
+      <div class="save-bar">
+        <button class="btn btn-success" id="wanSaveBtn">💾 Save PPPoE Credentials</button>
+        <span class="save-status" id="wanStatus"></span>
+      </div>
+    </div>`;
+  } else if (wan.mode && wan.mode !== 'bridge') {
+    html += `
+    <div class="section-title">Edit Static IP Settings</div>
+    <div class="om-card" style="max-width:560px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <label class="cfg-edit-label">IP Address
+          <input id="wanIp"   class="edit-input" type="text" placeholder="10.x.x.x"       value="${esc(wan.ipv4||'')}">
+        </label>
+        <label class="cfg-edit-label">Subnet Mask
+          <input id="wanMask" class="edit-input" type="text" placeholder="255.255.255.0"  value="${esc(wan.subnet||'')}">
+        </label>
+        <label class="cfg-edit-label">Default Gateway
+          <input id="wanGw"   class="edit-input" type="text" placeholder="10.x.x.1"       value="${esc(wan.gateway||'')}">
+        </label>
+        <label class="cfg-edit-label">VLAN
+          <input id="wanVlan" class="edit-input" type="text" placeholder="10"              value="${esc(String(wan.vlan||'10'))}">
+        </label>
+        <label class="cfg-edit-label">Primary DNS
+          <input id="wanDns1" class="edit-input" type="text" placeholder="8.8.8.8"        value="${esc(wan.dns1||'')}">
+        </label>
+        <label class="cfg-edit-label">Secondary DNS
+          <input id="wanDns2" class="edit-input" type="text" placeholder="8.8.4.4"        value="${esc(wan.dns2||'')}">
+        </label>
+      </div>
+      <div class="save-bar">
+        <button class="btn btn-success" id="wanSaveBtn">💾 Save Static IP</button>
+        <span class="save-status" id="wanStatus"></span>
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+  wireEyes(el);
+
+  // Save handler
+  const saveBtn = document.getElementById('wanSaveBtn');
+  const statusEl = document.getElementById('wanStatus');
+  if (!saveBtn) return;
+
+  saveBtn.addEventListener('click', async () => {
+    statusEl.textContent = '⟳ Saving…'; statusEl.className = 'save-status saving';
+    saveBtn.disabled = true;
+    try {
+      let body, kind;
+      if (wan.mode === 'pppoe') {
+        const u = (document.getElementById('wanUser')?.value || '').trim();
+        const p = (document.getElementById('wanPass')?.value || '').trim();
+        const v = (document.getElementById('wanVlan')?.value || '10').trim();
+        if (!u || !p) { statusEl.textContent = '✗ Username and password are both required'; statusEl.className='save-status fail'; saveBtn.disabled=false; return; }
+        kind = 'pppoe_creds';
+        body = { sn, kind, pppoe_username: u, pppoe_password: p, vlan_id: v };
+      } else {
+        const ip   = (document.getElementById('wanIp')?.value   || '').trim();
+        const mask = (document.getElementById('wanMask')?.value || '').trim();
+        const gw   = (document.getElementById('wanGw')?.value   || '').trim();
+        const vlan = (document.getElementById('wanVlan')?.value || '10').trim();
+        const dns1 = (document.getElementById('wanDns1')?.value || '').trim();
+        const dns2 = (document.getElementById('wanDns2')?.value || '').trim();
+        if (!ip || !mask || !gw) { statusEl.textContent = '✗ IP, subnet and gateway are required'; statusEl.className='save-status fail'; saveBtn.disabled=false; return; }
+        kind = 'static_ip';
+        body = { sn, kind, ip, subnet: mask, gateway: gw, vlan_id: vlan, dns1, dns2 };
+      }
+      barStart();
+      const r = await fetch(`${API}/ont/settings/${kind}`, {
+        method: 'POST',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await r.json();
+      barDone();
+      if (r.ok && data.ok !== false) {
+        statusEl.textContent = '✓ Saved'; statusEl.className = 'save-status ok';
+        toast('✓ WAN credentials saved', 'ok');
+        setTimeout(() => { reloadCfg(); }, 1200);
+      } else {
+        statusEl.textContent = '✗ ' + (data.error || 'OLT returned error'); statusEl.className = 'save-status fail';
+        toast('✗ Save failed: ' + (data.error || 'OLT error'), 'err');
+      }
+    } catch(e) { barDone(); statusEl.textContent = '✗ Network error'; statusEl.className='save-status fail'; toast('✗ Network error: ' + e.message, 'err'); }
+    saveBtn.disabled = false;
+  });
+}
+
+// ── WLAN Config ───────────────────────────────────────────────────────────────
+function renderWlan() {
+  const el  = document.getElementById('wlanContent');
+  const cfg = (_cfg && _cfg.ok) ? _cfg : null;
+  if (!cfg) {
+    el.innerHTML = `<div class="om-error">⚠ ${esc(_cfg && _cfg.error || 'Failed to load WLAN config')}</div>`;
+    return;
+  }
+  const wlan = cfg.wlan || {};
+
+  if (wlan.supported === false) {
+    el.innerHTML = `<div class="om-error" style="background:rgba(122,128,153,.1);border-color:var(--border);color:var(--muted)">⚠ This ONT model does not expose WLAN data via OLT CLI.<br><small>HG8245 / bridge-mode ONUs report "The ONT can not support".</small></div>`;
+    return;
+  }
+  if (!wlan.ssids || wlan.ssids.length === 0) {
+    el.innerHTML = `<div class="om-error" style="background:rgba(122,128,153,.1);border-color:var(--border);color:var(--muted)">No WLAN SSIDs reported. ONT may not support WiFi.</div>`;
+    return;
+  }
+
+  const bandsHtml = (wlan.bands_present || []).map(b =>
+    `<span class="band-chip band-${b === '5G' ? '5g' : '24g'}">${esc(b)}</span>`
+  ).join(' ');
+
+  let html = `<div style="margin-bottom:14px">${bandsHtml}</div>`;
+  wlan.ssids.forEach((s, i) => {
+    const uid = `ssid${i}`;
+    html += `
+    <div class="ssid-block" id="block-${uid}">
+      <div class="ssid-head">
+        <span class="band-chip band-${s.band === '5G' ? '5g' : '24g'}">${esc(s.band || '?')}</span>
+        <span class="ssid-name-txt">${esc(s.ssid || '—')}</span>
+        <span class="wlan-state ${s.enabled ? 'ok' : 'off'}">${s.enabled ? 'Enabled' : 'Disabled'}</span>
+      </div>
+      <div class="om-row"><span class="k">Wireless Standard</span><span class="v">${esc(s.wireless_standard||'—')}</span></div>
+      <div class="om-row"><span class="k">Connected Clients</span><span class="v">${esc(String(s.current_clients??'—'))} / ${esc(String(s.max_clients??'—'))}</span></div>
+
+      <div class="ssid-edit-fields">
+        <label class="cfg-edit-label">SSID Name
+          <input id="${uid}-name" class="edit-input" type="text" placeholder="new SSID name" value="${esc(s.ssid||'')}" autocomplete="off">
+        </label>
+        <label class="cfg-edit-label">WiFi Password
+          <span class="cfg-pwd-wrap">
+            <input id="${uid}-pass" class="edit-input" type="password" placeholder="new password (leave blank to keep)" autocomplete="new-password">
+            <button type="button" class="cfg-eye-btn" data-target="${uid}-pass">👁</button>
+          </span>
+        </label>
+        <label class="cfg-edit-label">Authentication Mode
+          <select id="${uid}-auth" class="edit-input">
+            <option value="">— keep current —</option>
+            <option value="wpa2-psk">WPA2-PSK</option>
+            <option value="wpa-wpa2-psk">WPA / WPA2-PSK (Mixed)</option>
+            <option value="open">Open (no security)</option>
+          </select>
+        </label>
+        <label class="cfg-edit-label">Encryption Mode
+          <select id="${uid}-enc" class="edit-input">
+            <option value="">— keep current —</option>
+            <option value="aes">AES</option>
+            <option value="tkip">TKIP</option>
+            <option value="tkip-aes">TKIP + AES</option>
+          </select>
+        </label>
+        <label class="ssid-edit-toggle">
+          <input type="checkbox" id="${uid}-en" ${s.enabled ? 'checked' : ''}>
+          Enable this SSID
+        </label>
+        <div class="save-bar">
+          <button class="btn btn-success" id="${uid}-save" data-ssid-index="${esc(String(s.index??i+1))}">💾 Save SSID ${i+1}</button>
+          <span class="save-status" id="${uid}-status"></span>
+        </div>
+      </div>
+    </div>`;
+  });
+
+  // ── Radio Settings section ──────────────────────────────────────────────────
+  const has5G = (wlan.bands_present || []).includes('5G');
+  const ch24opts = ['auto','1','2','3','4','5','6','7','8','9','10','11','12','13']
+    .map(v => `<option value="${v}">${v === 'auto' ? 'Auto' : v}</option>`).join('');
+  const ch5opts  = ['auto','36','40','44','48','52','56','60','64','149','153','157','161','165']
+    .map(v => `<option value="${v}">${v === 'auto' ? 'Auto' : v}</option>`).join('');
+  const widthOpts24 = ['auto','20mhz','40mhz']
+    .map(v=>`<option value="${v}">${v==='auto'?'Auto 20/40':v.toUpperCase()}</option>`).join('');
+  const widthOpts5  = ['auto','20mhz','40mhz','80mhz']
+    .map(v=>`<option value="${v}">${v==='auto'?'Auto':v.toUpperCase()}</option>`).join('');
+
+  html += `
+  <div class="section-title" style="margin-top:8px">📡 Radio Settings (Channel &amp; Width)</div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div class="ssid-block" style="flex:1;min-width:220px">
+      <div class="ssid-head"><span class="band-chip band-24g">2.4G</span><span style="font-size:12px;color:var(--muted);margin-left:6px">Radio 1</span></div>
+      <label class="cfg-edit-label">Channel
+        <select id="radio24-ch" class="edit-input">${ch24opts}</select>
+      </label>
+      <label class="cfg-edit-label">Channel Width
+        <select id="radio24-w" class="edit-input">${widthOpts24}</select>
+      </label>
+      <div class="save-bar">
+        <button class="btn btn-success" id="radio24-save">💾 Save 2.4G Radio</button>
+        <span class="save-status" id="radio24-status"></span>
+      </div>
+    </div>
+    ${has5G ? `
+    <div class="ssid-block" style="flex:1;min-width:220px">
+      <div class="ssid-head"><span class="band-chip band-5g">5G</span><span style="font-size:12px;color:var(--muted);margin-left:6px">Radio 2</span></div>
+      <label class="cfg-edit-label">Channel
+        <select id="radio5-ch" class="edit-input">${ch5opts}</select>
+      </label>
+      <label class="cfg-edit-label">Channel Width
+        <select id="radio5-w" class="edit-input">${widthOpts5}</select>
+      </label>
+      <div class="save-bar">
+        <button class="btn btn-success" id="radio5-save">💾 Save 5G Radio</button>
+        <span class="save-status" id="radio5-status"></span>
+      </div>
+    </div>` : ''}
+  </div>`;
+
+  // ── Phase 2 notice ──────────────────────────────────────────────────────────
+  html += `
+  <div class="om-error" style="margin-top:16px;background:rgba(79,142,247,.07);border-color:rgba(79,142,247,.28);color:var(--muted)">
+    ℹ️ <strong>TX Power</strong>, <strong>WiFi Mode</strong> (802.11ax/ac), <strong>Beacon/DTIM period</strong>, and
+    <strong>ONT admin password</strong> are not exposed via OLT CLI.<br>
+    These will be configurable in Phase 2 via direct ONT HTTP access.
+  </div>`;
+
+  el.innerHTML = html;
+  wireEyes(el);
+
+  // Wire SSID save buttons
+  wlan.ssids.forEach((s, i) => {
+    const uid = `ssid${i}`;
+    const saveBtn  = document.getElementById(`${uid}-save`);
+    const statusEl = document.getElementById(`${uid}-status`);
+    if (!saveBtn) return;
+
+    saveBtn.addEventListener('click', async () => {
+      const nameVal = (document.getElementById(`${uid}-name`)?.value || '').trim();
+      const passVal = (document.getElementById(`${uid}-pass`)?.value || '').trim();
+      const enVal   = document.getElementById(`${uid}-en`)?.checked;
+      const authVal = document.getElementById(`${uid}-auth`)?.value || '';
+      const encVal  = document.getElementById(`${uid}-enc`)?.value  || '';
+      const origEn  = s.enabled;
+
+      const body = { sn, kind: 'wifi', ssid_index: s.index ?? i+1 };
+      if (nameVal && nameVal !== s.ssid) body.ssid_name = nameVal;
+      if (passVal) body.password = passVal;
+      if (enVal !== origEn) body.enabled = enVal;
+      if (authVal) body.auth_mode = authVal;
+      if (encVal)  body.encrypt_mode = encVal;
+
+      if (!body.ssid_name && !body.password && body.enabled === undefined && !body.auth_mode && !body.encrypt_mode) {
+        statusEl.textContent = 'Nothing changed'; statusEl.className = 'save-status'; return;
+      }
+      statusEl.textContent = '⟳ Saving…'; statusEl.className = 'save-status saving';
+      saveBtn.disabled = true;
+      try {
+        barStart();
+        const r = await fetch(`${API}/ont/settings/wifi`, {
+          method: 'POST',
+          headers: { ...auth(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await r.json(); barDone();
+        if (r.ok && data.ok !== false) {
+          statusEl.textContent = '✓ Saved'; statusEl.className = 'save-status ok';
+          toast('✓ WLAN saved', 'ok');
+          setTimeout(() => reloadCfg(), 1200);
+        } else {
+          statusEl.textContent = '✗ ' + (data.error || 'OLT error'); statusEl.className = 'save-status fail';
+          toast('✗ ' + (data.error || 'WLAN save failed'), 'err');
+        }
+      } catch(e) { barDone(); statusEl.textContent = '✗ Network error'; statusEl.className='save-status fail'; }
+      saveBtn.disabled = false;
+    });
+  });
+
+  // Wire Radio save buttons
+  async function saveRadio(radioIndex, chId, widthId, statusId, btnId) {
+    const statusEl = document.getElementById(statusId);
+    const btn      = document.getElementById(btnId);
+    const channel  = document.getElementById(chId)?.value    || '';
+    const width    = document.getElementById(widthId)?.value  || '';
+    if (!channel && !width) { statusEl.textContent = 'Nothing changed'; return; }
+    statusEl.textContent = '⟳ Saving…'; statusEl.className = 'save-status saving';
+    btn.disabled = true;
+    try {
+      barStart();
+      const r = await fetch(`${API}/ont/settings/wlan_radio`, {
+        method: 'POST',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sn, kind: 'wlan_radio', radio_index: radioIndex, channel, channel_width: width })
+      });
+      const data = await r.json(); barDone();
+      if (r.ok && data.ok !== false) {
+        statusEl.textContent = '✓ Saved'; statusEl.className = 'save-status ok';
+        toast(`✓ Radio ${radioIndex === 1 ? '2.4G' : '5G'} settings saved`, 'ok');
+      } else {
+        statusEl.textContent = '✗ ' + (data.error || 'OLT error'); statusEl.className = 'save-status fail';
+        toast('✗ ' + (data.error || 'Radio save failed'), 'err');
+      }
+    } catch(e) { barDone(); statusEl.textContent = '✗ Network error'; statusEl.className = 'save-status fail'; }
+    btn.disabled = false;
+  }
+
+  document.getElementById('radio24-save')?.addEventListener('click',
+    () => saveRadio(1, 'radio24-ch', 'radio24-w', 'radio24-status', 'radio24-save'));
+  if (has5G) {
+    document.getElementById('radio5-save')?.addEventListener('click',
+      () => saveRadio(2, 'radio5-ch', 'radio5-w', 'radio5-status', 'radio5-save'));
+  }
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function renderActions() {
+  const el = document.getElementById('actionsContent');
+  const row = _row || {};
+  const info = (_info && _info.ok) ? _info : {};
+  const ontId = info.ont_id || row.ont_id || '';
+  const pon   = info.fsp    || row.pon    || '';
+
+  // Description section
+  el.innerHTML = `
+    <div class="section-title">Device Description</div>
+    <div class="om-card" style="max-width:520px;margin-bottom:20px">
+      <div class="om-row"><span class="k">Current Name</span><span class="v" id="descCurrent">${esc(row.name || info.description || sn)}</span></div>
+      <div class="desc-edit-row">
+        <input id="descInput" class="edit-input" type="text" placeholder="New customer name / description" value="${esc(row.name||'')}">
+        <button class="btn btn-primary" id="descSaveBtn">Save</button>
+        <span class="save-status" id="descStatus"></span>
+      </div>
+    </div>
+
+    <div class="section-title">ONT Actions</div>
+    <div class="actions-grid">
+      <div class="action-card">
+        <h4>🔄 Reboot</h4>
+        <p>Restart the ONT. Connection will drop for ~30–60 seconds.</p>
+        <button class="btn btn-warn" data-action="reset">Reboot ONT</button>
+      </div>
+      <div class="action-card">
+        <h4>✓ Enable</h4>
+        <p>Activate a disabled ONT and restore its service.</p>
+        <button class="btn btn-success" data-action="enable">Enable ONT</button>
+      </div>
+      <div class="action-card">
+        <h4>✗ Disable</h4>
+        <p>Deactivate the ONT without deleting it from the OLT.</p>
+        <button class="btn btn-ghost" data-action="disable">Disable ONT</button>
+      </div>
+      <div class="action-card">
+        <h4>🏭 Factory Reset</h4>
+        <p>Restore ONT to factory defaults. All configuration will be lost.</p>
+        <button class="btn btn-danger" data-action="restore">Factory Reset</button>
+      </div>
+      <div class="action-card">
+        <h4>🗑 Delete ONT</h4>
+        <p>Remove this ONT from the OLT permanently. Irreversible.</p>
+        <button class="btn btn-danger" data-action="delete">Delete ONT</button>
+      </div>
+    </div>`;
+
+  // Description save
+  document.getElementById('descSaveBtn').addEventListener('click', async () => {
+    const alias = (document.getElementById('descInput')?.value || '').trim();
+    const st = document.getElementById('descStatus');
+    if (!alias) { st.textContent = 'Name cannot be empty'; st.className='save-status fail'; return; }
+    st.textContent = '⟳ Saving…'; st.className = 'save-status saving';
+    try {
+      barStart();
+      const r = await fetch(`${API}/ont/settings/user`, {
+        method: 'POST',
+        headers: { ...auth(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sn, kind: 'user', alias })
+      });
+      const data = await r.json(); barDone();
+      if (r.ok && data.ok !== false) {
+        st.textContent = '✓ Saved'; st.className = 'save-status ok';
+        document.getElementById('descCurrent').textContent = alias;
+        document.getElementById('omName').textContent = alias;
+        toast('✓ Description updated', 'ok');
+      } else { st.textContent = '✗ ' + (data.error||'Failed'); st.className='save-status fail'; }
+    } catch(e) { barDone(); st.textContent='✗ Network error'; st.className='save-status fail'; }
+  });
+
+  // Action buttons
+  el.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      confirmAction(action, sn, pon, ontId);
+    });
+  });
+}
+
+// ── Confirm & dispatch action ─────────────────────────────────────────────────
+let _pendingAction = null;
+function confirmAction(action, sn, pon, ontId) {
+  const needType = ['delete','restore'].includes(action);
+  const labels   = { reset:'Reboot', enable:'Enable', disable:'Disable', restore:'Factory Reset', delete:'Delete' };
+  document.getElementById('confirmTitle').textContent = labels[action] || action;
+  document.getElementById('confirmMsg').textContent   =
+    needType ? `This action is irreversible. Type the SN to confirm: ${sn}` :
+    `Confirm: ${labels[action]} ONT ${sn}?`;
+  const snInp = document.getElementById('confirmSnInput');
+  snInp.style.display = needType ? '' : 'none';
+  snInp.value = '';
+  const okBtn = document.getElementById('confirmOk');
+  okBtn.className = ['delete','restore'].includes(action) ? 'btn btn-danger' : 'btn btn-warn';
+  _pendingAction = { action, sn, pon, ont_id: ontId };
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+document.getElementById('confirmCancel').addEventListener('click', () => {
+  document.getElementById('confirmOverlay').classList.remove('open');
+  _pendingAction = null;
+});
+
+document.getElementById('confirmOk').addEventListener('click', async () => {
+  if (!_pendingAction) return;
+  const { action, sn: psn, pon, ont_id } = _pendingAction;
+  const needType = ['delete','restore'].includes(action);
+  if (needType) {
+    const typed = (document.getElementById('confirmSnInput')?.value || '').trim();
+    if (typed !== psn) { toast('✗ SN does not match', 'err'); return; }
+  }
+  document.getElementById('confirmOverlay').classList.remove('open');
+  _pendingAction = null;
+  toast(`⟳ Sending ${action}…`, 'ok');
+  try {
+    barStart();
+    const r = await fetch(`${API}/ont/action`, {
+      method: 'POST',
+      headers: { ...auth(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, targets: [{ sn: psn, pon, ont_id }] })
+    });
+    const data = await r.json(); barDone();
+    const ok = (data.results||[]).filter(x=>x&&x.ok).length;
+    if (r.ok && ok > 0) {
+      toast(`✓ ${action} succeeded`, 'ok');
+      if (action === 'delete') { setTimeout(() => location.href = '/', 1500); }
+      else { setTimeout(() => loadAll(), 3000); }
+    } else {
+      toast(`✗ ${action} failed: ${data.error || 'OLT error'}`, 'err');
+    }
+  } catch(e) { barDone(); toast('✗ Network error: ' + e.message, 'err'); }
+});
+
+// ── Reload helpers ─────────────────────────────────────────────────────────────
+async function reloadCfg() {
+  barStart();
+  document.getElementById('wanContent').innerHTML  = `<div class="om-loading"><span class="spin">⟳</span> Reloading…</div>`;
+  document.getElementById('wlanContent').innerHTML = `<div class="om-loading"><span class="spin">⟳</span> Reloading…</div>`;
+  try {
+    const r = await fetch(`${API}/ont/config?sn=${enc(sn)}`, { headers: auth() });
+    _cfg = await r.json();
+  } catch {}
+  barDone();
+  renderWan();
+  renderWlan();
+}
+
+// ── Refresh button ─────────────────────────────────────────────────────────────
+document.getElementById('omRefreshBtn').addEventListener('click', () => {
+  _info = null; _cfg = null;
+  document.getElementById('overviewContent').innerHTML = `<div class="om-loading"><span class="spin">⟳</span> Loading via SSH…</div>`;
+  document.getElementById('wanContent').innerHTML  = `<div class="om-loading"><span class="spin">⟳</span> Loading WAN config…</div>`;
+  document.getElementById('wlanContent').innerHTML = `<div class="om-loading"><span class="spin">⟳</span> Loading WLAN config…</div>`;
+  loadAll();
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadAll();
+</script>
+</body>
+</html>

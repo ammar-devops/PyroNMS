@@ -643,6 +643,16 @@
   .ontmgr-head .btn-close:hover { color:var(--text); }
   .ontmgr-body { padding:20px 22px; overflow-y:auto; flex:1; }
   .ontmgr-loading { display:flex; align-items:center; justify-content:center; gap:10px; padding:60px; color:var(--muted); font-size:14px; }
+  .ontmgr-tabs { display:flex; gap:2px; padding:10px 16px 0; border-bottom:1px solid var(--border); background:var(--bg2); }
+  .omtab { padding:7px 16px; border-radius:6px 6px 0 0; font-size:13px; cursor:pointer; background:transparent; border:none; color:var(--muted); transition:color .15s,background .15s; }
+  .omtab.active { background:var(--bg3); color:var(--text); font-weight:600; }
+  .omtab:hover:not(.active) { color:var(--text); }
+  .ont-graph-wrap { padding:14px 16px; display:flex; flex-direction:column; gap:16px; }
+  .ont-graph-range { display:flex; gap:6px; justify-content:flex-end; }
+  .grng { padding:3px 11px; border-radius:12px; font-size:11px; font-weight:600; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; transition:all .15s; }
+  .grng.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ont-chart-box { background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .ont-chart-box h4 { font-size:11px; color:var(--muted); margin:0 0 10px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
   .ontmgr-error { padding:30px; text-align:center; color:#f87171; font-size:14px; }
   .ontmgr-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; margin-bottom:18px; }
   .ontmgr-card { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
@@ -4557,6 +4567,135 @@ init();
 let _ontMgrCurrent = null;
 let _ontMgrReq = 0;
 
+// ── ONT Popup Tab Switching ───────────────────────────────────────────────
+function switchOmTab(name, btn) {
+  ['overview','graphs'].forEach(t => {
+    const el = document.getElementById('omTab-' + t);
+    if (el) el.style.display = t === name ? '' : 'none';
+  });
+  document.querySelectorAll('.omtab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (name === 'graphs') {
+    const sn = _ontMgrCurrent && _ontMgrCurrent.sn;
+    if (sn && !_graphLoaded) loadOntGraphs(sn, _graphRange);
+  } else {
+    // Stop auto-refresh when leaving graphs tab
+    if (_graphRefreshTimer) { clearInterval(_graphRefreshTimer); _graphRefreshTimer = null; }
+  }
+}
+
+// ── ONT Graphs ───────────────────────────────────────────────────────────
+let _graphLoaded   = false;
+let _graphRange    = '1h';
+let _graphRefreshTimer = null;
+let _chartRx       = null;
+let _chartTemp     = null;
+
+function switchGraphRange(btn) {
+  document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _graphRange = btn.dataset.r;
+  _graphLoaded = false;
+  const sn = _ontMgrCurrent && _ontMgrCurrent.sn;
+  if (sn) loadOntGraphs(sn, _graphRange);
+}
+
+async function loadOntGraphs(sn, range) {
+  const noData = document.getElementById('graphNoData');
+  const rxCanvas = document.getElementById('chartRx');
+  const tmpCanvas = document.getElementById('chartTemp');
+  if (noData) noData.style.display = 'none';
+  try {
+    const r = await fetch(`${API}/ont/graph?sn=${encodeURIComponent(sn)}&range=${range}`, { headers: authHeaders() });
+    const data = await r.json();
+    if (!data.ok || !data.labels || !data.labels.length) {
+      if (noData) noData.style.display = '';
+      if (rxCanvas) rxCanvas.style.display = 'none';
+      if (tmpCanvas) tmpCanvas.style.display = 'none';
+      return;
+    }
+    if (rxCanvas) rxCanvas.style.display = '';
+    if (tmpCanvas) tmpCanvas.style.display = '';
+    renderOntGraphs(data);
+    _graphLoaded = true;
+    // Auto-refresh every 60s
+    if (_graphRefreshTimer) clearInterval(_graphRefreshTimer);
+    _graphRefreshTimer = setInterval(() => {
+      const cur = _ontMgrCurrent && _ontMgrCurrent.sn;
+      if (cur) loadOntGraphs(cur, _graphRange);
+    }, 60000);
+  } catch(e) {
+    console.warn('[Graphs]', e);
+    if (noData) noData.style.display = '';
+  }
+}
+
+function renderOntGraphs(data) {
+  const chartDefaults = {
+    responsive: true, maintainAspectRatio: true,
+    animation: { duration: 400 },
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { ticks: { color: '#7a8099', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,.04)' } },
+      y: { ticks: { color: '#7a8099', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.07)' } }
+    }
+  };
+
+  // RX Signal chart
+  if (_chartRx) { _chartRx.destroy(); _chartRx = null; }
+  const rxCtx = document.getElementById('chartRx');
+  if (rxCtx) {
+    const rxData = data.rx_power.map(v => v);
+    _chartRx = new Chart(rxCtx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          { label: 'RX (dBm)', data: rxData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.08)',
+            borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+          { label: 'Warn -27', data: data.labels.map(() => -27), borderColor: 'rgba(245,158,11,.5)',
+            borderWidth: 1, borderDash: [4,4], pointRadius: 0 },
+          { label: 'Critical -32', data: data.labels.map(() => -32), borderColor: 'rgba(239,68,68,.5)',
+            borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+        ]
+      },
+      options: { ...chartDefaults, scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, min: -40, max: -5,
+             ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + ' dBm' } } } }
+    });
+  }
+
+  // Temperature chart
+  if (_chartTemp) { _chartTemp.destroy(); _chartTemp = null; }
+  const tmpCtx = document.getElementById('chartTemp');
+  if (tmpCtx) {
+    _chartTemp = new Chart(tmpCtx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          { label: 'Temp (°C)', data: data.temp, borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,.08)',
+            borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+          { label: 'Warn 75°C', data: data.labels.map(() => 75), borderColor: 'rgba(239,68,68,.5)',
+            borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+        ]
+      },
+      options: { ...chartDefaults, scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, min: 0, max: 90,
+             ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '°C' } } } }
+    });
+  }
+}
+
+// Reset graph state when popup closes
+function _resetGraphState() {
+  _graphLoaded = false;
+  _graphRange  = '1h';
+  if (_graphRefreshTimer) { clearInterval(_graphRefreshTimer); _graphRefreshTimer = null; }
+  if (_chartRx)   { _chartRx.destroy();   _chartRx   = null; }
+  if (_chartTemp) { _chartTemp.destroy(); _chartTemp = null; }
+}
+
 function themeForModel(model) {
   const m = (model || '').toUpperCase();
   if (/^(EG8|HG8|HS8|HN8|EG9|MA56)/.test(m) || m.includes('HUAWEI')) return { cls:'theme-huawei',  vendor:'Huawei' };
@@ -4585,6 +4724,9 @@ function closeOntManager(e) {
   document.getElementById('ontManagerOverlay').classList.remove('open');
   _ontMgrCurrent = null;
   _ontMgrReq++;   // invalidate any in-flight request
+  _resetGraphState();
+  // Reset tab back to Overview for next open
+  switchOmTab('overview', document.querySelector('.omtab'));
 }
 
 async function loadOntManagerData(sn) {
@@ -5196,7 +5338,37 @@ async function confirmProceed() {
         <button class="btn-close" onclick="closeOntManager()" title="Close">✕</button>
       </div>
       <div id="ontmgrBody" class="ontmgr-body">
-        <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
+        <!-- Tab bar -->
+        <div class="ontmgr-tabs">
+          <button class="omtab active" onclick="switchOmTab('overview',this)">📡 Overview</button>
+          <button class="omtab" onclick="switchOmTab('graphs',this)">📈 Graphs</button>
+        </div>
+        <!-- Tab: Overview -->
+        <div id="omTab-overview">
+          <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
+        </div>
+        <!-- Tab: Graphs -->
+        <div id="omTab-graphs" style="display:none">
+          <div class="ont-graph-wrap">
+            <div class="ont-graph-range">
+              <button class="grng active" data-r="1h" onclick="switchGraphRange(this)">1H</button>
+              <button class="grng" data-r="6h" onclick="switchGraphRange(this)">6H</button>
+              <button class="grng" data-r="24h" onclick="switchGraphRange(this)">24H</button>
+              <button class="grng" data-r="7d" onclick="switchGraphRange(this)">7D</button>
+            </div>
+            <div class="ont-chart-box">
+              <h4>📶 RX Signal (dBm)</h4>
+              <canvas id="chartRx" height="120"></canvas>
+            </div>
+            <div class="ont-chart-box">
+              <h4>🌡️ Temperature (°C)</h4>
+              <canvas id="chartTemp" height="100"></canvas>
+            </div>
+            <div id="graphNoData" style="display:none;text-align:center;padding:32px;color:var(--muted);font-size:13px;">
+              No signal data available for this ONT yet.<br>Data is collected every poll cycle via SNMP/SSH.
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -5438,6 +5610,8 @@ async function confirmProceed() {
           <div class="dev-nav-item" data-tab="clients" onclick="switchDevTab('clients')"><span class="ic">👥</span><span>Clients</span></div>
           <div class="dev-nav-section">System</div>
           <div class="dev-nav-item" data-tab="tr069" onclick="switchDevTab('tr069')"><span class="ic">⚙️</span><span>Management</span></div>
+          <div class="dev-nav-section">Analytics</div>
+          <div class="dev-nav-item" data-tab="graphs" onclick="switchDevTab('graphs')"><span class="ic">📈</span><span>Graphs</span></div>
         </nav>
         <div id="devBody" class="dev-body">
           <div class="dev-loading"><span class="spin" style="display:inline-block;font-size:24px">⟳</span><br><br>Loading device data…</div>
@@ -5476,11 +5650,13 @@ async function confirmProceed() {
     document.getElementById('devOverlay').classList.remove('open');
     _devCurrent = null;
     _devReq++;
+    _destroyDevGraphs();
   }
 
   function switchDevTab(tab) {
     _devTab = tab;
     document.querySelectorAll('.dev-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    if (tab === 'graphs') { renderDevGraphsTab(); return; }
     if (_devCurrent && _devCurrent.data) renderDeviceTab(tab, _devCurrent.data);
   }
 
@@ -6194,6 +6370,104 @@ async function confirmProceed() {
   if (typeof escAttr !== 'function') {
     window.escAttr = function(s) { return escHtml(s); };
   }
+
+  // ── Device Modal — Graphs Tab ────────────────────────────────────────────
+  let _devChartRx      = null;
+  let _devChartTemp    = null;
+  let _devGrRange      = '1h';
+  let _devGrTimer      = null;
+  let _devGrLoaded     = false;
+  function _destroyDevGraphs() {
+    if (_devChartRx)   { _devChartRx.destroy();   _devChartRx   = null; }
+    if (_devChartTemp) { _devChartTemp.destroy();  _devChartTemp = null; }
+    if (_devGrTimer)   { clearInterval(_devGrTimer); _devGrTimer = null; }
+    _devGrLoaded = false;
+  }
+
+  function renderDevGraphsTab() {
+    const body = document.getElementById('devBody');
+    body.innerHTML = `
+      <div class="dev-section-head">
+        <div class="dev-section-title">📈 Signal Graphs</div>
+        <div class="dev-section-sub">RX power and temperature over time — fetched from InfluxDB</div>
+      </div>
+      <div class="ont-graph-range" style="margin-bottom:14px">
+        <button class="grng ${_devGrRange==='1h'?'active':''}" data-r="1h" onclick="switchDevGrRange(this)">1H</button>
+        <button class="grng ${_devGrRange==='6h'?'active':''}" data-r="6h" onclick="switchDevGrRange(this)">6H</button>
+        <button class="grng ${_devGrRange==='24h'?'active':''}" data-r="24h" onclick="switchDevGrRange(this)">24H</button>
+        <button class="grng ${_devGrRange==='7d'?'active':''}" data-r="7d" onclick="switchDevGrRange(this)">7D</button>
+      </div>
+      <div class="ont-chart-box" style="margin-bottom:14px">
+        <h4>📶 RX Signal (dBm)</h4>
+        <canvas id="devChartRx" height="120"></canvas>
+      </div>
+      <div class="ont-chart-box">
+        <h4>🌡️ Temperature (°C)</h4>
+        <canvas id="devChartTemp" height="100"></canvas>
+      </div>
+      <div id="devGraphNoData" style="display:none;text-align:center;padding:32px;color:var(--muted);font-size:13px;">
+        No signal data available for this ONT yet.<br>Data is collected every poll cycle via SNMP/SSH.
+      </div>`;
+    const sn = _devCurrent && _devCurrent.sn;
+    if (sn) _loadDevGraphs(sn, _devGrRange);
+  }
+
+  function switchDevGrRange(btn) {
+    document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _devGrRange  = btn.dataset.r;
+    _devGrLoaded = false;
+    const sn = _devCurrent && _devCurrent.sn;
+    if (sn) _loadDevGraphs(sn, _devGrRange);
+  }
+
+  async function _loadDevGraphs(sn, range) {
+    try {
+      const r = await fetch(`${API}/ont/graph?sn=${encodeURIComponent(sn)}&range=${range}`, { headers: authHeaders() });
+      const data = await r.json();
+      const noData = document.getElementById('devGraphNoData');
+      const rxC  = document.getElementById('devChartRx');
+      const tmpC = document.getElementById('devChartTemp');
+      if (!noData) return; // tab was switched away
+      if (!data.ok || !data.labels || !data.labels.length) {
+        if (noData) noData.style.display = '';
+        if (rxC)  rxC.style.display  = 'none';
+        if (tmpC) tmpC.style.display = 'none';
+        return;
+      }
+      if (noData) noData.style.display = 'none';
+      // Destroy old charts
+      if (_devChartRx)   { _devChartRx.destroy();   _devChartRx   = null; }
+      if (_devChartTemp) { _devChartTemp.destroy();  _devChartTemp = null; }
+      const base = {
+        responsive:true, maintainAspectRatio:true, animation:{duration:350},
+        plugins:{legend:{display:false}, tooltip:{mode:'index',intersect:false}},
+        scales:{
+          x:{ticks:{color:'#7a8099',font:{size:10},maxTicksLimit:8},grid:{color:'rgba(255,255,255,.04)'}},
+          y:{ticks:{color:'#7a8099',font:{size:10}},grid:{color:'rgba(255,255,255,.07)'}}
+        }
+      };
+      if (rxC) {
+        _devChartRx = new Chart(rxC, { type:'line', data:{ labels:data.labels, datasets:[
+          {label:'RX (dBm)',data:data.rx_power,borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.08)',borderWidth:2,pointRadius:0,tension:0.3,fill:true},
+          {label:'Warn -27',data:data.labels.map(()=>-27),borderColor:'rgba(245,158,11,.5)',borderWidth:1,borderDash:[4,4],pointRadius:0},
+          {label:'Critical -32',data:data.labels.map(()=>-32),borderColor:'rgba(239,68,68,.5)',borderWidth:1,borderDash:[4,4],pointRadius:0}
+        ]}, options:{...base,scales:{...base.scales,y:{...base.scales.y,min:-40,max:-5,ticks:{...base.scales.y.ticks,callback:v=>v+' dBm'}}}}});
+      }
+      if (tmpC) {
+        _devChartTemp = new Chart(tmpC, { type:'line', data:{ labels:data.labels, datasets:[
+          {label:'Temp (°C)',data:data.temp,borderColor:'#f97316',backgroundColor:'rgba(249,115,22,.08)',borderWidth:2,pointRadius:0,tension:0.3,fill:true},
+          {label:'Warn 75°C',data:data.labels.map(()=>75),borderColor:'rgba(239,68,68,.5)',borderWidth:1,borderDash:[4,4],pointRadius:0}
+        ]}, options:{...base,scales:{...base.scales,y:{...base.scales.y,min:0,max:90,ticks:{...base.scales.y.ticks,callback:v=>v+'°C'}}}}});
+      }
+      _devGrLoaded = true;
+      if (_devGrTimer) clearInterval(_devGrTimer);
+      _devGrTimer = setInterval(() => {
+        if (_devTab === 'graphs' && _devCurrent) _loadDevGraphs(_devCurrent.sn, _devGrRange);
+      }, 60000);
+    } catch(e) { console.warn('[DevGraphs]', e); }
+  }
+
   </script>
 
 </body>

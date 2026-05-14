@@ -1208,6 +1208,60 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ont": ont})
             return self.send_json(502, {"error": "Live check failed or timed out"})
 
+        # ── GET /ont/graph?sn=XXXX&range=1h — InfluxDB time-series for ONT charts ──
+        elif parsed.path == "/ont/graph":
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip()
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+            rng = (params.get("range", ["6h"])[0] or "6h").strip()
+            if rng not in ("1h", "6h", "24h", "7d"):
+                rng = "6h"
+            step_map  = {"1h": "1m", "6h": "5m", "24h": "15m", "7d": "1h"}
+            label_fmt = {"1h": "%H:%M", "6h": "%H:%M", "24h": "%H:%M", "7d": "%m/%d %H:%M"}
+            step = step_map[rng]
+            flux = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -{rng})
+  |> filter(fn: (r) => r._measurement == "ont_optical" and r.sn == "{sn}")
+  |> filter(fn: (r) => r._field == "rx_power" or r._field == "tx_power" or r._field == "olt_rx" or r._field == "temp")
+  |> aggregateWindow(every: {step}, fn: mean, createEmpty: false)
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> keep(columns: ["_time", "rx_power", "tx_power", "olt_rx", "temp"])
+  |> sort(columns: ["_time"])
+'''
+            try:
+                rows = influx_query(flux)
+            except Exception as e:
+                return self.send_json(500, {"error": f"InfluxDB query failed: {e}"})
+            if not rows:
+                return self.send_json(200, {"ok": False, "sn": sn, "range": rng,
+                                            "error": "No data for this ONT in the selected range"})
+            import datetime as _dt
+            fmt = label_fmt[rng]
+            labels, rx_power, tx_power, olt_rx, temp = [], [], [], [], []
+            for r in rows:
+                t_raw = r.get("_time", "")
+                try:
+                    t = _dt.datetime.fromisoformat(t_raw.replace("Z", "+00:00"))
+                    labels.append(t.strftime(fmt))
+                except Exception:
+                    labels.append(t_raw[-8:] if len(t_raw) >= 8 else t_raw)
+                def _fv(key):
+                    v = r.get(key, "")
+                    try: return round(float(v), 2) if v not in ("", None) else None
+                    except Exception: return None
+                rx_power.append(_fv("rx_power"))
+                tx_power.append(_fv("tx_power"))
+                olt_rx.append(_fv("olt_rx"))
+                temp.append(_fv("temp"))
+            return self.send_json(200, {
+                "ok": True, "sn": sn, "range": rng,
+                "labels": labels, "rx_power": rx_power,
+                "tx_power": tx_power, "olt_rx": olt_rx, "temp": temp
+            })
+
         # ── GET /ont/info?sn=XXXX — live SSH ONT detail (replaces GenieACS) ──
         elif parsed.path == "/ont/info":
             user = require_auth(self)

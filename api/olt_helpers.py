@@ -123,7 +123,11 @@ def get_unregistered_onts(ip, username, password):
             if not sn:
                 continue
             vendor = re.search(r'VendorID\s*:\s*(\S+)', block)
-            model  = re.search(r'Ont EquipmentID\s*:\s*(\S+)', block)
+            # Try multiple field name variants across firmware versions
+            model  = (re.search(r'Ont\s+EquipmentID\s*:\s*(\S+)', block) or
+                      re.search(r'Equipment-ID\s*:\s*(\S+)', block) or
+                      re.search(r'EquipmentID\s*:\s*(\S+)', block) or
+                      re.search(r'Ont\s+Model\s*:\s*(\S+)', block))
             t      = re.search(r'Ont autofind time\s*:\s*([^\n]+)', block, re.I)
             fsp    = re.search(r'F/S/P\s*:\s*(\S+)', block)
             fsp_val = fsp.group(1) if fsp else '?'
@@ -135,9 +139,9 @@ def get_unregistered_onts(ip, username, password):
                 'pon':    fsp_val,
                 'slot':   slot_str,
                 'port':   port_num,
-                'vendor': vendor.group(1) if vendor else '?',
-                'model':  model.group(1) if model else '?',
-                'time':   t.group(1).strip() if t else '?'
+                'vendor': vendor.group(1) if vendor else 'HWTC',
+                'model':  model.group(1) if model else '—',
+                'time':   t.group(1).strip() if t else '—'
             })
     conn.disconnect()
     return results
@@ -145,10 +149,15 @@ def get_unregistered_onts(ip, username, password):
 def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, description,
                   vlan_id=None, user_vlan=None, vas_profile="PPP-10-IPV4-IPV6",
                   alarm_profile="alarm-profile_1", optical_alarm="optical_alarm_profile_1",
-                  slevel_profile="alarm-policy_0", tr069_profile="ACS"):
+                  slevel_profile="alarm-policy_0", tr069_profile="ACS",
+                  conn_type="none", pppoe_user="", pppoe_pass="",
+                  static_ip="", static_subnet="", static_gw=""):
     conn = olt_ssh(ip, username, password)
     conn.write_channel(f'interface gpon {slot_port}\r\n')
     time.sleep(2); conn.read_channel()
+
+    # Sanitize description — strip characters that break OLT CLI quoting
+    description = str(description).replace('"', '').replace("'", '').strip()[:64]
 
     # Build ont add command — include alarm/optical profiles inline
     cmd = (f'ont add {port} sn-auth {sn} omci ont-lineprofile-id {line_id} '
@@ -163,69 +172,125 @@ def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, 
         ont_id = int(o.group(1)) if o else -1
         extra_output = ""
 
-        # Apply alarm profiles and service-level profile
+        # ══════════════════════════════════════════════════════════════════
+        # All commands run INSIDE 'interface gpon {slot_port}' context.
+        # We entered gpon above for 'ont add' — stay in it until single quit.
+        # ══════════════════════════════════════════════════════════════════
         if ont_id >= 0:
             try:
-                cmds = [
+                # ── Step 3: TR069 ACS assignment ──────────────────────────────
+                # ont tr069-server-config {port} {ont_id} profile-id {id}
+                if tr069_profile:
+                    conn.write_channel(
+                        f'ont tr069-server-config {port} {ont_id} profile-id {tr069_profile}\r\n'
+                    )
+                    time.sleep(2); extra_output += conn.read_channel()
+
+                # ── Step 4: Optical + Alarm + Service-level profiles + Alias ──
+                profile_cmds = [
                     f'ont alarm-profile {port} {ont_id} profile-name {alarm_profile}',
                     f'ont optical-alarm-profile {port} {ont_id} profile-name {optical_alarm}',
                     f'ont service-level-profile {port} {ont_id} profile-name {slevel_profile}',
+                    f'ont alias {port} {ont_id} alias "{description}"',
                 ]
-                for c in cmds:
+                for c in profile_cmds:
                     conn.write_channel(c + '\r\n'); time.sleep(2)
                     extra_output += conn.read_channel()
-            except Exception as ex:
-                extra_output += f"\n[WARN] Profile apply error: {ex}"
 
-        # Create service-port if VLAN specified
+                # ── Step 5: General ONT VAS Profile (CRITICAL — inside gpon context) ─
+                # Correct command: ont wan-config {port} {ont_id} ip-index 1 profile-name {name}
+                # This MUST run before PPPoE dial or PPPoE stays disconnected even with correct creds.
+                if vas_profile:
+                    vas_cmd = (f'ont wan-config {port} {ont_id} ip-index 1 '
+                               f'profile-name {vas_profile}')
+                    conn.write_channel(vas_cmd + '\r\n'); time.sleep(2)
+                    extra_output += '\n[VAS] ' + conn.read_channel()
+
+                # ── Step 6: PPPoE / Static IP dial ────────────────────────────
+                if conn_type in ("pppoe", "static"):
+                    dial_vlan = str(vlan_id) if vlan_id else "10"
+                    ip_cmd = None
+                    if conn_type == "pppoe" and pppoe_user:
+                        ip_cmd = (f'ont ipconfig {port} {ont_id} pppoe vlan {dial_vlan} '
+                                  f'priority 0 user-account username {pppoe_user} '
+                                  f'password {pppoe_pass}')
+                    elif conn_type == "static" and static_ip:
+                        mask = static_subnet if static_subnet else "255.255.255.0"
+                        gw   = static_gw    if static_gw    else ""
+                        ip_cmd = (f'ont ipconfig {port} {ont_id} static ip {static_ip} '
+                                  f'mask {mask}' +
+                                  (f' gateway {gw}' if gw else '') +
+                                  f' vlan {dial_vlan} priority 0')
+                    if ip_cmd:
+                        conn.write_channel(ip_cmd + '\r\n'); time.sleep(3)
+                        extra_output += '\n[IPCONFIG] ' + conn.read_channel()
+
+            except Exception as ex:
+                extra_output += f"\n[WARN] gpon context commands error: {ex}"
+
+        # ── Step 7: Quit gpon interface → global config (ONE quit) ────────────
+        conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+
+        # ── Step 8: Service-port (global config context) ──────────────────────
         service_port_output = ""
         if vlan_id and ont_id >= 0:
             if not user_vlan:
                 user_vlan = vlan_id
             sp_cmd = (f'service-port vlan {vlan_id} gpon {slot_port}/{port} ont {ont_id} '
                       f'gemport 1 multi-service user-vlan {user_vlan} tag-transform translate')
-            conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
             conn.write_channel(sp_cmd + '\r\n'); time.sleep(4)
             service_port_output = conn.read_channel()
 
-        # Apply TR-069 server profile (global context — after quitting gpon interface)
-        tr069_output = ""
-        if tr069_profile and ont_id >= 0:
-            try:
-                conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
-                tr_cmd = f'ont tr069-server-profile {slot_port}/{port}/{ont_id} profile-name {tr069_profile}'
-                conn.write_channel(tr_cmd + '\r\n'); time.sleep(2)
-                tr069_output = conn.read_channel()
-            except Exception as ex:
-                tr069_output = f"[WARN] TR069 profile error: {ex}"
+        # ── Step 9: Save ──────────────────────────────────────────────────────
+        conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()  # exit global config
+        conn.write_channel('save\r\n'); time.sleep(3)
+        conn.read_channel()
 
-        conn.write_channel('quit\r\n'); time.sleep(1)
+        # ── Step 10: Verify ONT state ─────────────────────────────────────────
+        # display ont info {frame} {slot} {port} {ont_id}
+        verify_output = ""
+        verify_ok = False
+        try:
+            parts = slot_port.split('/')  # e.g. ["0","1"]
+            frame = parts[0] if len(parts) > 0 else "0"
+            slot  = parts[1] if len(parts) > 1 else "0"
+            conn.write_channel(
+                f'display ont info {frame} {slot} {port} {ont_id}\r\n'
+            )
+            verify_output = _read_until_prompt(conn, delay=3, max_rounds=15)
+            run_ok    = bool(re.search(r'Run\s+state\s*[=:]\s*online', verify_output, re.I))
+            cfg_ok    = bool(re.search(r'Config\s+state\s*[=:]\s*normal', verify_output, re.I))
+            match_ok  = bool(re.search(r'Match\s+state\s*[=:]\s*match', verify_output, re.I))
+            verify_ok = run_ok and cfg_ok and match_ok
+        except Exception as ex:
+            verify_output = f"[WARN] Verify error: {ex}"
+
         conn.disconnect()
 
         all_output = out
-        if extra_output:    all_output += "\n" + extra_output
+        if extra_output:        all_output += "\n" + extra_output
         if service_port_output: all_output += "\n" + service_port_output
-        if tr069_output:    all_output += "\n" + tr069_output
-        all_output += f"\n[VAS_PROFILE] {vas_profile}"
+        if verify_output:       all_output += "\n[VERIFY] " + verify_output
 
         if "Failure" in service_port_output:
-            return False, ont_id, all_output
-        return True, ont_id, all_output
+            return False, ont_id, all_output, False  # normalised: always 4-tuple
+        return True, ont_id, all_output, verify_ok
 
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.disconnect()
-    return False, -1, out
+    return False, -1, out, None  # normalised: always 4-tuple
 
 
 def delete_onts(ip, username, password, sns):
     """Delete ONTs by SN list.  Returns list of {sn, ok, message} dicts."""
+    # olt_ssh already sends 'enable' + 'config' — we start in global config mode
     conn = olt_ssh(ip, username, password)
     results = []
     for sn in sns:
         sn = sn.strip().upper()
         try:
-            # Locate ONT on OLT
+            # ── Step 1: Locate ONT on OLT ────────────────────────────────────
             conn.write_channel(f'display ont info by-sn {sn}\r\n')
             _out = _read_until_prompt(conn, delay=3, max_rounds=20)
             _fsp_m = re.search(r'F/S/P\s*:\s*(\S+)', _out)
@@ -233,35 +298,59 @@ def delete_onts(ip, username, password, sns):
             if not _fsp_m or not _id_m:
                 results.append({'sn': sn, 'ok': False, 'message': 'ONT not found on OLT'})
                 continue
-            fsp    = _fsp_m.group(1)
-            ont_id = int(_id_m.group(1))
-            parts  = fsp.split('/')
-            slot_port = '/'.join(parts[:2])
-            port   = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            fsp       = _fsp_m.group(1)          # e.g. "0/1/1"
+            ont_id    = int(_id_m.group(1))       # e.g. 76
+            parts     = fsp.split('/')
+            slot_port = '/'.join(parts[:2])       # e.g. "0/1"
+            port      = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
 
-            # Delete service-ports first
-            sp_out = _olt_command(conn, f'display service-port port {fsp} ont {ont_id}', delay=3)
+            # ── Step 2: Remove all service-ports for this ONT (global config) ─
+            # Use 'undo service-port port {fsp} ont {ont_id}' — removes all at once.
+            # Also try the numbered list as fallback.
+            sp_removed = 0
+            sp_out = _olt_command(conn,
+                f'display service-port port {fsp} ont {ont_id}', delay=3, wait_prompt=True)
             sp_ids = re.findall(r'^\s*(\d+)\s+GPON', sp_out, re.MULTILINE)
-            for sp_id in sp_ids:
-                _olt_command(conn, f'undo service-port {sp_id}', delay=3)
 
-            # Enter GPON interface and delete ONT
+            if sp_ids:
+                # Remove by index (most reliable)
+                for sp_id in sp_ids:
+                    _olt_command(conn, f'undo service-port {sp_id}', delay=2)
+                sp_removed = len(sp_ids)
+            else:
+                # Fallback: remove by port+ont reference
+                _olt_command(conn, f'undo service-port port {fsp} ont {ont_id}', delay=2)
+
+            # ── Step 3: Enter gpon interface and delete ONT ───────────────────
             conn.write_channel(f'interface gpon {slot_port}\r\n')
             time.sleep(1.5); conn.read_channel()
+
             conn.write_channel(f'ont delete {port} {ont_id}\r\n')
             time.sleep(2)
             del_out = conn.read_channel()
-            if 'y/n' in del_out.lower() or 'sure' in del_out.lower() or 'confirm' in del_out.lower():
+
+            # Confirm if OLT prompts y/n
+            if re.search(r'\by/n\b|confirm|sure', del_out, re.IGNORECASE):
                 conn.write_channel('y\r\n')
                 time.sleep(2); conn.read_channel()
+
+            # ── Step 4: Quit gpon interface → global config ───────────────────
             conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+            # Note: save is done once after ALL deletions (below), not per-ONT.
 
             results.append({
                 'sn': sn, 'ok': True,
-                'message': f'Deleted {fsp} / ID {ont_id}. Removed {len(sp_ids)} service-port(s).'
+                'message': f'Deleted ONT {fsp}/ID:{ont_id}. '
+                           f'Removed {sp_removed} service-port(s).'
             })
         except Exception as e:
             results.append({'sn': sn, 'ok': False, 'message': str(e)})
+
+    # ── Save once after all deletions (reduces OLT flash write cycles) ────────
+    try:
+        conn.write_channel('save\r\n'); time.sleep(3); conn.read_channel()
+    except Exception:
+        pass
     try:
         conn.disconnect()
     except Exception:

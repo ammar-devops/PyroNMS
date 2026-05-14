@@ -4,7 +4,7 @@
 
 ### Network Management System for ISPs
 
-[![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
+[![Version](https://img.shields.io/badge/version-4.1.0-blue.svg)](https://github.com/PyroNet-Solutions/PyroNMS/releases)
 [![Status](https://img.shields.io/badge/status-production-success.svg)]()
 [![License](https://img.shields.io/badge/license-Proprietary-red.svg)]()
 [![Built for](https://img.shields.io/badge/OLT-Huawei%20MA5603T-orange.svg)]()

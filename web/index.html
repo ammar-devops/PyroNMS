@@ -244,6 +244,7 @@
   .toast-title { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
   .toast-msg { font-size: 12px; color: var(--muted); white-space: pre-line; }
   .toast.ok { border-left-color: #22c55e; }
+  @keyframes fadeInUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
   .toast.warn { border-left-color: #f59e0b; }
   .toast.err { border-left-color: #ef4444; }
 
@@ -1148,7 +1149,7 @@ function _barStart(){_pyroBarRefs++;const b=document.getElementById('pyro-bar');
 function _barDone(){_pyroBarRefs=Math.max(0,_pyroBarRefs-1);if(_pyroBarRefs>0)return;const b=document.getElementById('pyro-bar');if(b)b.classList.remove('running');}
 
 // ── Config ───────────────────────────────────────────────────────────────────
-const API = 'http://172.20.101.160:8088';
+const API = `http://${window.location.hostname}:8088`;
 
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -1209,13 +1210,41 @@ function updateDashboard() {
   setEl('dash-weak', weak);
   setEl('dash-bad', critical);
 
-  // Unregistered count - try from last fetch or set 0
-  setEl('dash-unreg', window._unregCount || '—');
+  // Unregistered count — show cached value, async-refresh from server
+  { const el = document.getElementById('dash-unreg'); if(el) el.textContent = window._unregCount != null ? window._unregCount : '…'; }
+  _fetchUnregCount();
 
   // Activity feed
   updateActivityFeed();
   // PON heatmap
   refreshPonHeatmap();
+}
+
+// Fetch unregistered count from server cache (fast — no SSH)
+// Updates dashboard card. Called on every updateStats().
+const _setDashEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+let _unregFetching = false;
+async function _fetchUnregCount() {
+  if (_unregFetching) return;
+  _unregFetching = true;
+  try {
+    const r = await fetch(`${API}/olt/unregistered/count`, { headers: authHeaders() });
+    if (!r.ok) { _setDashEl('dash-unreg', '—'); return; }
+    const d = await r.json();
+    if (d.scanned) {
+      window._unregCount = d.count;
+      _setDashEl('dash-unreg', d.count);
+    } else {
+      // Never scanned yet
+      _setDashEl('dash-unreg', '—');
+      const el = document.getElementById('dash-unreg');
+      if (el) el.title = 'Visit Unregistered ONTs section to scan';
+    }
+  } catch(e) {
+    _setDashEl('dash-unreg', '—');
+  } finally {
+    _unregFetching = false;
+  }
 }
 
 function updateActivityFeed() {
@@ -1374,7 +1403,7 @@ function buildPONFilterOptions() {
   if (!allONTs.length) { console.warn('[buildPONFilterOptions] allONTs empty, skipping'); return; }
   // Use full PON port (e.g. 0/1/0, 0/1/1, ...)
   const pons = [...new Set(allONTs.map(o => o.pon||'').filter(Boolean))];
-  console.log('[buildPONFilterOptions]', allONTs.length, 'ONTs ->', pons.length, 'unique PONs');
+  // console.log('[buildPONFilterOptions]', allONTs.length, 'ONTs ->', pons.length, 'unique PONs');
   pons.sort((a,b) => {
     const pa = a.split('/').map(Number);
     const pb = b.split('/').map(Number);
@@ -1389,7 +1418,7 @@ function buildPONFilterOptions() {
     html += `<option value="${p}"${sel}>${p}</option>`;
   });
   select.innerHTML = html;
-  console.log('[buildPONFilterOptions] options written:', select.options.length);
+  // console.log('[buildPONFilterOptions] options written:', select.options.length);
 }
 
 function applyAdvFilters() {
@@ -1520,7 +1549,7 @@ function previewAvatarUpload(input) {
         window._pendingAvatar = '';
         // Update header avatar with server URL
         updateAvatar(currentUser.full_name||currentUser.username, result.avatar_url+'?t='+Date.now());
-        console.log('Avatar uploaded:', result.avatar_url);
+        // console.log('Avatar uploaded:', result.avatar_url);
       } else {
         alert('Avatar upload failed: ' + result.error);
       }
@@ -2008,6 +2037,10 @@ async function loadUnregistered() {
 }
 
 function renderUnregistered(onts) {
+  // Update dashboard card with fresh scan result
+  window._unregCount = onts.length;
+  _setDashEl('dash-unreg', onts.length);
+
   const tbl = document.getElementById('unregTable');
   if (!onts.length) {
     tbl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">✓ No unregistered ONTs found</div>';
@@ -2020,6 +2053,7 @@ function renderUnregistered(onts) {
       <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Serial Number</th>
       <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Vendor</th>
       <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Model</th>
+      <th style="padding:10px 12px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Type</th>
       <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Found At</th>
       <th style="padding:10px 12px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border);">Action</th>
     </tr></thead><tbody>`;
@@ -2028,8 +2062,9 @@ function renderUnregistered(onts) {
       <td style="padding:10px 12px;"><span style="background:var(--accent);color:#fff;border-radius:5px;padding:2px 8px;font-size:12px;font-family:monospace;">${o.pon}</span></td>
       <td style="padding:10px 12px;font-family:monospace;font-size:13px;">${o.sn}</td>
       <td style="padding:10px 12px;font-size:13px;">${o.vendor}</td>
-      <td style="padding:10px 12px;font-size:13px;">${o.model}</td>
-      <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${o.time}</td>
+      <td style="padding:10px 12px;font-size:13px;color:${(!o.model||o.model==='?')?'var(--muted)':'var(--text)'};">${(!o.model||o.model==='?')?'—':o.model}</td>
+      <td style="padding:10px 12px;text-align:center;">${(()=>{ const m=o.model||''; const isUnknown=(!m||m==='?'||m==='—'); const isOnu=!isUnknown&&_isONUModel(o.vendor||'',m); if(isUnknown) return '<span style="background:rgba(100,116,139,.18);color:#94a3b8;border:1px solid rgba(100,116,139,.4);border-radius:5px;padding:2px 9px;font-size:11px;font-weight:700;" title="Model unknown — cannot determine type">?</span>'; return isOnu ? '<span style="background:rgba(99,102,241,.18);color:#818cf8;border:1px solid rgba(99,102,241,.4);border-radius:5px;padding:2px 9px;font-size:11px;font-weight:700;">ONU</span>' : '<span style="background:rgba(34,197,94,.13);color:#4ade80;border:1px solid rgba(34,197,94,.35);border-radius:5px;padding:2px 9px;font-size:11px;font-weight:700;">ONT</span>'; })()}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${(!o.time||o.time==='?')?'—':o.time}</td>
       <td style="padding:10px 12px;text-align:center;">
         <button onclick="openProvisionModal(${JSON.stringify(o).replace(/"/g,'&quot;')})"
           style="background:#1a5c2e;color:var(--green);border:1px solid #26d97f55;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">
@@ -2167,6 +2202,33 @@ function oltCfgTab(name) {
 // ── Provision Modal ───────────────────────────────────────────────────────
 let _provisionONT = null;
 
+
+// ONU (bridge-mode) model list — these devices do NOT dial PPPoE themselves.
+// The downstream router dials PPPoE; ont ipconfig command is irrelevant for them.
+const ONU_BRIDGE_MODELS = [
+  // HG80xx — single-port bridge ONU (no router)
+  'HG8010','HG8010H','HG8010C','HG8012','HG8012H',
+  // EG80xx — bridge ONU variants
+  'EG8010','EG8010H','EG8010T',
+  // HG81xx — 4-port bridge ONU (no WiFi router)
+  'HG8110','HG8110B','HG8110F',
+  'HG8120','HG8120C','HG8120L','HG8120N',
+  // HG8240 — bridge ONU
+  'HG8240','HG8240T',
+  // Note: HG8321/HG8310 removed — these have routing in some variants
+  // GP series — passive ONU
+  'GP2110','GP2140',
+];
+function _isONUModel(vendor, model) {
+  if (!model) return false;
+  const m = model.toUpperCase();
+  // Match known ONU models
+  if (ONU_BRIDGE_MODELS.some(x => m.startsWith(x))) return true;
+  // HG8010/EG80xx patterns
+  if (/^(EG|HG)8(0|1)\d{2}/.test(m)) return true;  // Only HG80xx/HG81xx are bridge-mode ONU
+  return false;
+}
+
 async function openProvisionModal(ont) {
   _provisionONT = ont;
   // Load profiles (use cached if available)
@@ -2191,15 +2253,92 @@ async function openProvisionModal(ont) {
   document.getElementById('prov-sn').textContent = ont.sn;
   document.getElementById('prov-pon').textContent = ont.pon;
   document.getElementById('prov-vendor').textContent = `${ont.vendor} ${ont.model}`;
+  // Detect ONU (bridge-mode) — hide Connection Profile, show info note
+  const _isONU = _isONUModel(ont.vendor || '', ont.model || '');
+  const _connSection = document.getElementById('prov-conn-section');
+  const _onuNote     = document.getElementById('prov-onu-note');
+  if (_connSection) _connSection.style.display = _isONU ? 'none' : '';
+  if (_onuNote)     _onuNote.style.display     = _isONU ? 'block' : 'none';
+  if (_isONU) provConnType('none');  // reset any previous selection
   document.getElementById('prov-lineprofile').innerHTML = lineOpts;
   document.getElementById('prov-srvprofile').innerHTML = srvOpts;
   document.getElementById('prov-vlan').innerHTML = vlanOpts;
   document.getElementById('prov-desc').value = '';
+  provConnType('none');
   document.getElementById('prov-uservlan').value = '10';
   document.getElementById('prov-msg').textContent = '';
   document.getElementById('prov-msg').style.color = '';
   const btn = document.getElementById('prov-submit-btn');
   btn.disabled = false; btn.textContent = 'Provision';
+}
+
+
+function provConnType(type) {
+  const pppoeF  = document.getElementById('prov-pppoe-fields');
+  const staticF = document.getElementById('prov-static-fields');
+  const noneBtn  = document.getElementById('prov-conn-none-btn');
+  const pppoeBtn = document.getElementById('prov-conn-pppoe-btn');
+  const staticBtn= document.getElementById('prov-conn-static-btn');
+  const activeStyle  = 'flex:1;padding:8px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid rgba(74,222,128,.4);background:rgba(74,222,128,.18);color:#4ade80;';
+  const inactiveStyle= 'flex:1;padding:8px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--muted);';
+  noneBtn.style.cssText   = type==='none'   ? activeStyle : inactiveStyle;
+  pppoeBtn.style.cssText  = type==='pppoe'  ? activeStyle : inactiveStyle;
+  staticBtn.style.cssText = type==='static' ? activeStyle : inactiveStyle;
+  pppoeF.style.display  = type==='pppoe'  ? 'grid' : 'none';
+  staticF.style.display = type==='static' ? 'grid' : 'none';
+}
+
+// ── Provision Success Helpers ───────────────────────────────────────────────
+function _showProvToast(name, sn, ont_id, connNote, verified) {
+  // Ensure toast container exists
+  let wrap = document.getElementById('_provToastWrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = '_provToastWrap';
+    wrap.className = 'toast-wrap';
+    document.body.appendChild(wrap);
+  }
+  const t = document.createElement('div');
+  t.className = 'toast ok';
+  t.style.cssText = 'animation:fadeInUp .25s ease;min-width:260px;';
+  t.innerHTML =
+    '<div class="toast-title">✅ ONT Provisioned!</div>' +
+    '<div class="toast-msg">' +
+      '<b>' + (name || sn) + '</b><br>' +
+      '<span style="font-family:monospace;font-size:11px;">' + sn + '</span>' +
+      (connNote ? '<br><span style="color:#4ade80;">' + connNote + '</span>' : '') +
+      (verified === true ? '<br><span style="color:#4ade80;">✅ Online · Verified</span>' : verified === false ? '<br><span style="color:#f59e0b;">⏳ Not yet online — check again shortly</span>' : '') +
+    '</div>';
+  wrap.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(() => t.remove(), 400); }, 4000);
+}
+
+function _highlightProvisionedONT(sn) {
+  if (!sn) return;
+  // Search for the SN in the table
+  const searchEl = document.getElementById('searchBox');
+  if (searchEl) {
+    searchEl.value = sn;
+    if (typeof applyFilters === 'function') applyFilters();
+    setTimeout(() => {
+      const row = document.querySelector(`tr[data-sn="${sn}"]`);
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.style.transition = 'background .3s';
+        row.style.background = 'rgba(34,197,94,.18)';
+        setTimeout(() => { row.style.background = ''; }, 2800);
+      }
+    }, 300);
+  } else {
+    // Fallback: just scroll to the row if visible
+    const row = document.querySelector(`tr[data-sn="${sn}"]`);
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.style.transition = 'background .3s';
+      row.style.background = 'rgba(34,197,94,.18)';
+      setTimeout(() => { row.style.background = ''; }, 2800);
+    }
+  }
 }
 
 function closeProvisionModal() {
@@ -2230,9 +2369,16 @@ async function submitProvision() {
       alarm_profile:    document.getElementById('prov-alarm-profile').value  || 'alarm-profile_1',
       optical_alarm:    document.getElementById('prov-optical-alarm').value  || 'optical_alarm_profile_1',
       slevel_profile:   document.getElementById('prov-slevel-profile').value || 'alarm-policy_0',
-      tr069_profile:    document.getElementById('prov-tr069-profile').value  || 'ACS',
+      tr069_profile:    document.getElementById('prov-tr069-profile').value  || '1',
       description: desc,
       method: (document.querySelector('input[name="prov-method"]:checked') || {value:'ssh'}).value,
+      is_onu:       document.getElementById('prov-conn-section')?.style.display === 'none',
+      conn_type:    (document.getElementById('prov-pppoe-fields')?.style.display !== 'none' ? 'pppoe' : document.getElementById('prov-static-fields')?.style.display !== 'none' ? 'static' : 'none'),
+      pppoe_user:   document.getElementById('prov-pppoe-user')?.value.trim()   || '',
+      pppoe_pass:   document.getElementById('prov-pppoe-pass')?.value          || '',
+      static_ip:    document.getElementById('prov-static-ip')?.value.trim()    || '',
+      static_subnet:document.getElementById('prov-static-subnet')?.value.trim()|| '',
+      static_gw:    document.getElementById('prov-static-gw')?.value.trim()    || '',
     };
     const r = await fetch(API+'/olt/provision', {
       method: 'POST',
@@ -2241,11 +2387,25 @@ async function submitProvision() {
     });
     const d = await r.json();
     if (r.ok && d.ok) {
-      msg.textContent = `✓ ONT provisioned! ONT ID: ${d.ont_id}`;
+      const connNote = d.conn_type && d.conn_type !== 'none' ? ' · ' + d.conn_type.toUpperCase() + ' dialled' : '';
+      const verNote  = d.verified === true ? ' · ✅ Online+Verified' : d.verified === false ? ' · ⏳ Not yet online' : '';
+      const provSN   = _provisionONT ? _provisionONT.sn : '';
+      const provName = document.getElementById('prov-desc')?.value?.trim() || '';
+      msg.textContent = `✓ ONT provisioned! ONT ID: ${d.ont_id}${connNote}${verNote}`;
       msg.style.color = 'var(--green)';
       btn.textContent = '✓ Done';
-      // Refresh unregistered list after 2s
-      setTimeout(() => { closeProvisionModal(); loadUnregistered(); }, 2000);
+      _showProvToast(provName, provSN, d.ont_id, connNote, d.verified);
+      setTimeout(() => {
+        closeProvisionModal();
+        loadUnregistered();
+        loadONTs().then(() => {
+          switchSection('ont');
+          setTimeout(() => _highlightProvisionedONT(provSN), 400);
+        }).catch(() => {
+          switchSection('ont');
+          setTimeout(() => _highlightProvisionedONT(provSN), 400);
+        });
+      }, 1200);
     } else {
       msg.textContent = '✗ ' + (d.error || 'Failed');
       msg.style.color = 'var(--red)';
@@ -3325,70 +3485,8 @@ function _openResolvingWindow() {
   return w;
 }
 
-async function openRouter(sn, pon, btn) {
-  const orig = btn.textContent;
-  btn.textContent = '...';
-  btn.disabled = true;
-
-  const row = allONTs.find(o => o.sn === sn) || {};
-  const cachedIp = (btn?.dataset?.ip || row.wan_ip || '').trim();
-  if (cachedIp && cachedIp !== '-' && cachedIp !== '0.0.0.0') {
-    const target = 'http://' + cachedIp;
-    btn.title = `IP: ${cachedIp}${row.wan_vlan ? ' | VLAN: '+row.wan_vlan : ''}${row.wan_status ? ' | '+row.wan_status : ''}`;
-    _openTargetUrl(target);
-    // Warm cache in background, non-blocking
-    fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}&ont_id=${encodeURIComponent(ontId || '')}`, { headers: authHeaders() })
-      .then(r => r.json()).then(d => {
-        if (d && d.ip && d.ip !== '-' && d.ip !== '0.0.0.0') {
-          const idx = allONTs.findIndex(x => x.sn === sn);
-          if (idx >= 0) {
-            allONTs[idx].wan_ip = d.ip;
-            allONTs[idx].wan_status = d.status || allONTs[idx].wan_status || '';
-            allONTs[idx].wan_vlan = d.vlan || allONTs[idx].wan_vlan || '';
-          }
-        }
-      }).catch(()=>{});
-    btn.textContent = orig;
-    btn.disabled = false;
-    return;
-  }
-
-  // No cached IP -> open a resolving page (not blank) to avoid bad UX.
-  const w = _openResolvingWindow();
-  try {
-    const r = await fetch(`${API}/ont/wan-ip?sn=${encodeURIComponent(sn)}&pon=${encodeURIComponent(pon || '')}&ont_id=${encodeURIComponent(ontId || '')}`, {
-      headers: authHeaders(),
-          });
-    const d = await r.json();
-    if (d && d.ip && d.ip !== '-' && d.ip !== '0.0.0.0') {
-      const target = 'http://' + d.ip;
-      btn.title = `IP: ${d.ip}${d.vlan ? ' | VLAN: '+d.vlan : ''}${d.status ? ' | '+d.status : ''}`;
-      const idx = allONTs.findIndex(x => x.sn === sn);
-      if (idx >= 0) {
-        allONTs[idx].wan_ip = d.ip;
-        allONTs[idx].wan_status = d.status || '';
-        allONTs[idx].wan_vlan = d.vlan || '';
-      }
-      if (w) {
-        try { w.location.href = target; } catch (_) { window.open(target, '_blank'); }
-      } else {
-        window.open(target, '_blank');
-      }
-      return;
-    }
-    if (w && !w.closed) w.close();
-    const reason = (d && d.error) ? d.error : (d && d.status ? `Status: ${d.status}` : 'No WAN IPv4 returned from ONT');
-    showAppNotice('Open Router Unavailable', `SN: ${sn}
-PON: ${pon || '-'}
-${reason}`, 'warn');
-  } catch(e) {
-    if (w && !w.closed) w.close();
-    showAppNotice('Open Router Failed', e.message || 'Could not fetch ONT WAN IP', 'err');
-  } finally {
-    btn.textContent = orig;
-    btn.disabled = false;
-  }
-}
+// NOTE: Old 3-arg openRouter(sn, pon, btn) removed — was dead code referencing
+// undefined variable `ontId`. The canonical 4-arg version below is used everywhere.
 
 function signalBadge(o) {
   if (o.status === 'power-failure') return { cls:'sig-offline', text:'⚡ Power Down' };
@@ -5510,8 +5608,8 @@ async function confirmProceed() {
           </select>
         </div>
 
-        <!-- ── RED: Compulsory defaults ── -->
-        <div style="grid-column:1/-1;border-top:1px solid rgba(239,68,68,.2);padding-top:12px;margin-top:2px;">
+        <!-- ── RED: Compulsory defaults (hidden — sent with hardcoded defaults) ── -->
+        <div style="grid-column:1/-1;border-top:1px solid rgba(239,68,68,.2);padding-top:12px;margin-top:2px;display:none;">
           <div style="font-size:10px;color:#f87171;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">⚠ Compulsory Profiles (pre-filled · editable)</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
             <div>
@@ -5528,7 +5626,54 @@ async function confirmProceed() {
             </div>
             <div>
               <div style="font-size:11px;color:#f87171;text-transform:uppercase;font-weight:600;margin-bottom:6px;">TR069 Server Profile</div>
-              <input id="prov-tr069-profile" value="ACS" style="width:100%;background:var(--bg3);border:1px solid rgba(239,68,68,.4);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="ACS">
+              <input id="prov-tr069-profile" value="1" style="width:100%;background:var(--bg3);border:1px solid rgba(239,68,68,.4);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="ACS">
+            </div>
+          </div>
+        </div>
+
+
+        <!-- ONU bridge-mode note (hidden for ONT devices) -->
+        <div id="prov-onu-note" style="grid-column:1/-1;display:none;border-top:1px solid rgba(251,191,36,.2);padding-top:12px;margin-top:4px;">
+          <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:10px 14px;font-size:12px;color:#fbbf24;">
+            🌉 <b>ONU (Bridge Mode) detected</b> — PPPoE is dialled by the downstream router, not the ONU itself.<br>
+            <span style="color:var(--muted);">Connection profile is not applicable. Provision normally — the downstream router handles authentication.</span>
+          </div>
+        </div>
+        <!-- Connection Profile — full width -->
+        <div id="prov-conn-section" style="grid-column:1/-1;border-top:1px solid rgba(74,222,128,.15);padding-top:14px;margin-top:4px;">
+          <div style="font-size:10px;color:#4ade80;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">🔌 Connection Profile</div>
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <button type="button" id="prov-conn-none-btn"  onclick="provConnType('none')"
+              style="flex:1;padding:8px;border-radius:7px;border:1px solid rgba(74,222,128,.4);background:rgba(74,222,128,.18);color:#4ade80;font-size:12px;font-weight:700;cursor:pointer;">None</button>
+            <button type="button" id="prov-conn-pppoe-btn" onclick="provConnType('pppoe')"
+              style="flex:1;padding:8px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;">📶 PPPoE</button>
+            <button type="button" id="prov-conn-static-btn" onclick="provConnType('static')"
+              style="flex:1;padding:8px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;">🖧 Static IP</button>
+          </div>
+          <!-- PPPoE Fields -->
+          <div id="prov-pppoe-fields" style="display:none;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+              <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">PPPoE Username</div>
+              <input id="prov-pppoe-user" autocomplete="off" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="user@isp.net">
+            </div>
+            <div>
+              <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">PPPoE Password</div>
+              <input id="prov-pppoe-pass" type="password" autocomplete="new-password" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="••••••••">
+            </div>
+          </div>
+          <!-- Static IP Fields -->
+          <div id="prov-static-fields" style="display:none;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div>
+              <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">IP Address</div>
+              <input id="prov-static-ip" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="192.168.x.x">
+            </div>
+            <div>
+              <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Subnet Mask</div>
+              <input id="prov-static-subnet" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="255.255.255.0">
+            </div>
+            <div>
+              <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Gateway</div>
+              <input id="prov-static-gw" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="192.168.x.1">
             </div>
           </div>
         </div>
@@ -6712,25 +6857,14 @@ async function confirmProceed() {
   let _liveTrafficTimer  = null;
   let _liveTrafficChart  = null;
   let _liveTrafficRange  = '1h';
-  let _liveRtTimer       = null;   // real-time polling timer
-  let _liveRtPoints      = [];     // [{rx, tx}]  scrolling buffer
-  let _liveRtChart       = null;
-  let _rtCountdownTimer  = null;   // 1-second countdown between polls
-  const LIVE_RT_MAX      = 60;     // keep 60 points (~10 min at 10s interval)
-  const LIVE_RT_INTERVAL = 10000;  // 10 s poll
 
   function _destroyDevGraphs() {
     if (_devChartRx)      { _devChartRx.destroy();      _devChartRx      = null; }
     if (_devChartTemp)    { _devChartTemp.destroy();     _devChartTemp    = null; }
     if (_liveTrafficChart){ _liveTrafficChart.destroy(); _liveTrafficChart= null; }
-    if (_liveRtChart)     { _liveRtChart.destroy();      _liveRtChart     = null; }
     if (_devGrTimer)      { clearInterval(_devGrTimer);  _devGrTimer      = null; }
     if (_liveTrafficTimer){ clearTimeout(_liveTrafficTimer);  _liveTrafficTimer = null; }
-    if (_liveRtTimer)        { clearTimeout(_liveRtTimer);        _liveRtTimer       = null; }
-    if (_rtCountdownTimer)   { clearInterval(_rtCountdownTimer);  _rtCountdownTimer  = null; }
-    _devGrLoaded   = false;
-    _liveRtPoints  = [];
-    _rtPrevReading = null;
+    _devGrLoaded = false;
   }
 
   function renderDevGraphsTab() {
@@ -6740,44 +6874,33 @@ async function confirmProceed() {
     _liveRtPoints = [];
 
     body.innerHTML = `
-      <!-- ══ REAL-TIME SNMP TRAFFIC ══════════════════════════════════ -->
+      <!-- ══ PON PORT TRAFFIC (SNMP) ══════════════════════════════════ -->
       <div class="dev-section-head" style="margin-bottom:10px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <div class="dev-section-title">📡 Live Interface Traffic</div>
-          <span id="rtLiveDot" style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25);">⟳ connecting…</span>
-          <span id="rtFspLabel" style="font-size:11px;color:var(--muted);"></span>
-          <span id="rtCountdown" style="font-size:10px;color:var(--muted);margin-left:4px;"></span>
+          <div class="dev-section-title">📡 PON Port Traffic (SNMP)</div>
+          <span id="snmpTrafficBadge" style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,.12);color:#818cf8;border:1px solid rgba(99,102,241,.25);">⟳ loading…</span>
         </div>
-        <div class="dev-section-sub" id="rtSub" style="margin-top:3px;">Initialising…</div>
+        <div class="dev-section-sub" id="snmpTrafficSub" style="margin-top:3px;">PON port · SNMP poller · ~2 min resolution</div>
       </div>
 
-      <!-- Current Mbps big tiles -->
+      <!-- Current Mbps stat tiles -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
         <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↓ Download (RX)</div>
-          <div id="rtRxVal" style="font-size:32px;font-weight:800;color:#4ade80;line-height:1;transition:color .3s;">—</div>
+          <div id="snmpRxVal" style="font-size:32px;font-weight:800;color:#4ade80;line-height:1;">—</div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
         </div>
         <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↑ Upload (TX)</div>
-          <div id="rtTxVal" style="font-size:32px;font-weight:800;color:#60a5fa;line-height:1;transition:color .3s;">—</div>
+          <div id="snmpTxVal" style="font-size:32px;font-weight:800;color:#60a5fa;line-height:1;">—</div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
         </div>
       </div>
 
-      <!-- Scrolling real-time chart -->
-      <div class="ont-chart-box" style="margin-bottom:20px;">
-        <h4 style="display:flex;align-items:center;justify-content:space-between;">
-          <span>RX / TX Mbps — live (GenieACS TR-069)</span>
-          <span id="rtTs" style="font-size:10px;font-weight:400;color:var(--muted);">waiting…</span>
-        </h4>
-        <canvas id="rtChart" height="120"></canvas>
-      </div>
-
-      <!-- ══ HISTORICAL RANGE (InfluxDB) ══════════════════════════════ -->
+      <!-- ══ TRAFFIC HISTORY (InfluxDB pon_traffic) ══════════════════ -->
       <div class="dev-section-head" style="margin-bottom:10px;">
         <div class="dev-section-title">📊 Traffic History</div>
-        <div class="dev-section-sub" id="liveTrafficSub">Per-ONT · GenieACS TR-069 · InfluxDB</div>
+        <div class="dev-section-sub" id="liveTrafficSub">PON port · SNMP · InfluxDB</div>
       </div>
       <div class="ont-graph-range" style="margin-bottom:12px;">
         <button class="grng ${_devGrRange==='1h'?'active':''}"  data-r="1h"  onclick="switchDevGrRange(this)">1H</button>
@@ -6812,7 +6935,6 @@ async function confirmProceed() {
       </div>`;
 
     if (sn) {
-      _startRtSNMP(sn);
       _loadLiveTrafficSNMP(sn, _liveTrafficRange);
       _loadDevGraphs(sn, _devGrRange);
     }
@@ -6831,142 +6953,24 @@ async function confirmProceed() {
     }
   };
 
-  // ── Real-time traffic polling ─────────────────────────────────────────────
-  let _rtPrevReading = null; // {rx_bytes, tx_bytes, ts} for GenieACS delta calc
-
-  function _startRtSNMP(sn) {
-    if (_liveRtTimer) { clearTimeout(_liveRtTimer); _liveRtTimer = null; }
-    _liveRtPoints  = [];
-    _rtPrevReading = null;
-    _pollRtSNMP(sn);
-  }
-
-  async function _pollRtSNMP(sn) {
-    // Clear any running countdown
-    if (_rtCountdownTimer) { clearInterval(_rtCountdownTimer); _rtCountdownTimer = null; }
-
-    const dotEl = document.getElementById('rtLiveDot');
-    const subEl = document.getElementById('rtSub');
-    const tsEl  = document.getElementById('rtTs');
-    const fspEl = document.getElementById('rtFspLabel');
-    const rxEl  = document.getElementById('rtRxVal');
-    const txEl  = document.getElementById('rtTxVal');
-    const cdEl  = document.getElementById('rtCountdown');
+  async function _loadLiveTrafficSNMP(sn, range) {
+    if (_liveTrafficTimer) { clearTimeout(_liveTrafficTimer); _liveTrafficTimer = null; }
+    const subEl   = document.getElementById('liveTrafficSub');
+    const tsEl    = document.getElementById('liveTrafficTs');
+    const rxEl    = document.getElementById('snmpRxVal');
+    const txEl    = document.getElementById('snmpTxVal');
+    const badge   = document.getElementById('snmpTrafficBadge');
+    const noData  = document.getElementById('liveTrafficNoData');
 
     const _setBadge = (text, color, bg) => {
-      if (!dotEl) return;
-      dotEl.textContent = text;
-      dotEl.style.color = color;
-      dotEl.style.borderColor = `${color}55`;
-      dotEl.style.background  = bg;
+      if (!badge) return;
+      badge.textContent = text;
+      badge.style.color = color;
+      badge.style.borderColor = `${color}55`;
+      badge.style.background  = bg;
     };
-    _setBadge('⟳ polling…', '#fbbf24', 'rgba(251,191,36,.08)');
-    if (cdEl) cdEl.textContent = '';
+    _setBadge('⟳ loading…', '#818cf8', 'rgba(99,102,241,.12)');
 
-    try {
-      const r = await fetch(`${API}/ont/traffic/live?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
-      const d = await r.json();
-      if (!d.ok) throw new Error(d.error || 'error');
-
-      // Server calculates Mbps delta server-side using _genie_prev_readings
-      const rx_mbps = d.rx_mbps ?? 0;
-      const tx_mbps = d.tx_mbps ?? 0;
-
-      if (fspEl) fspEl.textContent = '📶 per-ONT · GenieACS TR-069';
-
-      if (d.is_first) {
-        // First sample — baseline collected, Mbps available on next poll
-        if (rxEl) rxEl.textContent = '—';
-        if (txEl) txEl.textContent = '—';
-        _setBadge('⟳ baseline', '#fbbf24', 'rgba(251,191,36,.08)');
-        if (subEl) subEl.textContent = `Baseline collected · Mbps will appear on next poll (~10s)`;
-      } else {
-        if (rxEl) rxEl.textContent = rx_mbps.toFixed(2);
-        if (txEl) txEl.textContent = tx_mbps.toFixed(2);
-        _setBadge('● LIVE', '#4ade80', 'rgba(34,197,94,.12)');
-        if (subEl) subEl.textContent = `Per-ONT TR-069 · ${new Date(d.ts * 1000).toLocaleTimeString()} · RX total ${(d.rx_bytes / 1e9).toFixed(2)} GB`;
-        _liveRtPoints.push({ rx: rx_mbps, tx: tx_mbps });
-        if (_liveRtPoints.length > LIVE_RT_MAX) _liveRtPoints.shift();
-      }
-
-      if (tsEl) tsEl.textContent = new Date(d.ts * 1000).toLocaleTimeString();
-      if (_liveRtPoints.length) _renderRtChart();
-
-    } catch(e) {
-      _setBadge('✕ error', '#f87171', 'rgba(248,113,113,.08)');
-      if (subEl) subEl.textContent = `Error: ${e.message}`;
-    }
-
-    // 1-second countdown UI between polls
-    const POLL_MS = 10000;
-    let remaining = Math.round(POLL_MS / 1000);
-    if (cdEl) cdEl.textContent = `· next in ${remaining}s`;
-    _rtCountdownTimer = setInterval(() => {
-      remaining--;
-      if (remaining <= 0) {
-        if (cdEl) cdEl.textContent = '';
-        clearInterval(_rtCountdownTimer);
-        _rtCountdownTimer = null;
-      } else {
-        if (cdEl) cdEl.textContent = `· next in ${remaining}s`;
-      }
-    }, 1000);
-
-    _liveRtTimer = setTimeout(() => {
-      if (_devTab === 'graphs' && _devCurrent && _devCurrent.sn === sn)
-        _pollRtSNMP(sn);
-    }, POLL_MS);
-  }
-
-  function _renderRtChart() {
-    const canvas = document.getElementById('rtChart');
-    if (!canvas || !_liveRtPoints.length) return;
-    const n = _liveRtPoints.length;
-    const labels = _liveRtPoints.map((_, i) => {
-      const secsAgo = (n - 1 - i) * 10;   // each point = ~10s poll
-      return secsAgo === 0 ? 'now' : `-${secsAgo}s`;
-    });
-    const rxData = _liveRtPoints.map(p => p.rx);
-    const txData = _liveRtPoints.map(p => p.tx);
-    const opts = {
-      responsive: true, maintainAspectRatio: true,
-      animation: { duration: 200 },
-      plugins: {
-        legend: { display: true, position: 'top', labels: { color:'#7a8099', font:{ size:10 }, boxWidth:12, padding:12 } },
-        tooltip: { mode:'index', intersect:false, callbacks:{ label: ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} Mbps` } }
-      },
-      scales: {
-        x: { ticks:{ color:'#7a8099', font:{ size:10 }, maxRotation:0 }, grid:{ color:'rgba(255,255,255,.04)' } },
-        y: { min:0, ticks:{ color:'#7a8099', font:{ size:10 }, callback: v=>v+' Mbps' }, grid:{ color:'rgba(255,255,255,.07)' } }
-      }
-    };
-    if (_liveRtChart) {
-      _liveRtChart.data.labels           = labels;
-      _liveRtChart.data.datasets[0].data = rxData;
-      _liveRtChart.data.datasets[1].data = txData;
-      _liveRtChart.update('none');
-    } else {
-      _liveRtChart = new Chart(canvas, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
-            { label:'↓ RX Mbps', data:rxData, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.10)', borderWidth:2, pointRadius:2, tension:0.3, fill:true },
-            { label:'↑ TX Mbps', data:txData, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.08)', borderWidth:2, pointRadius:2, tension:0.3, fill:true }
-          ]
-        },
-        options: opts
-      });
-    }
-  }
-
-  async function _loadLiveTrafficSNMP(sn, range) {
-    if (_liveTrafficTimer) { clearInterval(_liveTrafficTimer); _liveTrafficTimer = null; }
-    const subEl  = document.getElementById('liveTrafficSub');
-    const tsEl   = document.getElementById('liveTrafficTs');
-    const rxEl   = document.getElementById('liveRxVal');
-    const txEl   = document.getElementById('liveTxVal');
-    const noData = document.getElementById('liveTrafficNoData');
     try {
       const r = await fetch(
         `${API}/ont/traffic?sn=${encodeURIComponent(sn)}&range=${range}`,
@@ -6975,11 +6979,13 @@ async function confirmProceed() {
       const d = await r.json();
       if (!d.ok) throw new Error(d.error || 'api error');
 
-      // Update header info
+      // Update stat tiles and subtitle
       if (rxEl)  rxEl.textContent  = d.rx_now != null ? d.rx_now.toFixed(2) : '—';
       if (txEl)  txEl.textContent  = d.tx_now != null ? d.tx_now.toFixed(2) : '—';
-      if (subEl) subEl.textContent = `Per-ONT · GenieACS TR-069 · updated ${new Date().toLocaleTimeString()} · auto-refresh every 60s`;
+      const ontNote = d.ont_count ? ` · shared by ${d.ont_count} ONTs` : '';
+      if (subEl) subEl.textContent = `PON port ${d.fsp || ''}${ontNote} · SNMP · updated ${new Date().toLocaleTimeString()}`;
       if (tsEl)  tsEl.textContent  = new Date().toLocaleTimeString();
+      _setBadge('● SNMP', '#4ade80', 'rgba(34,197,94,.12)');
 
       const canvas = document.getElementById('liveTrafficChart');
       if (!canvas) return;
@@ -7024,23 +7030,28 @@ async function confirmProceed() {
         }
       }
     } catch(e) {
+      const badge2 = document.getElementById('snmpTrafficBadge');
+      if (badge2) { badge2.textContent = '✕ error'; badge2.style.color = '#f87171'; badge2.style.borderColor = '#f8717155'; badge2.style.background = 'rgba(248,113,113,.08)'; }
       if (subEl) subEl.textContent = `Error: ${e.message}`;
       if (tsEl)  tsEl.textContent  = 'error';
     }
-    // Auto-refresh every 60s (history chart — GenieACS writes on each live poll ~10s)
+    // Auto-refresh every 120s (matches SNMP poller write interval)
     _liveTrafficTimer = setTimeout(() => {
       if (_devTab === 'graphs' && _devCurrent && _devCurrent.sn === sn)
         _loadLiveTrafficSNMP(sn, _liveTrafficRange);
-    }, 60000);
+    }, 120000);
   }
 
   function switchDevGrRange(btn) {
     document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    _devGrRange  = btn.dataset.r;
+    _devGrRange = _liveTrafficRange = btn.dataset.r;
     _devGrLoaded = false;
     const sn = _devCurrent && _devCurrent.sn;
-    if (sn) _loadDevGraphs(sn, _devGrRange);
+    if (sn) {
+      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
+      _loadDevGraphs(sn, _devGrRange);
+    }
   }
 
   async function _loadDevGraphs(sn, range) {

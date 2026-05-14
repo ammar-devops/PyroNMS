@@ -102,6 +102,9 @@ def influx_write(line_protocol: str):
 # Server-side cache for GenieACS byte-counter previous readings {dev_id: {rx, tx, ts}}
 _genie_prev_readings: dict = {}
 
+# Server-side cache for last unregistered ONT scan result
+_unreg_cache: dict = {"onts": [], "count": 0, "ts": 0, "scanned": False}
+
 
 def get_all_onts():
     """
@@ -922,12 +925,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, code, obj):
         body = json.dumps(obj, default=str).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", len(body))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", len(body))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client disconnected before response completed
 
     def send_download(self, path):
         data = path.read_bytes()
@@ -988,7 +994,7 @@ class Handler(BaseHTTPRequestHandler):
             if not user: return
             ip = params.get("ip",[""]) [0]
             snmp = params.get("snmp",["public"])[0]
-            ok, sysname = olt_helpers.test_olt_snmp(ip, snmp) if hasattr(olt_helpers, "test_olt_snmp") else olt.test_olt_snmp(ip, snmp)
+            ok, sysname = olt.test_olt_snmp(ip, snmp)
             return self.send_json(200, {"snmp": ok, "sysname": sysname})
 
         elif parsed.path == "/olt/stats":
@@ -1006,11 +1012,9 @@ class Handler(BaseHTTPRequestHandler):
                 range_str = f"{hours}h"
                 window = "5m"
             
-            client = InfluxDBClient(url="http://localhost:8086", 
-                                   token="my-super-secret-token", 
-                                   org="myisp")
+            client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
             query_api = client.query_api()
-            
+
             query = f'''
             from(bucket: "olt_monitoring")
               |> range(start: -{range_str})
@@ -1049,11 +1053,9 @@ class Handler(BaseHTTPRequestHandler):
                 range_str = f"{hours}h"
                 window = "5m"
             
-            client = InfluxDBClient(url="http://localhost:8086",
-                                   token="my-super-secret-token",
-                                   org="myisp")
+            client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
             query_api = client.query_api()
-            
+
             query = f'''
             from(bucket: "olt_monitoring")
               |> range(start: -{range_str})
@@ -1090,11 +1092,9 @@ class Handler(BaseHTTPRequestHandler):
                 range_str = f"{hours}h"
                 window = "5m"
             
-            client = InfluxDBClient(url="http://localhost:8086",
-                                   token="my-super-secret-token",
-                                   org="myisp")
+            client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
             query_api = client.query_api()
-            
+
             query = f'''
             from(bucket: "olt_monitoring")
               |> range(start: -{range_str})
@@ -1118,6 +1118,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {'data': data, 'range': range_str})
 
         elif parsed.path == "/server/stats":
+            user = require_auth(self)
+            if not user: return
             import psutil, time
             cpu = psutil.cpu_percent(interval=1)
             ram = psutil.virtual_memory()
@@ -1160,6 +1162,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(404, {"error": "Backup file not found"})
             return self.send_download(path)
 
+        elif parsed.path == "/olt/unregistered/count":
+            # Fast endpoint — returns cached count instantly (no SSH)
+            user = require_auth(self)
+            if not user: return
+            import time as _t
+            return self.send_json(200, {
+                "count":   _unreg_cache["count"],
+                "scanned": _unreg_cache["scanned"],
+                "ts":      _unreg_cache["ts"],
+                "age_min": round((_t.time() - _unreg_cache["ts"]) / 60, 1) if _unreg_cache["ts"] else None,
+            })
+
         elif parsed.path == "/olt/unregistered":
             user = require_auth(self)
             if not user: return
@@ -1167,12 +1181,20 @@ class Handler(BaseHTTPRequestHandler):
             if not olts: return self.send_json(404, {"error": "No OLTs"})
             o = olts[0]
             try:
+                import time as _t
                 onts = olt.get_unregistered_onts(o["ip"], o["username"], o["password"])
+                # Update server-side cache so dashboard card stays current
+                _unreg_cache["onts"]    = onts
+                _unreg_cache["count"]   = len(onts)
+                _unreg_cache["ts"]      = _t.time()
+                _unreg_cache["scanned"] = True
                 return self.send_json(200, {"onts": onts, "count": len(onts)})
             except Exception as e:
                 return self.send_json(500, {"error": str(e)})
 
         elif parsed.path == "/onts":
+            user = require_auth(self)
+            if not user: return
             onts = get_all_onts()
             return self.send_json(200, {"onts": onts, "count": len(onts)})
 
@@ -1306,6 +1328,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── GET /ont/live?sn=XXXX — cache-first, SSH fallback ──────────────────
         elif parsed.path == "/ont/live":
+            user = require_auth(self)
+            if not user: return
             sn = params.get("sn", [None])[0]
             if not sn:
                 return self.send_json(400, {"error": "Missing ?sn= parameter"})
@@ -1725,9 +1749,10 @@ from(bucket: "{INFLUX_BUCKET}")
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /ont/traffic?sn=XXXX&range=1h — per-ONT traffic history ──────────
-        # Queries InfluxDB ont_traffic measurement (written by /ont/traffic/live
-        # GenieACS polling) filtered by sn tag for true per-ONT data.
+        # ── GET /ont/traffic?sn=XXXX&range=1h — PON port traffic via SNMP ──────────
+        # Resolves ONT SN → FSP from ont_map.db, then queries pon_traffic
+        # measurement (written by SNMP poller every ~2 min) for the PON port.
+        # Works for ALL ONTs regardless of GenieACS enrollment.
         elif parsed.path == "/ont/traffic":
             user = require_auth(self)
             if not user: return
@@ -1738,15 +1763,20 @@ from(bucket: "{INFLUX_BUCKET}")
             if not sn:
                 return self.send_json(400, {"ok": False, "error": "Missing ?sn="})
             try:
-                sn_safe = re.sub(r'[^A-Za-z0-9_]', '_', sn)
+                # 1. Resolve SN → FSP (handles hex↔ASCII SN variants + LIKE fallback)
+                row, matched_sn = resolve_sn_in_cache(sn)
+                if not row:
+                    return self.send_json(404, {"ok": False, "error": "SN not in SNMP cache"})
+                frame, slot, port, olt_ip = row
+                fsp = f"{frame}/{slot}/{port}"
 
-                # Query InfluxDB ont_traffic measurement by sn tag (GenieACS source)
+                # 2. Query pon_traffic measurement for this PON port
                 flux = f'''from(bucket:"{INFLUX_BUCKET}")
   |> range(start:-{range_})
-  |> filter(fn:(r) => r._measurement == "ont_traffic"
-      and r.sn == "{sn_safe}"
-      and (r._field == "rx_mbps" or r._field == "tx_mbps"))
-  |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
+  |> filter(fn:(r)=>r._measurement=="pon_traffic"
+      and r.fsp=="{fsp}"
+      and (r._field=="rx_mbps" or r._field=="tx_mbps"))
+  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
   |> sort(columns:["_time"])
   |> keep(columns:["_time","rx_mbps","tx_mbps"])'''
                 rows = influx_query(flux)
@@ -1759,16 +1789,27 @@ from(bucket: "{INFLUX_BUCKET}")
                 rx_mbps = [round(float(r.get("rx_mbps") or 0), 2) for r in rows]
                 tx_mbps = [round(float(r.get("tx_mbps") or 0), 2) for r in rows]
 
+                # 3. Count ONTs sharing this PON port
+                import sqlite3 as _sq3
+                db2 = _sq3.connect("/opt/pyronms/data/ont_map.db", timeout=5)
+                cnt = db2.execute(
+                    "SELECT COUNT(*) FROM ont_map WHERE frame=? AND slot=? AND port=?",
+                    (frame, slot, port)
+                ).fetchone()[0]
+                db2.close()
+
                 return self.send_json(200, {
-                    "ok":      True,
-                    "sn":      sn,
-                    "source":  "genieacs",
-                    "range":   range_,
-                    "labels":  labels,
-                    "rx_mbps": rx_mbps,
-                    "tx_mbps": tx_mbps,
-                    "rx_now":  rx_mbps[-1] if rx_mbps else 0,
-                    "tx_now":  tx_mbps[-1] if tx_mbps else 0,
+                    "ok":        True,
+                    "sn":        sn,
+                    "fsp":       fsp,
+                    "source":    "snmp",
+                    "ont_count": cnt,
+                    "range":     range_,
+                    "labels":    labels,
+                    "rx_mbps":   rx_mbps,
+                    "tx_mbps":   tx_mbps,
+                    "rx_now":    rx_mbps[-1] if rx_mbps else 0,
+                    "tx_now":    tx_mbps[-1] if tx_mbps else 0,
                 })
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
@@ -1959,7 +2000,7 @@ from(bucket:"{INFLUX_BUCKET}")
                         lp_name, sp_name, desc)
                 else:
                     # Default: SSH provisioning
-                    ok, ont_id, output = olt.provision_ont(
+                    _prov_result = olt.provision_ont(
                         o["ip"],o["username"],o["password"],
                         sn,payload.get("slot_port","0/1"),
                         int(payload.get("port",0)),
@@ -1971,8 +2012,45 @@ from(bucket:"{INFLUX_BUCKET}")
                         payload.get("alarm_profile","alarm-profile_1"),
                         payload.get("optical_alarm","optical_alarm_profile_1"),
                         payload.get("slevel_profile","alarm-policy_0"),
-                        payload.get("tr069_profile","ACS"))
-                if ok: return self.send_json(200, {"ok":True,"ont_id":ont_id,"method":method})
+                        payload.get("tr069_profile","1"),
+                        conn_type    = payload.get("conn_type","none"),
+                        pppoe_user   = payload.get("pppoe_user",""),
+                        pppoe_pass   = payload.get("pppoe_pass",""),
+                        static_ip    = payload.get("static_ip",""),
+                        static_subnet= payload.get("static_subnet",""),
+                        static_gw    = payload.get("static_gw",""))
+                    # provision_ont returns (ok, ont_id, output, verify_ok)
+                    ok       = _prov_result[0]
+                    ont_id   = _prov_result[1]
+                    output   = _prov_result[2]
+                    verify_ok= _prov_result[3] if len(_prov_result) > 3 else None
+                if ok:
+                    # Write a synthetic InfluxDB point so the ONT appears immediately
+                    # in the PyroNMS list without waiting for the next poll cycle.
+                    try:
+                        slot_port_str = payload.get("slot_port","0/1")
+                        port_str = str(int(payload.get("port",0)))
+                        fsp = f"{slot_port_str}/{port_str}"
+                        sn_clean = sn.replace(" ","").upper()
+                        desc_esc = desc.replace('"', '\\"').replace(",","\\,").replace("=","\\=").replace(" ","\\ ")
+                        sn_tag   = sn_clean.replace(",","\\,").replace("=","\\=").replace(" ","\\ ")
+                        lp = (
+                            f'ont_status,sn={sn_tag},pon={fsp},description={desc_esc},'
+                            f'olt={o["ip"]},ont_id={ont_id}i '
+                            f'online=1i,state="online" '
+                            f'{int(time.time())}'
+                        )
+                        influx_write(lp)
+                    except Exception as _iex:
+                        print(f"[provision] influx seed warn: {_iex}")
+                    conn_type = payload.get("conn_type", "none")
+                    return self.send_json(200, {
+                        "ok": True,
+                        "ont_id": ont_id,
+                        "method": method,
+                        "conn_type": conn_type,
+                        "verified": verify_ok,  # True=online+normal+match, False=not yet, None=skip
+                    })
                 return self.send_json(500, {"error":"Failed","output":output,"method":method})
             except Exception as e:
                 return self.send_json(500, {"error":str(e),"method":method})
@@ -2218,7 +2296,7 @@ from(bucket:"{INFLUX_BUCKET}")
             return self.send_json(200, {'ok': True, 'slot': slot, 'interval': interval})
 
         # ── POST /ont/action — bulk ONT lifecycle actions (v2.8.0) ──────────
-        if parsed.path == "/ont/action":
+        elif parsed.path == "/ont/action":
             user = require_auth(self)
             if not user: return
             if user.get("role") not in ("superadmin", "admin"):

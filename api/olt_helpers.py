@@ -142,32 +142,76 @@ def get_unregistered_onts(ip, username, password):
     conn.disconnect()
     return results
 
-def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, description, vlan_id=None, user_vlan=None, vas_profile="PPP-10-IPV4-IPV6"):
+def provision_ont(ip, username, password, sn, slot_port, port, line_id, srv_id, description,
+                  vlan_id=None, user_vlan=None, vas_profile="PPP-10-IPV4-IPV6",
+                  alarm_profile="alarm-profile_1", optical_alarm="optical_alarm_profile_1",
+                  slevel_profile="alarm-policy_0", tr069_profile="ACS"):
     conn = olt_ssh(ip, username, password)
     conn.write_channel(f'interface gpon {slot_port}\r\n')
     time.sleep(2); conn.read_channel()
-    cmd = f'ont add {port} sn-auth {sn} omci ont-lineprofile-id {line_id} ont-srvprofile-id {srv_id} desc "{description}"'
-    conn.write_channel(cmd+'\r\n'); time.sleep(5)
+
+    # Build ont add command — include alarm/optical profiles inline
+    cmd = (f'ont add {port} sn-auth {sn} omci ont-lineprofile-id {line_id} '
+           f'ont-srvprofile-id {srv_id} desc "{description}"')
+    conn.write_channel(cmd + '\r\n'); time.sleep(5)
     out = conn.read_channel()
-    service_port_output = ""
+
     s = re.search(r'success:\s*(\d+)', out)
     o = re.search(r'ONTID\s*:\s*(\d+)', out)
+
     if s and int(s.group(1)) > 0:
         ont_id = int(o.group(1)) if o else -1
+        extra_output = ""
+
+        # Apply alarm profiles and service-level profile
+        if ont_id >= 0:
+            try:
+                cmds = [
+                    f'ont alarm-profile {port} {ont_id} profile-name {alarm_profile}',
+                    f'ont optical-alarm-profile {port} {ont_id} profile-name {optical_alarm}',
+                    f'ont service-level-profile {port} {ont_id} profile-name {slevel_profile}',
+                ]
+                for c in cmds:
+                    conn.write_channel(c + '\r\n'); time.sleep(2)
+                    extra_output += conn.read_channel()
+            except Exception as ex:
+                extra_output += f"\n[WARN] Profile apply error: {ex}"
+
+        # Create service-port if VLAN specified
+        service_port_output = ""
         if vlan_id and ont_id >= 0:
             if not user_vlan:
                 user_vlan = vlan_id
-            sp_cmd = f'service-port vlan {vlan_id} gpon {slot_port}/{port} ont {ont_id} gemport 1 multi-service user-vlan {user_vlan} tag-transform translate'
+            sp_cmd = (f'service-port vlan {vlan_id} gpon {slot_port}/{port} ont {ont_id} '
+                      f'gemport 1 multi-service user-vlan {user_vlan} tag-transform translate')
             conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
             conn.write_channel(sp_cmd + '\r\n'); time.sleep(4)
             service_port_output = conn.read_channel()
+
+        # Apply TR-069 server profile (global context — after quitting gpon interface)
+        tr069_output = ""
+        if tr069_profile and ont_id >= 0:
+            try:
+                conn.write_channel('quit\r\n'); time.sleep(1); conn.read_channel()
+                tr_cmd = f'ont tr069-server-profile {slot_port}/{port}/{ont_id} profile-name {tr069_profile}'
+                conn.write_channel(tr_cmd + '\r\n'); time.sleep(2)
+                tr069_output = conn.read_channel()
+            except Exception as ex:
+                tr069_output = f"[WARN] TR069 profile error: {ex}"
+
         conn.write_channel('quit\r\n'); time.sleep(1)
         conn.disconnect()
-        all_output = out + ("\n" + service_port_output if service_port_output else "")
+
+        all_output = out
+        if extra_output:    all_output += "\n" + extra_output
+        if service_port_output: all_output += "\n" + service_port_output
+        if tr069_output:    all_output += "\n" + tr069_output
         all_output += f"\n[VAS_PROFILE] {vas_profile}"
+
         if "Failure" in service_port_output:
             return False, ont_id, all_output
         return True, ont_id, all_output
+
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.disconnect()
@@ -453,12 +497,29 @@ def _parse_service_port(output):
     return {}
 
 def _safe_cli_value(value, name):
+    """Sanitize value for safe CLI insertion. No spaces / quotes / shell metachars."""
     value = str(value or '').strip()
     if not value:
         return ''
     if re.search(r'[\s"\';`$\\]', value):
         raise ValueError(f'{name} contains unsupported CLI characters')
     return value
+
+
+def _safe_cli_quoted(value, name, max_len=32):
+    """Sanitize value that may contain spaces (SSID names, descriptions).
+    Returns a quoted string ready for CLI; blocks dangerous shell/quote chars
+    but ALLOWS spaces. Caller should append the returned string as-is.
+    """
+    value = str(value or '').strip()
+    if not value:
+        return ''
+    if re.search(r'["\';`$\\]', value):
+        raise ValueError(f'{name} contains unsupported characters (quotes/backticks/etc.)')
+    if len(value) > max_len:
+        raise ValueError(f'{name} too long ({len(value)} > {max_len} chars)')
+    # Huawei MA5603T accepts SSID name in double quotes when it contains spaces.
+    return f'"{value}"' if ' ' in value else value
 
 def apply_ont_settings(ip, username, password, payload):
     method = payload.get('method', 'ssh')
@@ -605,12 +666,103 @@ def apply_ont_settings(ip, username, password, payload):
         outputs.append(f"[GENERAL_ONT_VAS_PROFILE] {vas_profile}")
         outputs.append(f"[SERVICE_DESCRIPTION] {service_description}")
 
+    # ── Lightweight PPPoE credential update (no service-port, no VAS profile) ──
+    if kind == 'pppoe_creds':
+        ppp_user = _safe_cli_value(payload.get('pppoe_username', ''), 'PPPoE username')
+        ppp_pass = _safe_cli_value(payload.get('pppoe_password', ''), 'PPPoE password')
+        if not ppp_user or not ppp_pass:
+            conn.disconnect()
+            return False, 'PPPoE username and password are both required'
+        vlan = str(payload.get('vlan_id') or '10')
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1); outputs.append(conn.read_channel())
+        ipconfig_cmd = (f'ont ipconfig {ont["port"]} {ont["ont_id"]} ip-index 1 '
+                        f'pppoe user-account username {ppp_user} password {ppp_pass} '
+                        f'vlan {vlan} priority 0')
+        outputs.append(_olt_command(conn, ipconfig_cmd, delay=4))
+        outputs.append('[PPPOE_CREDS_UPDATED] PPPoE username/password sent via ont ipconfig only.')
+        conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
+
+    # ── Static IP update (lightweight, no service-port changes) ─────────────
+    if kind == 'static_ip':
+        ip_addr = _safe_cli_value(payload.get('ip', ''), 'IP address')
+        subnet  = _safe_cli_value(payload.get('subnet', ''), 'Subnet mask')
+        gateway = _safe_cli_value(payload.get('gateway', ''), 'Gateway')
+        vlan    = str(payload.get('vlan_id') or '10')
+        dns1    = _safe_cli_value(payload.get('dns1', ''), 'Primary DNS')
+        dns2    = _safe_cli_value(payload.get('dns2', ''), 'Secondary DNS')
+        if not ip_addr or not subnet or not gateway:
+            conn.disconnect()
+            return False, 'IP address, subnet mask and gateway are required'
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1); outputs.append(conn.read_channel())
+        cmd = (f'ont ipconfig {ont["port"]} {ont["ont_id"]} ip-index 1 static '
+               f'ip-address {ip_addr} subnet-mask {subnet} gateway {gateway} '
+               f'vlan {vlan} priority 0')
+        outputs.append(_olt_command(conn, cmd, delay=4))
+        outputs.append('[STATIC_IP_UPDATED] Static IP sent via ont ipconfig only.')
+        conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
+
+    # ── WLAN Radio settings (channel + channel width) ────────────────────────
+    if kind == 'wlan_radio':
+        radio_index = int(payload.get('radio_index', 1))   # 1=2.4G, 2=5G
+        channel     = payload.get('channel', '').strip()
+        width       = payload.get('channel_width', '').strip()
+        VALID_CHANNELS_24 = {'auto','1','2','3','4','5','6','7','8','9','10','11','12','13'}
+        VALID_CHANNELS_5  = {'auto','36','40','44','48','52','56','60','64','149','153','157','161','165'}
+        VALID_WIDTHS      = {'auto','20mhz','40mhz','80mhz'}
+        valid_ch = VALID_CHANNELS_24 if radio_index == 1 else VALID_CHANNELS_5
+        if channel and channel not in valid_ch:
+            conn.disconnect(); return False, f'Invalid channel value: {channel}'
+        if width and width not in VALID_WIDTHS:
+            conn.disconnect(); return False, f'Invalid channel width: {width}'
+        if not channel and not width:
+            conn.disconnect(); return False, 'No radio settings to update'
+        conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+        time.sleep(1); outputs.append(conn.read_channel())
+        base_r = (f'ont wlan-radio-config {ont["port"]} {ont["ont_id"]} '
+                  f'radio-index {radio_index}')
+        if channel:
+            outputs.append(_olt_command(conn, f'{base_r} channel {channel}', delay=3))
+        if width:
+            outputs.append(_olt_command(conn, f'{base_r} channel-width {width}', delay=3))
+        outputs.append('[WLAN_RADIO_UPDATED] Radio settings sent to OLT.')
+        conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
+
     if kind in ('wifi', 'lan'):
         if kind == 'wifi':
-            outputs.append(f"[WIFI_CAPTURED] band={payload.get('band','')} ssid={payload.get('ssid','')} channel={payload.get('channel','')} width={payload.get('channel_width','')} country={payload.get('country','')} enabled={payload.get('enabled')}")
+            ssid_index = int(payload.get('ssid_index', 1))
+            wpa_pass   = _safe_cli_value (payload.get('password', ''),  'WiFi password')
+            ssid_name  = _safe_cli_quoted(payload.get('ssid_name', ''), 'SSID name')
+            enabled    = payload.get('enabled', None)   # None = not provided
+            auth_mode_chk    = payload.get('auth_mode', '').strip()
+            encrypt_mode_chk = payload.get('encrypt_mode', '').strip()
+            if not wpa_pass and not ssid_name and enabled is None and not auth_mode_chk and not encrypt_mode_chk:
+                conn.disconnect()
+                return False, 'No WLAN fields to update'
+            conn.write_channel(f'interface gpon {ont["slot_port"]}\r\n')
+            time.sleep(1); outputs.append(conn.read_channel())
+            base = f'ont wlan-config {ont["port"]} {ont["ont_id"]} ssid-index {ssid_index}'
+            if wpa_pass:
+                outputs.append(_olt_command(conn, f'{base} wpa-passwd {wpa_pass}', delay=3))
+            if ssid_name:
+                outputs.append(_olt_command(conn, f'{base} ssid {ssid_name}', delay=3))
+            if enabled is not None:
+                flag = 'enable' if enabled else 'disable'
+                outputs.append(_olt_command(conn, f'{base} ssid-enable {flag}', delay=3))
+            auth_mode    = payload.get('auth_mode', '').strip()
+            encrypt_mode = payload.get('encrypt_mode', '').strip()
+            VALID_AUTH    = {'wpa2-psk', 'wpa-wpa2-psk', 'open'}
+            VALID_ENCRYPT = {'aes', 'tkip', 'tkip-aes'}
+            if auth_mode and auth_mode in VALID_AUTH:
+                outputs.append(_olt_command(conn, f'{base} auth-mode {auth_mode}', delay=3))
+            if encrypt_mode and encrypt_mode in VALID_ENCRYPT:
+                outputs.append(_olt_command(conn, f'{base} encrypt-mode {encrypt_mode}', delay=3))
+            outputs.append('[WLAN_UPDATED] WLAN settings sent to OLT.')
+            conn.write_channel('quit\r\n'); time.sleep(1); outputs.append(conn.read_channel())
         else:
             outputs.append(f"[LAN_CAPTURED] lan_ip={payload.get('lan_ip','')} dhcp_start={payload.get('dhcp_start','')} dhcp_end={payload.get('dhcp_end','')} dhcp_enabled={payload.get('dhcp_enabled')}")
-        outputs.append(f"[{kind.upper()}_STATUS] Template pending for terminal model-specific write commands.")
+            outputs.append('[LAN_STATUS] Template pending for terminal model-specific write commands.')
 
     conn.write_channel('quit\r\n'); time.sleep(1)
     conn.disconnect()
@@ -1111,7 +1263,103 @@ def snmp_map_ont_candidates(ip, read_community, pon='', ont_id=None, expected_na
     }
 
 
-def get_ont_full_info(ip, username, password, sn):
+def _snmp_ont_optical(ip, community, frame, slot, port, ont_id):
+    """
+    Query Huawei MA5603T hwGponDeviceOntOpticalInfoTable via SNMP v2c.
+    Returns dict with any of: rx_power (float dBm), tx_power (float dBm), temp (int °C).
+    Index formula:  packed = 0xF8000000 + (slot << 23) + (port << 12)
+    OID: 1.3.6.1.4.1.2011.6.128.1.1.2.51.1.<col>.<packed_port>.<ont_id>
+         col 4 = RxOpticalPower (0.01 dBm), col 5 = TxOpticalPower, col 6 = Temperature
+    """
+    BASE        = '1.3.6.1.4.1.2011.6.128.1.1.2.51.1'
+    packed_port = 0xF8000000 + (int(slot) << 23) + (int(port) << 12)
+    suffix      = f'{packed_port}.{int(ont_id)}'
+
+    def _get(oid):
+        try:
+            r = subprocess.run(
+                ['snmpget', '-v2c', '-c', community, '-Oqv',
+                 '-t', '3', '-r', '1', ip, oid],
+                capture_output=True, text=True, timeout=8)
+            if r.returncode != 0:
+                return None
+            v = (r.stdout or '').strip().strip('"')
+            return None if (not v or 'No Such' in v) else v
+        except Exception:
+            return None
+
+    def _to_dbm(raw):
+        m = re.search(r'[-+]?\d+(?:\.\d+)?', raw or '')
+        if not m:
+            return None
+        val = float(m.group(0))
+        # Values > ±100 mean 0.01 dBm encoding; small values are already dBm
+        return round(val / 100.0, 2) if abs(val) > 100 else val
+
+    def _to_int(raw):
+        m = re.search(r'\d+', raw or '')
+        return int(m.group(0)) if m else None
+
+    result = {}
+    # Only col 4 (OLT-measured upstream RX = ONT signal received at OLT) is confirmed.
+    # Col 5/6 units are ambiguous (col 5 ≠ ONT TX in 0.01 dBm, col 6 ≠ temp in °C).
+    # TX power and temperature are fetched via SSH optical-info instead.
+    rx = _get(f'{BASE}.4.{suffix}')
+    if rx is not None:
+        v = _to_dbm(rx)
+        if v is not None: result['rx_power'] = v
+    return result
+
+
+def _parse_ont_optical_ssh(text, port, ont_id):
+    """
+    Parse 'display ont optical-info {port} {ont_id}' output.
+    Handles both formats:
+      Detailed: 'Rx optical power(dBm)  : -32.21'
+      Table:    '<port>  <ont_id>  <rx>  <tx>  <olt_rx>  <voltage>  <bias>  <temp>'
+    """
+    result = {}
+
+    # ── Detailed (per-ONT) format (primary) ──────────────────────────────────
+    rx_m  = re.search(r'Rx optical power\s*\(dBm\)\s*:\s*([-\d.]+)', text, re.IGNORECASE)
+    tx_m  = re.search(r'Tx optical power\s*\(dBm\)\s*:\s*([-\d.]+)', text, re.IGNORECASE)
+    tmp_m = re.search(r'Temperature\s*\(C\)\s*:\s*(\d+)',             text, re.IGNORECASE)
+    if rx_m:
+        try: result['rx_power'] = float(rx_m.group(1))
+        except Exception: pass
+    if tx_m:
+        try: result['tx_power'] = float(tx_m.group(1))
+        except Exception: pass
+    if tmp_m:
+        try: result['temp'] = int(tmp_m.group(1))
+        except Exception: pass
+
+    if result:
+        return result
+
+    # ── Table format fallback ─────────────────────────────────────────────────
+    p, o = int(port), int(ont_id)
+    row_re = re.compile(
+        rf'\b{p}\s+{o}\s+'
+        rf'([-\d.]+)\s+'     # rx_power
+        rf'([-\d.]+)\s+'     # tx_power
+        rf'([-\d.]+)\s+'     # olt_rx
+        rf'(\d+)\s+'         # voltage
+        rf'(\d+)\s+'         # bias
+        rf'(\d+)'            # temp
+    )
+    m = row_re.search(text)
+    if m:
+        try: result['rx_power'] = float(m.group(1))
+        except Exception: pass
+        try: result['tx_power'] = float(m.group(2))
+        except Exception: pass
+        try: result['temp']     = int(m.group(6))
+        except Exception: pass
+    return result
+
+
+def get_ont_full_info(ip, username, password, sn, snmp_community=None):
     """
     Return structured ONT info parsed from `display ont info by-sn {sn}`
     plus `display ont version {fsp} {ont_id}`.
@@ -1139,7 +1387,9 @@ def get_ont_full_info(ip, username, password, sn):
         fsp = fsp_m.group(1)
         parts = fsp.split('/')
         slot_port = '/'.join(parts[:2])
-        port = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        frame = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+        slot  = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        port  = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
         ont_id = int(id_m.group(1))
 
         def grab(pattern, source=None, flags=0, default=''):
@@ -1205,6 +1455,44 @@ def get_ont_full_info(ip, username, password, sn):
             # Fallback: if OLT shows an IPHOST entry, this device has an IP host (routing) -> ONT
             device_type = 'ONT' if 'IPHOST' in info.upper() else 'ONU'
 
+        # ── Signal metrics: SNMP-first for RX power, SSH for TX + temperature ──
+        optical = {}
+        signal_source = 'none'
+
+        # 1) Try SNMP for RX power (fast; col 4 = OLT-measured upstream level)
+        if snmp_community:
+            try:
+                snmp_data = _snmp_ont_optical(ip, snmp_community, frame, slot, port, ont_id)
+                if snmp_data:
+                    optical.update(snmp_data)
+                    signal_source = 'snmp'
+            except Exception:
+                pass
+
+        # 2) Always run SSH optical-info to get TX power + temperature
+        #    (and RX power as fallback if SNMP didn't return it)
+        try:
+            conn.write_channel(f'interface gpon {slot_port}\r\n')
+            _read_until_prompt(conn, delay=1, max_rounds=8)
+            conn.write_channel(f'display ont optical-info {port} {ont_id}\r\n')
+            opt_raw = _read_until_prompt(conn, delay=3, max_rounds=30)
+            conn.write_channel('quit\r\n')
+            _read_until_prompt(conn, delay=1, max_rounds=8)
+            ssh_optical = _parse_ont_optical_ssh(opt_raw, port, ont_id)
+            # SSH provides tx_power + temp; only use SSH rx_power if SNMP didn't provide it
+            if ssh_optical.get('tx_power') is not None:
+                optical['tx_power'] = ssh_optical['tx_power']
+            if ssh_optical.get('temp') is not None:
+                optical['temp'] = ssh_optical['temp']
+            if optical.get('rx_power') is None and ssh_optical.get('rx_power') is not None:
+                optical['rx_power'] = ssh_optical['rx_power']
+            if signal_source == 'none' and ssh_optical:
+                signal_source = 'ssh'
+            elif signal_source == 'snmp' and ssh_optical:
+                signal_source = 'snmp+ssh'
+        except Exception:
+            pass
+
         return {
             'ok': True,
             'sn': sn,
@@ -1224,9 +1512,13 @@ def get_ont_full_info(ip, username, password, sn):
             'distance_m':       distance_m,
             'last_down_cause':  grab(r'Last down cause\s*:\s*(.+)'),
             'last_up_time':     grab(r'Last up time\s*:\s*(.+)'),
-            'online_duration':  grab(r'ONT online duration\s*:\s*(.+)'),
+            'online_duration':  grab(r'ONT online duration\s*:\r*(.+)'),
             'hw_version':       hw_version,
             'sw_version':       sw_version,
+            'rx_power':         optical.get('rx_power'),
+            'tx_power':         optical.get('tx_power'),
+            'temp':             optical.get('temp'),
+            'signal_source':    signal_source,
             'raw_info':    info[-8000:],
             'raw_version': ver[-3000:],
         }
@@ -1276,6 +1568,12 @@ def get_ont_config(ip, username, password, sn):
 
     conn = olt_ssh(ip, username, password)
     try:
+        # Disable OLT pager for entire session — eliminates "---- More ----"
+        # pager-bleed issues that mangle subsequent commands.
+        conn.write_channel('screen-length 0 temporary\r\n')
+        time.sleep(1); conn.read_channel()
+        _hard_drain(conn)
+
         find_out = _olt_command(conn, f'display ont info by-sn {sn}', delay=2, wait_prompt=True)
         fsp_m = re.search(r'F/S/P\s*:\s*(\S+)', find_out)
         id_m  = re.search(r'ONT-ID\s*:\s*(\d+)', find_out)
@@ -1293,23 +1591,52 @@ def get_ont_config(ip, username, password, sn):
         _olt_command(conn, f'interface gpon {slot_port}', delay=2, wait_prompt=True)
         _hard_drain(conn)
 
-        # WLAN and ipconfig produce SHORT output that doesn't trigger pager — run them first.
-        # WAN is heavy and may leave the OLT in pager state, so run it last.
-        wlan_raw  = _olt_command(conn, f'display ont wlan-info {port} {ont_id}', delay=2, wait_prompt=True)
-        _hard_drain(conn)
-        ipcfg_raw = _olt_command(conn, f'display ont ipconfig {port} {ont_id}', delay=2, wait_prompt=True)
-        _hard_drain(conn)
-        wan_raw   = _olt_command(conn, f'display ont wan-info {port} {ont_id}', delay=2, wait_prompt=True)
-        _hard_drain(conn, settle_rounds=6, max_seconds=15)
+        # Robust per-command runner: flush prompt with \r\n, drain, then send.
+        # Prevents Huawei pager-state from eating leading chars/spaces of the next command.
+        def _safe_display(cmd, settle=2.0, max_wait=20):
+            conn.write_channel('\r\n')                # flush any input buffer state
+            time.sleep(0.4)
+            conn.read_channel()                       # discard echo prompt
+            conn.write_channel(cmd + '\r\n')
+            time.sleep(settle)
+            buf = ''
+            end = time.time() + max_wait
+            while time.time() < end:
+                chunk = conn.read_channel()
+                if chunk:
+                    # Push past any pager prompts
+                    if '---- More' in chunk or "Press 'Q'" in chunk:
+                        conn.write_channel(' ')
+                        time.sleep(0.6)
+                        chunk += conn.read_channel()
+                    buf += chunk
+                    stripped = buf.rstrip()
+                    if stripped.endswith('#') or stripped.endswith(']'):
+                        break
+                else:
+                    time.sleep(0.5)
+            return buf
+
+        wan_raw   = _safe_display(f'display ont wan-info {port} {ont_id}', settle=2.5, max_wait=25)
+        wlan_raw  = _safe_display(f'display ont wlan-info {port} {ont_id}', settle=2.0, max_wait=15)
+        ipcfg_raw = _safe_display(f'display ont ipconfig {port} {ont_id}', settle=1.5, max_wait=10)
 
         wan  = _parse_wan_full(wan_raw)
-        wlan = _parse_wlan_full(wlan_raw)
         mgmt = _parse_ont_ipconfig(ipcfg_raw)
+
+        # Detect OLT-level "this ONT model doesn't support WLAN reporting"
+        _wlan_unsupported = 'The ONT can not support' in wlan_raw or 'Failure:' in wlan_raw
+        if _wlan_unsupported:
+            wlan = {'ssids': [], 'bands_present': [], 'total': 0, 'supported': False}
+            warnings.append('WLAN not supported — this ONT model does not expose WLAN data via OLT CLI (HG8245 / bridge-mode devices)')
+        else:
+            wlan = _parse_wlan_full(wlan_raw)
+            wlan['supported'] = True
+            if not wlan.get('ssids'):
+                warnings.append('WLAN section empty — ONT may not have WiFi or is not reporting it')
 
         if not wan:
             warnings.append('WAN section empty — ONT may be bridge-mode or offline')
-        if not wlan.get('ssids'):
-            warnings.append('WLAN section empty — ONT may not have WiFi or is not reporting it')
 
         result = {
             'sn': sn,

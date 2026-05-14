@@ -85,6 +85,24 @@ def parse_influx_csv(csv_text):
     return rows
 
 
+def influx_write(line_protocol: str):
+    """Write a line-protocol string to InfluxDB."""
+    url = f"{INFLUX_URL}/api/v2/write?org={urllib.parse.quote(INFLUX_ORG)}&bucket={urllib.parse.quote(INFLUX_BUCKET)}&precision=s"
+    req = urllib.request.Request(url, data=line_protocol.encode(), method="POST")
+    req.add_header("Authorization", f"Token {INFLUX_TOKEN}")
+    req.add_header("Content-Type",  "text/plain; charset=utf-8")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status
+    except Exception as ex:
+        print(f"[InfluxDB] write error: {ex}")
+        return 0
+
+
+# Server-side cache for GenieACS byte-counter previous readings {dev_id: {rx, tx, ts}}
+_genie_prev_readings: dict = {}
+
+
 def get_all_onts():
     """
     Read latest ONT status + optical from InfluxDB.
@@ -192,19 +210,41 @@ from(bucket: "{INFLUX_BUCKET}")
             detail_status = "fiber-issue"
         else:
             detail_status = "offline"
+        # ── Device type heuristic (ONT router vs ONU bridge) ──────────
+        # Source-of-truth is OLT's `display ont info by-sn` (used by /ont/info),
+        # but doing that for every list refresh is too expensive. We infer from
+        # WAN-cache state instead — fast for the common case:
+        #   online + has WAN IP/status        → ONT (routes WAN traffic)
+        #   online + empty WAN cache          → ONU (bridge, no L3 to expose)
+        #   offline / power-fail / fiber-down → '?' (can't determine without OLT call)
+        # When the user opens the popup, /ont/info refreshes this with the real
+        # OntProductDescription → device_type override.
+        _wan_ip   = (wan.get("wan_ip") or "").strip()
+        _wan_stat = (wan.get("wan_status") or "").strip().lower()
+        if is_online:
+            if _wan_ip and _wan_ip != "-" and _wan_ip != "0.0.0.0":
+                device_type = "ONT"
+            elif _wan_stat in ("connected", "connecting", "disconnected") and _wan_stat:
+                device_type = "ONT"   # has WAN config, just no IP yet
+            else:
+                device_type = "ONU"   # online with no WAN at all → bridge
+        else:
+            device_type = "?"
+
         onts.append({
-            "pon":        s["pon"],
-            "ont_id":     s.get("ont_id", ""),
-            "name":       s["name"],
-            "sn":         sn,
-            "status":     detail_status,
-            "down_cause": cause,
-            "rx":         rx,
-            "temp":       temp,
-            "vlan":       s.get("vlan", ""),
-            "wan_ip":     wan.get("wan_ip", ""),
-            "wan_status": wan.get("wan_status", ""),
-            "wan_vlan":   wan.get("wan_vlan", ""),
+            "pon":         s["pon"],
+            "ont_id":      s.get("ont_id", ""),
+            "name":        s["name"],
+            "sn":          sn,
+            "status":      detail_status,
+            "down_cause":  cause,
+            "rx":          rx,
+            "temp":        temp,
+            "vlan":        s.get("vlan", ""),
+            "wan_ip":      wan.get("wan_ip", ""),
+            "wan_status":  wan.get("wan_status", ""),
+            "wan_vlan":    wan.get("wan_vlan", ""),
+            "device_type": device_type,
         })
     return onts
 
@@ -310,62 +350,139 @@ def genie_request(method, path, body=None):
         return 0, str(ex)
 
 
+def resolve_sn_in_cache(sn, db_path="/opt/pyronms/data/ont_map.db"):
+    """Resolve OLT-reported SN to the form stored in ont_map.db.
+
+    The OLT reports SN as full hex (e.g. '48575443FF9464B0').
+    The SNMP poller decodes it to ASCII-prefix form (e.g. 'HWTCFF9464B0').
+    Try both; return (row, matched_sn) or (None, None).
+    """
+    import sqlite3 as _sq
+    candidates = [sn.upper()]
+    # If 16 hex chars, try ASCII-decoding first 4 bytes (8 hex chars)
+    if len(sn) == 16 and re.match(r'^[0-9A-Fa-f]{16}$', sn):
+        try:
+            prefix = bytes.fromhex(sn[:8]).decode('ascii', errors='strict')
+            if prefix.isalnum():
+                candidates.append((prefix + sn[8:]).upper())
+        except Exception:
+            pass
+    # Also try stripping leading zeros or other normalizations
+    try:
+        _db = _sq.connect(db_path, timeout=5)
+        for cand in candidates:
+            row = _db.execute(
+                "SELECT frame, slot, port, olt_ip FROM ont_map WHERE sn=?", (cand,)
+            ).fetchone()
+            if row:
+                _db.close()
+                return row, cand
+        # Last resort: LIKE search (handles minor formatting differences)
+        row = _db.execute(
+            "SELECT frame, slot, port, olt_ip FROM ont_map WHERE sn LIKE ?",
+            (f"%{sn[-8:].upper()}",)
+        ).fetchone()
+        _db.close()
+        return (row, sn) if row else (None, None)
+    except Exception:
+        return None, None
+
+
 def find_device_id(sn):
-    """Find GenieACS _id by matching SN suffix in _id field."""
-    sn_encoded = urllib.parse.quote(sn, safe="")
-    path = f"/devices/?projection=_id"
-    status, data = genie_request("GET", path)
-    if status != 200 or not isinstance(data, list):
+    """Find GenieACS _id matching the OLT-reported SN.
+
+    Handles 3rd-party ONTs where the OLT shows SN as full hex
+    (e.g. '58504F4E05845A00') but GenieACS stores it ASCII-prefixed
+    (e.g. 'XPON05845A00') because the firmware sends it that way via TR-069.
+    """
+    if not sn:
         return None
     sn_upper = sn.upper()
+    candidates = {sn_upper}
+
+    # If 16 hex chars (8 bytes), try ASCII-decode of the first 4 bytes
+    # to handle 3rd-party ONTs where vendor prefix is sent as ASCII
+    if len(sn) == 16 and re.match(r'^[0-9A-Fa-f]{16}$', sn):
+        try:
+            vendor = bytes.fromhex(sn[:8]).decode('ascii')
+            if vendor.isalnum() and vendor.isprintable():
+                candidates.add((vendor + sn[8:]).upper())
+        except (ValueError, UnicodeDecodeError):
+            pass
+
+    # Fetch all device IDs
+    status, data = genie_request("GET", "/devices/?projection=_id")
+    if status != 200 or not isinstance(data, list):
+        return None
+
     for dev in data:
         dev_id = dev.get("_id", "")
         # GenieACS stores: OUI-ProductClass-SerialNumber (URL-encoded)
         decoded = urllib.parse.unquote(dev_id).upper()
-        if decoded.endswith(sn_upper) or dev_id.upper().endswith(sn_upper):
-            return dev_id
+        raw     = dev_id.upper()
+        for cand in candidates:
+            if decoded.endswith(cand) or raw.endswith(cand) or cand in decoded:
+                return dev_id
+    return None
+
+
+def _genie_wan_ip(sn):
+    """Fetch WAN IP from GenieACS for any ONT/ONU — PPPoE or static.
+    Reuses fetch_device_data() which is the same path as the popup Internet tab.
+    Returns IP string or None.
+    """
+    try:
+        dev_id = find_device_id(sn)
+        if not dev_id:
+            return None
+        raw = fetch_device_data(dev_id)
+        if not raw:
+            return None
+        igd = raw.get("InternetGatewayDevice", {})
+        wan_root = igd.get("WANDevice", {}).get("1", {}).get("WANConnectionDevice", {})
+        # Walk all connections — PPPoE first (preferred), then IPoE
+        for ctype_key in ("WANPPPConnection", "WANIPConnection"):
+            for wcd_key in sorted(wan_root.keys()):
+                if not wcd_key.isdigit():
+                    continue
+                wcd = wan_root.get(wcd_key, {})
+                ctype = wcd.get(ctype_key, {})
+                for conn_key in sorted(ctype.keys()):
+                    if not conn_key.isdigit():
+                        continue
+                    conn = ctype.get(conn_key, {})
+                    if not isinstance(conn, dict):
+                        continue
+                    ip_obj = conn.get("ExternalIPAddress", {})
+                    ip = (ip_obj.get("_value", "") if isinstance(ip_obj, dict) else str(ip_obj or "")).strip()
+                    if ip and ip != "-" and ip != "0.0.0.0":
+                        return ip
+    except Exception:
+        pass
     return None
 
 
 def fetch_device_data(device_id):
-    """Fetch full parameter projection for a device."""
+    """Fetch full parameter projection for a device.
+
+    NOTE: Using whole-subtree projections (LANDevice, WANDevice) instead of leaf paths
+    so we capture nested collections (Hosts.Host.*, WANPPPConnection.*, WLANConfiguration.*)
+    without enumerating every index.
+    """
     projection = ",".join([
         "_id",
         "_lastInform",
         "DeviceID",
         "summary",
         # Summary
-        "InternetGatewayDevice.DeviceInfo.SerialNumber",
-        "InternetGatewayDevice.DeviceInfo.Manufacturer",
-        "InternetGatewayDevice.DeviceInfo.ModelName",
-        "InternetGatewayDevice.DeviceInfo.HardwareVersion",
-        "InternetGatewayDevice.DeviceInfo.SoftwareVersion",
-        "InternetGatewayDevice.DeviceInfo.UpTime",
-        "InternetGatewayDevice.ManagementServer.URL",
-        "InternetGatewayDevice.ManagementServer.PeriodicInformInterval",
-        "InternetGatewayDevice.ManagementServer.ConnectionRequestURL",
-        # WAN
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.DefaultGateway",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.DNSServers",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Uptime",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.DefaultGateway",
-        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.DNSServers",
-        # LAN
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPRouters",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DNSServers",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MinAddress",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MaxAddress",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.SubnetMask",
-        "InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DHCPLeaseTime",
-        # WLAN (bands 1-5)
-        "InternetGatewayDevice.LANDevice.1.WLANConfiguration",
-        # TR-069
-        "InternetGatewayDevice.ManagementServer.Username",
-        "InternetGatewayDevice.ManagementServer.Password",
+        "InternetGatewayDevice.DeviceInfo",
+        "InternetGatewayDevice.ManagementServer",
+        # WAN — whole subtree to capture all connections + sub-params
+        "InternetGatewayDevice.WANDevice.1.WANConnectionDevice",
+        # LAN — whole subtree (catches WLAN bands, Hosts, IPInterface)
+        "InternetGatewayDevice.LANDevice.1",
+        # User accounts (Huawei) — best-effort
+        "InternetGatewayDevice.UserInterface",
     ])
     # Use query filter to avoid URL double-encoding issues with device _id
     query = json.dumps({"_id": device_id})
@@ -439,7 +556,7 @@ def parse_device(raw):
     except Exception:
         uptime_str = uptime_sec
 
-    # WLAN bands
+    # WLAN bands — now includes BSSID, AutoChannel, TX power
     wlan_bands = []
     for band_num in sorted(wlan_all.keys(), key=lambda x: int(x) if x.isdigit() else 99):
         band = wlan_all[band_num]
@@ -449,26 +566,134 @@ def parse_device(raw):
         if ssid == "-":
             continue
         wlan_bands.append({
-            "band_index": band_num,
-            "ssid":       ssid,
-            "password":   extract_val(band, "KeyPassphrase") or extract_val(band, "PreSharedKey"),
-            "band":       extract_val(band, "OperatingFrequencyBand") or extract_val(band, "Standard"),
-            "channel":    extract_val(band, "Channel"),
-            "security":   extract_val(band, "BeaconType") or extract_val(band, "BasicAuthenticationMode"),
-            "enabled":    extract_val(band, "Enable"),
-            "clients":    extract_val(band, "TotalAssociations"),
+            "band_index":   band_num,
+            "ssid":         ssid,
+            "password":     extract_val(band, "KeyPassphrase") or extract_val(band, "PreSharedKey"),
+            "band":         extract_val(band, "OperatingFrequencyBand") or extract_val(band, "Standard"),
+            "channel":      extract_val(band, "Channel"),
+            "security":     extract_val(band, "BeaconType") or extract_val(band, "BasicAuthenticationMode"),
+            "enabled":      extract_val(band, "Enable"),
+            "clients":      extract_val(band, "TotalAssociations"),
+            "bssid":        extract_val(band, "BSSID"),
+            "auto_channel": extract_val(band, "AutoChannelEnable"),
+            "tx_power":     extract_val(band, "X_HW_TxPower") or extract_val(band, "TransmitPowerSupported"),
+            "ssid_broadcast": extract_val(band, "SSIDAdvertisementEnabled"),
         })
 
-    # WAN — prefer PPP over IP
-    wan_ip   = v(ppp, "ExternalIPAddress") or v(ip_conn, "ExternalIPAddress")
-    wan_gw   = v(ppp, "DefaultGateway")    or v(ip_conn, "DefaultGateway")
-    wan_dns  = v(ppp, "DNSServers")        or v(ip_conn, "DNSServers")
-    wan_user = v(ppp, "Username")
-    wan_up   = v(ppp, "Uptime")
+    # WAN — collect all connections (PPPoE + IPoE) from all WANConnectionDevice instances
+    wan_connections = []
+    wan_root = igd.get("WANDevice", {}).get("1", {}).get("WANConnectionDevice", {})
+    for wcd_key in sorted(wan_root.keys()):
+        if not wcd_key.isdigit():
+            continue
+        wcd = wan_root.get(wcd_key, {})
+        for ctype_key, ctype_name in [("WANPPPConnection", "PPPoE"), ("WANIPConnection", "IPoE")]:
+            ctype = wcd.get(ctype_key, {})
+            for conn_key in sorted(ctype.keys()):
+                if not conn_key.isdigit():
+                    continue
+                conn = ctype.get(conn_key, {})
+                if not isinstance(conn, dict):
+                    continue
+                wan_connections.append({
+                    "kind":        ctype_name,
+                    "wcd_index":   wcd_key,
+                    "conn_index":  conn_key,
+                    "name":        extract_val(conn, "Name"),
+                    "enabled":     extract_val(conn, "Enable"),
+                    "status":      extract_val(conn, "ConnectionStatus"),
+                    "conn_type":   extract_val(conn, "ConnectionType"),
+                    "service_list": extract_val(conn, "X_HW_SERVICELIST") or extract_val(conn, "X_HW_ServiceList"),
+                    "vlan":        extract_val(conn, "X_HW_VLAN"),
+                    "lan_bind":    extract_val(conn, "X_HW_LANBIND"),
+                    "ssid_bind":   extract_val(conn, "X_HW_SSIDBIND") or extract_val(conn, "SSID_BIND"),
+                    "nat":         extract_val(conn, "NATEnabled"),
+                    "ip":          extract_val(conn, "ExternalIPAddress"),
+                    "gateway":     extract_val(conn, "DefaultGateway"),
+                    "dns":         extract_val(conn, "DNSServers"),
+                    "mac":         extract_val(conn, "MACAddress"),
+                    "uptime":      extract_val(conn, "Uptime"),
+                    "username":    extract_val(conn, "Username"),
+                })
 
-    # LAN IP from IPInterface sub-object
+    # Primary WAN — first connection or PPPoE-preferred for top-level summary
+    primary = next((c for c in wan_connections if c["kind"] == "PPPoE"), None) or (wan_connections[0] if wan_connections else None) or {}
+
+    # LAN
     ip_iface = lan_cfg.get("IPInterface", {}).get("1", {})
-    lan_ip   = extract_val(ip_iface, "IPInterfaceIPAddress") if ip_iface else v(lan_cfg, "IPRouters")
+    lan_enabled       = extract_val(ip_iface, "Enable") if ip_iface else "-"
+    lan_addr_type     = extract_val(ip_iface, "IPInterfaceAddressingType") if ip_iface else "-"
+    dhcp_server_on    = v(lan_cfg, "DHCPServerEnable")
+
+    # ── Connected hosts (LAN + Wi-Fi clients) ─────────────────────────
+    clients = []
+    hosts_root = lan_dev.get("Hosts", {}).get("Host", {})
+    for hk in sorted(hosts_root.keys()):
+        if not hk.isdigit():
+            continue
+        h = hosts_root.get(hk, {})
+        if not isinstance(h, dict):
+            continue
+        clients.append({
+            "host_name":      extract_val(h, "HostName"),
+            "ip":             extract_val(h, "IPAddress"),
+            "mac":            extract_val(h, "MACAddress"),
+            "active":         extract_val(h, "Active"),
+            "interface_type": extract_val(h, "InterfaceType"),
+            "rssi":           extract_val(h, "X_HW_RSSI"),
+            "lease":          extract_val(h, "LeaseTimeRemaining"),
+            "rate":           extract_val(h, "X_HW_NegotiatedRate"),
+            "source":         "host",
+        })
+
+    # Also pull from WLAN.AssociatedDevice (some firmwares only report wifi clients here)
+    for band_num, band in wlan_all.items():
+        if not band_num.isdigit() or not isinstance(band, dict):
+            continue
+        ad_root = band.get("AssociatedDevice", {})
+        for ak in sorted(ad_root.keys()):
+            if not ak.isdigit():
+                continue
+            ad = ad_root.get(ak, {})
+            if not isinstance(ad, dict):
+                continue
+            mac = extract_val(ad, "AssociatedDeviceMACAddress")
+            if mac == "-":
+                continue
+            # Skip if already in clients (by MAC)
+            if any(c["mac"].upper() == mac.upper() for c in clients if c["mac"] != "-"):
+                continue
+            clients.append({
+                "host_name":      "—",
+                "ip":             extract_val(ad, "AssociatedDeviceIPAddress"),
+                "mac":            mac,
+                "active":         extract_val(ad, "AssociatedDeviceAuthenticationState") or "True",
+                "interface_type": f"Wi-Fi (band {band_num})",
+                "rssi":           extract_val(ad, "X_HW_RSSI"),
+                "lease":          "-",
+                "rate":           extract_val(ad, "LastDataDownlinkRate"),
+                "source":         "wifi",
+            })
+
+    # ── User accounts (Huawei: X_HW_WebUserInfo) ──────────────────────
+    users_root = igd.get("UserInterface", {}).get("X_HW_WebUserInfo", {})
+    if not isinstance(users_root, dict):
+        users_root = {}
+    user_accounts = []
+    for uk in sorted(users_root.keys()):
+        if not uk.isdigit():
+            continue
+        u = users_root.get(uk, {})
+        if not isinstance(u, dict):
+            continue
+        uname = extract_val(u, "UserName")
+        if uname == "-":
+            continue
+        user_accounts.append({
+            "index":    uk,
+            "username": uname,
+            "level":    extract_val(u, "UserLevel"),
+        })
 
     conn_req_url = v(mgmt, "ConnectionRequestURL")
 
@@ -485,14 +710,27 @@ def parse_device(raw):
             "conn_req_url":  conn_req_url,
             "periodic_interval": v(mgmt, "PeriodicInformInterval"),
         },
+        # Compact top-level WAN (primary connection) + full connections list
         "wan": {
-            "ip":          wan_ip,
-            "gateway":     wan_gw,
-            "dns":         wan_dns,
-            "pppoe_user":  wan_user,
-            "uptime":      wan_up,
+            "ip":         primary.get("ip", "-"),
+            "gateway":    primary.get("gateway", "-"),
+            "dns":        primary.get("dns", "-"),
+            "pppoe_user": primary.get("username", "-"),
+            "uptime":     primary.get("uptime", "-"),
+            "conn_type":  primary.get("conn_type", "-"),
+            "service":    primary.get("service_list", "-"),
+            "vlan":       primary.get("vlan", "-"),
+            "nat":        primary.get("nat", "-"),
+            "mac":        primary.get("mac", "-"),
+            "status":     primary.get("status", "-"),
+            "name":       primary.get("name", "-"),
+            "kind":       primary.get("kind", "-"),
         },
+        "wan_connections": wan_connections,
         "lan": {
+            "enabled":      lan_enabled,
+            "type":         lan_addr_type,
+            "dhcp_enabled": dhcp_server_on,
             "gateway_ip":   v(lan_cfg, "IPRouters"),
             "dhcp_min":     v(lan_cfg, "MinAddress"),
             "dhcp_max":     v(lan_cfg, "MaxAddress"),
@@ -500,7 +738,9 @@ def parse_device(raw):
             "lease_time":   v(lan_cfg, "DHCPLeaseTime"),
             "dns":          v(lan_cfg, "DNSServers"),
         },
-        "wlan": wlan_bands,
+        "wlan":    wlan_bands,
+        "clients": clients,
+        "users":   user_accounts,
         "tr069": {
             "acs_url":      v(mgmt, "URL"),
             "username":     v(mgmt, "Username"),
@@ -522,6 +762,12 @@ PARAM_MAP = {
     "wlan.{b}.channel":  "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.Channel",
     "wlan.{b}.enabled":  "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.Enable",
     "wlan.{b}.security": "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.BeaconType",
+    "wlan.{b}.auto_channel":   "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.AutoChannelEnable",
+    "wlan.{b}.ssid_broadcast": "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.SSIDAdvertisementEnabled",
+    "wlan.{b}.tx_power":       "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{b}.X_HW_TxPower",
+    # User accounts (Huawei)
+    "user.1.password":         "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password",
+    "user.2.password":         "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.Password",
     # WAN PPPoE
     "wan.pppoe_user":    "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
     "wan.pppoe_pass":    "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password",
@@ -992,9 +1238,19 @@ class Handler(BaseHTTPRequestHandler):
             sn  = params.get('sn',  [''])[0].strip()
             pon = params.get('pon', [''])[0].strip()
             ont_id = (params.get('ont_id', [''])[0] or '').strip()
+            force_genie = params.get('genie', [''])[0].strip() == '1'
             if not sn:
                 self.send_json(400, {'error': 'sn required'}); return
             try:
+                # ONU / force_genie: skip SSH, go straight to GenieACS
+                if force_genie:
+                    genie_ip = _genie_wan_ip(sn)
+                    if genie_ip:
+                        self.send_json(200, {'ip': genie_ip, 'sn': sn, 'source': 'genieacs'})
+                    else:
+                        self.send_json(200, {'ip': '-', 'sn': sn, 'error': 'No WAN IP found in GenieACS'})
+                    return
+
                 # Phase-2 fast path: Influx cache (if ont_wan measurement exists)
                 cached = get_cached_wan_ip(sn)
                 if cached and cached.get("ip") and cached.get("ip") != "-":
@@ -1017,13 +1273,26 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     live = olt.get_ont_wan_live(o['ip'], o['username'], o['password'], sn, pon)
                 if not live.get('ok'):
-                    self.send_json(200, {'ip': '-', 'sn': sn, 'error': live.get('error', 'Live WAN check failed')}); return
+                    # SSH failed — try GenieACS as last resort (ONU bridge mode PPPoE IPs
+                    # are only visible to TR-069, not to OLT SSH wan-info command)
+                    genie_ip = _genie_wan_ip(sn)
+                    if genie_ip:
+                        self.send_json(200, {'ip': genie_ip, 'sn': sn, 'source': 'genieacs'})
+                    else:
+                        self.send_json(200, {'ip': '-', 'sn': sn, 'error': live.get('error', 'Live WAN check failed')})
+                    return
 
                 wan = (live.get('details') or {}).get('wan') or {}
                 ip = (wan.get('ipv4_address') or '').strip() or '-'
                 status = (wan.get('connection_status') or '').strip()
                 vlan = (wan.get('network_vlan') or wan.get('manage_vlan') or '').strip()
                 access_type = (wan.get('access_type') or '').strip()
+                # If SSH returned no usable IP, try GenieACS fallback
+                if not ip or ip == '-':
+                    genie_ip = _genie_wan_ip(sn)
+                    if genie_ip:
+                        self.send_json(200, {'ip': genie_ip, 'sn': sn, 'status': status, 'source': 'genieacs'})
+                        return
                 self.send_json(200, {
                     'ip': ip,
                     'sn': sn,
@@ -1054,6 +1323,60 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ont": ont})
             return self.send_json(502, {"error": "Live check failed or timed out"})
 
+        # ── GET /ont/graph?sn=XXXX&range=1h — InfluxDB time-series for ONT charts ──
+        elif parsed.path == "/ont/graph":
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip()
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+            rng = (params.get("range", ["6h"])[0] or "6h").strip()
+            if rng not in ("1h", "6h", "24h", "7d"):
+                rng = "6h"
+            step_map  = {"1h": "1m", "6h": "5m", "24h": "15m", "7d": "1h"}
+            label_fmt = {"1h": "%H:%M", "6h": "%H:%M", "24h": "%H:%M", "7d": "%m/%d %H:%M"}
+            step = step_map[rng]
+            flux = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -{rng})
+  |> filter(fn: (r) => r._measurement == "ont_optical" and r.sn == "{sn}")
+  |> filter(fn: (r) => r._field == "rx_power" or r._field == "tx_power" or r._field == "olt_rx" or r._field == "temp")
+  |> aggregateWindow(every: {step}, fn: mean, createEmpty: false)
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> keep(columns: ["_time", "rx_power", "tx_power", "olt_rx", "temp"])
+  |> sort(columns: ["_time"])
+'''
+            try:
+                rows = influx_query(flux)
+            except Exception as e:
+                return self.send_json(500, {"error": f"InfluxDB query failed: {e}"})
+            if not rows:
+                return self.send_json(200, {"ok": False, "sn": sn, "range": rng,
+                                            "error": "No data for this ONT in the selected range"})
+            import datetime as _dt
+            fmt = label_fmt[rng]
+            labels, rx_power, tx_power, olt_rx, temp = [], [], [], [], []
+            for r in rows:
+                t_raw = r.get("_time", "")
+                try:
+                    t = _dt.datetime.fromisoformat(t_raw.replace("Z", "+00:00"))
+                    labels.append(t.strftime(fmt))
+                except Exception:
+                    labels.append(t_raw[-8:] if len(t_raw) >= 8 else t_raw)
+                def _fv(key):
+                    v = r.get(key, "")
+                    try: return round(float(v), 2) if v not in ("", None) else None
+                    except Exception: return None
+                rx_power.append(_fv("rx_power"))
+                tx_power.append(_fv("tx_power"))
+                olt_rx.append(_fv("olt_rx"))
+                temp.append(_fv("temp"))
+            return self.send_json(200, {
+                "ok": True, "sn": sn, "range": rng,
+                "labels": labels, "rx_power": rx_power,
+                "tx_power": tx_power, "olt_rx": olt_rx, "temp": temp
+            })
+
         # ── GET /ont/info?sn=XXXX — live SSH ONT detail (replaces GenieACS) ──
         elif parsed.path == "/ont/info":
             user = require_auth(self)
@@ -1066,7 +1389,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not olts:
                     return self.send_json(404, {"error": "No OLTs configured"})
                 o = olts[0]
-                data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn)
+                data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn,
+                                             snmp_community=o.get("snmp_community"))
                 return self.send_json(200 if data.get("ok") else 404, data)
             except Exception as e:
                 return self.send_json(500, {"error": str(e)})
@@ -1089,9 +1413,73 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /device — DEPRECATED in v2.7.0 (GenieACS removed) ────────────
+        # ── GET /device?sn=XXXX — restored in v3.3.0 with SSH fallback ───────
         elif parsed.path == "/device":
-            return self.send_json(410, {"error": "GenieACS removed in v2.7.0 — use /ont/info?sn=..."})
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip()
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn= parameter"})
+
+            # 1) Try GenieACS first (full editable view)
+            try:
+                device_id = find_device_id(sn)
+            except Exception as e:
+                device_id = None
+                print(f"[device] GenieACS lookup error for {sn}: {e}")
+
+            if device_id:
+                raw = fetch_device_data(device_id)
+                if raw:
+                    result = parse_device(raw)
+                    result["_device_id"] = device_id
+                    result["_source"]    = "genieacs"
+                    result["_editable"]  = True
+                    return self.send_json(200, result)
+
+            # 2) Fallback: ONT not in GenieACS → OLT SSH read-only view
+            olts = olt.get_olts()
+            if not olts:
+                return self.send_json(404, {"error": f"Device {sn} not in GenieACS and no OLTs configured"})
+            o = olts[0]
+            try:
+                ssh_data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn,
+                                                  snmp_community=o.get("snmp_community"))
+            except Exception as e:
+                return self.send_json(500, {"error": f"OLT SSH error: {e}"})
+
+            if not ssh_data.get("ok"):
+                return self.send_json(404, {
+                    "error": f"Device {sn} not found in GenieACS or on OLT",
+                    "detail": ssh_data.get("error", "")
+                })
+
+            return self.send_json(200, {
+                "_source":   "ssh",
+                "_editable": False,
+                "_message":  "ONT not registered with TR-069 — read-only OLT view",
+                "summary": {
+                    "serial_number": sn,
+                    "manufacturer":  ssh_data.get("vendor", "Huawei Technologies"),
+                    "model":         ssh_data.get("model", "-"),
+                    "oui":           "-",
+                    "hw_version":    ssh_data.get("hw_version", "-"),
+                    "sw_version":    ssh_data.get("sw_version", "-"),
+                    "uptime":        ssh_data.get("online_duration", "-"),
+                    "last_inform":   "-",
+                    "rx_power":      ssh_data.get("rx_power"),
+                    "tx_power":      ssh_data.get("tx_power"),
+                    "temp":          ssh_data.get("temp"),
+                    "distance_m":    ssh_data.get("distance_m"),
+                    "run_state":     ssh_data.get("run_state"),
+                    "fsp":           ssh_data.get("fsp"),
+                    "ont_id":        ssh_data.get("ont_id"),
+                },
+                "wan":   {},
+                "lan":   {},
+                "wlan":  [],
+                "tr069": {},
+            })
 
         elif parsed.path == "/ont/settings/templates":
             user = require_auth(self)
@@ -1239,6 +1627,280 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/health":
             return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})
 
+        # ── GET /ont/traffic/live?sn=XXXX ─────────────────────────────────────
+        # Forces a TR-069 connection_request → CPE responds in ~8s with fresh
+        # byte counters → calculates Mbps delta → writes point to InfluxDB
+        # ont_traffic measurement (so history chart is also populated).
+        elif parsed.path == "/ont/traffic/live":
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip().upper()
+            if not sn:
+                return self.send_json(400, {"ok": False, "error": "Missing ?sn="})
+            try:
+                import time as _time, datetime as _dt
+
+                # 1. Find device in GenieACS
+                dev_id = find_device_id(sn)
+                if not dev_id:
+                    return self.send_json(404, {"ok": False, "error": "Device not in GenieACS"})
+
+                enc_id = urllib.parse.quote(dev_id, safe='')
+                STATS  = ("InternetGatewayDevice.WANDevice.1.WANConnectionDevice"
+                          ".1.WANPPPConnection.1.Stats")
+                PARAMS = [
+                    f"{STATS}.EthernetBytesSent",
+                    f"{STATS}.EthernetBytesReceived",
+                    f"{STATS}.X_HW_EthernetBytesSentHigh",
+                    f"{STATS}.X_HW_EthernetBytesSentLow",
+                    f"{STATS}.X_HW_EthernetBytesReceivedHigh",
+                    f"{STATS}.X_HW_EthernetBytesReceivedLow",
+                ]
+
+                # 2. Force CPE to connect and report fresh counters
+                genie_request("POST",
+                    f"/devices/{enc_id}/tasks?connection_request",
+                    {"name": "getParameterValues", "parameterNames": PARAMS}
+                )
+                _time.sleep(8)   # wait for CPE TR-069 session
+
+                # 3. Read fresh counters
+                q    = urllib.parse.quote(json.dumps({"_id": dev_id}))
+                proj = urllib.parse.quote(f"{STATS},_lastInform")
+                st, data = genie_request("GET", f"/devices/?query={q}&projection={proj}")
+                if st != 200 or not isinstance(data, list) or not data:
+                    return self.send_json(502, {"ok": False, "error": "GenieACS read failed"})
+
+                dev = data[0]
+                def _gv(*keys):
+                    obj = dev
+                    for k in keys:
+                        if not isinstance(obj, dict): return 0
+                        obj = obj.get(k, {})
+                    v = obj.get("_value", 0) if isinstance(obj, dict) else obj
+                    try: return int(v or 0)
+                    except: return 0
+
+                B = ["InternetGatewayDevice","WANDevice","1",
+                     "WANConnectionDevice","1","WANPPPConnection","1","Stats"]
+                tx_hi = _gv(*B, "X_HW_EthernetBytesSentHigh")
+                tx_lo = _gv(*B, "X_HW_EthernetBytesSentLow")
+                rx_hi = _gv(*B, "X_HW_EthernetBytesReceivedHigh")
+                rx_lo = _gv(*B, "X_HW_EthernetBytesReceivedLow")
+                tx_bytes = (tx_hi*(2**32)+tx_lo) if (tx_hi or tx_lo) else _gv(*B,"EthernetBytesSent")
+                rx_bytes = (rx_hi*(2**32)+rx_lo) if (rx_hi or rx_lo) else _gv(*B,"EthernetBytesReceived")
+                now_ts = _time.time()
+
+                # 4. Calculate Mbps from server-side previous reading
+                rx_mbps = tx_mbps = 0.0
+                prev = _genie_prev_readings.get(dev_id)
+                if prev and rx_bytes >= prev["rx"] and tx_bytes >= prev["tx"]:
+                    dt = now_ts - prev["ts"]
+                    if dt > 1:
+                        rx_mbps = max(0.0, (rx_bytes - prev["rx"]) * 8 / dt / 1e6)
+                        tx_mbps = max(0.0, (tx_bytes - prev["tx"]) * 8 / dt / 1e6)
+                        if rx_mbps > 10000: rx_mbps = 0.0
+                        if tx_mbps > 10000: tx_mbps = 0.0
+                _genie_prev_readings[dev_id] = {"rx": rx_bytes, "tx": tx_bytes, "ts": now_ts}
+
+                # 5. Write data point to InfluxDB ont_traffic measurement
+                sn_safe = sn.replace(" ", "_")
+                if rx_mbps > 0 or tx_mbps > 0:
+                    lp = (f'ont_traffic,sn={sn_safe},source=genieacs '
+                          f'rx_mbps={rx_mbps:.4f},tx_mbps={tx_mbps:.4f},'
+                          f'rx_bytes={rx_bytes}i,tx_bytes={tx_bytes}i '
+                          f'{int(now_ts)}')
+                    influx_write(lp)
+
+                return self.send_json(200, {
+                    "ok": True, "sn": sn,
+                    "source": "genieacs",
+                    "rx_mbps": round(rx_mbps, 2),
+                    "tx_mbps": round(tx_mbps, 2),
+                    "rx_bytes": int(rx_bytes),
+                    "tx_bytes": int(tx_bytes),
+                    "is_first": prev is None,
+                    "ts": now_ts,
+                })
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /ont/traffic?sn=XXXX&range=1h — per-ONT traffic history ──────────
+        # Queries InfluxDB ont_traffic measurement (written by /ont/traffic/live
+        # GenieACS polling) filtered by sn tag for true per-ONT data.
+        elif parsed.path == "/ont/traffic":
+            user = require_auth(self)
+            if not user: return
+            sn     = (params.get("sn",    [""])[0] or "").strip().upper()
+            range_ = (params.get("range", ["1h"])[0] or "1h").strip()
+            if range_ not in ("1h", "6h", "24h", "7d"):
+                range_ = "1h"
+            if not sn:
+                return self.send_json(400, {"ok": False, "error": "Missing ?sn="})
+            try:
+                sn_safe = re.sub(r'[^A-Za-z0-9_]', '_', sn)
+
+                # Query InfluxDB ont_traffic measurement by sn tag (GenieACS source)
+                flux = f'''from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-{range_})
+  |> filter(fn:(r) => r._measurement == "ont_traffic"
+      and r.sn == "{sn_safe}"
+      and (r._field == "rx_mbps" or r._field == "tx_mbps"))
+  |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
+  |> sort(columns:["_time"])
+  |> keep(columns:["_time","rx_mbps","tx_mbps"])'''
+                rows = influx_query(flux)
+
+                # Format timestamps as HH:MM
+                def _fmt_ts(t):
+                    try: return t[11:16]   # "2026-05-14T14:37:16Z" → "14:37"
+                    except: return t
+                labels  = [_fmt_ts(r.get("_time", "")) for r in rows]
+                rx_mbps = [round(float(r.get("rx_mbps") or 0), 2) for r in rows]
+                tx_mbps = [round(float(r.get("tx_mbps") or 0), 2) for r in rows]
+
+                return self.send_json(200, {
+                    "ok":      True,
+                    "sn":      sn,
+                    "source":  "genieacs",
+                    "range":   range_,
+                    "labels":  labels,
+                    "rx_mbps": rx_mbps,
+                    "tx_mbps": tx_mbps,
+                    "rx_now":  rx_mbps[-1] if rx_mbps else 0,
+                    "tx_now":  tx_mbps[-1] if tx_mbps else 0,
+                })
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /ont/snmp?sn=XXXX — instant SNMP cache lookup (no SSH) ──────────
+        elif parsed.path == "/ont/snmp":
+            user = require_auth(self)
+            if not user: return
+            sn = (params.get("sn", [""])[0] or "").strip().upper()
+            if not sn:
+                return self.send_json(400, {"error": "Missing ?sn="})
+            try:
+                import sqlite3 as _sq3
+                # Try raw SN and decoded ASCII-prefix form
+                _cands = [sn]
+                if len(sn) == 16 and re.match(r'^[0-9A-Fa-f]{16}$', sn):
+                    try:
+                        _prefix = bytes.fromhex(sn[:8]).decode('ascii', errors='strict')
+                        if _prefix.isalnum():
+                            _cands.append((_prefix + sn[8:]).upper())
+                    except Exception:
+                        pass
+                db = _sq3.connect("/opt/pyronms/data/ont_map.db", timeout=5)
+                row = None
+                for _c in _cands:
+                    row = db.execute(
+                        "SELECT frame,slot,port,ont_id,description,pon_ifindex FROM ont_map WHERE sn=?",
+                        (_c,)
+                    ).fetchone()
+                    if row: break
+                if not row:
+                    # LIKE fallback on last 8 hex chars
+                    row = db.execute(
+                        "SELECT frame,slot,port,ont_id,description,pon_ifindex FROM ont_map WHERE sn LIKE ?",
+                        (f"%{sn[-8:]}",)
+                    ).fetchone()
+                if not row:
+                    db.close()
+                    return self.send_json(404, {"ok": False, "error": "SN not in SNMP cache"})
+                frame, slot, port, ont_id, desc, pon_ifindex = row
+                db.close()
+                # Latest optical from InfluxDB
+                flux_opt = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-15m)
+  |> filter(fn:(r)=>r._measurement=="ont_optical"
+      and r.fsp=="{frame}/{slot}/{port}"
+      and r.ont_id=="{ont_id}")
+  |> last()
+  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
+  |> keep(columns:["rx_power_dbm","temperature_c"])
+'''
+                opt_rows = influx_query(flux_opt)
+                rx_power = opt_rows[0].get("rx_power_dbm") if opt_rows else None
+                temp_c   = opt_rows[0].get("temperature_c") if opt_rows else None
+                # Latest status from InfluxDB
+                flux_st = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-3m)
+  |> filter(fn:(r)=>r._measurement=="ont_status"
+      and r.fsp=="{frame}/{slot}/{port}"
+      and r.ont_id=="{ont_id}"
+      and r._field=="online")
+  |> last()
+'''
+                st_rows = influx_query(flux_st)
+                online = int(st_rows[0].get("_value", 0)) if st_rows else None
+                return self.send_json(200, {
+                    "ok":          True,
+                    "sn":          sn,
+                    "fsp":         f"{frame}/{slot}/{port}",
+                    "ont_id":      ont_id,
+                    "description": desc,
+                    "online":      online,
+                    "rx_power_dbm": float(rx_power) if rx_power is not None else None,
+                    "temperature_c": float(temp_c) if temp_c is not None else None,
+                    "source":      "snmp_cache",
+                })
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /pon/traffic — all PON ports latest Mbps for dashboard heatmap ──
+        elif parsed.path == "/pon/traffic":
+            user = require_auth(self)
+            if not user: return
+            try:
+                flux = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-5m)
+  |> filter(fn:(r)=>r._measurement=="pon_traffic"
+      and (r._field=="rx_mbps" or r._field=="tx_mbps"))
+  |> last()
+  |> pivot(rowKey:["fsp"],columnKey:["_field"],valueColumn:"_value")
+  |> keep(columns:["fsp","rx_mbps","tx_mbps","slot","port"])
+  |> sort(columns:["fsp"])
+'''
+                rows = influx_query(flux)
+                # Also get OLT summary
+                flux_sum = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-2m)
+  |> filter(fn:(r)=>r._measurement=="olt_summary")
+  |> last()
+  |> pivot(rowKey:["olt"],columnKey:["_field"],valueColumn:"_value")
+'''
+                sum_rows = influx_query(flux_sum)
+                total_online  = sum(int(r.get("online_onts", 0))  for r in sum_rows)
+                total_offline = sum(int(r.get("offline_onts", 0)) for r in sum_rows)
+                total_rx = sum(float(r.get("rx_mbps", 0)) for r in rows)
+                total_tx = sum(float(r.get("tx_mbps", 0)) for r in rows)
+                ports = [
+                    {
+                        "fsp":     r.get("fsp", ""),
+                        "rx_mbps": round(float(r.get("rx_mbps") or 0), 2),
+                        "tx_mbps": round(float(r.get("tx_mbps") or 0), 2),
+                        "slot":    r.get("slot", ""),
+                        "port":    r.get("port", ""),
+                    }
+                    for r in rows if r.get("fsp", "0/0/") and
+                    not r.get("fsp","").startswith("0/0/")  # skip unused slot-0
+                ]
+                return self.send_json(200, {
+                    "ok":           True,
+                    "ports":        ports,
+                    "total_rx_mbps": round(total_rx, 2),
+                    "total_tx_mbps": round(total_tx, 2),
+                    "online_onts":  total_online,
+                    "offline_onts": total_offline,
+                })
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
         else:
             return self.send_json(404, {"error": "Not found"})
 
@@ -1305,7 +1967,11 @@ class Handler(BaseHTTPRequestHandler):
                         payload.get("srv_profile_id","10"),desc,
                         payload.get("vlan_id","10"),
                         payload.get("user_vlan") or payload.get("vlan_id","10"),
-                        payload.get("vas_profile","PPP-10-IPV4-IPV6"))
+                        payload.get("vas_profile","PPP-10-IPV4-IPV6"),
+                        payload.get("alarm_profile","alarm-profile_1"),
+                        payload.get("optical_alarm","optical_alarm_profile_1"),
+                        payload.get("slevel_profile","alarm-policy_0"),
+                        payload.get("tr069_profile","ACS"))
                 if ok: return self.send_json(200, {"ok":True,"ont_id":ont_id,"method":method})
                 return self.send_json(500, {"error":"Failed","output":output,"method":method})
             except Exception as e:
@@ -1317,7 +1983,7 @@ class Handler(BaseHTTPRequestHandler):
             if user.get("role") not in ("superadmin","admin","pon_operator"):
                 return self.send_json(403, {"error":"Not allowed"})
             kind = parsed.path.rsplit("/", 1)[-1]
-            if kind not in ("check", "wan", "wifi", "lan", "user"):
+            if kind not in ("check", "wan", "wifi", "lan", "user", "pppoe_creds", "static_ip", "wlan_radio"):
                 return self.send_json(404, {"error":"Unknown settings section"})
             length = int(self.headers.get("Content-Length",0))
             body = self.rfile.read(length)

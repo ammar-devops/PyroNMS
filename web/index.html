@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <link id="favicon" rel="icon" type="image/png" href="/favicon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PyroNMS — Indus Broadband</title>
+<title>PyroNMS — PyroNet Solutions</title>
 <style>
   :root {
     --bg:       #0f1117;
@@ -136,8 +136,8 @@
   .sig-good    { background: #14532d; color: #4ade80; }
   .sig-weak    { background: #451a03; color: #fbbf24; }
   .sig-bad     { background: #450a0a; color: #f87171; }
-  .sig-offline { background: rgba(236,72,153,.20); color: #f9a8d4; white-space:nowrap; }
-  .sig-fiber   { background: rgba(185,28,28,.25); color: #fca5a5; white-space:nowrap; }
+  .sig-offline { background: var(--st-power-bg); color: var(--st-power-fg); border: 1px solid var(--st-power-border); white-space:nowrap; }
+  .sig-fiber   { background: var(--st-fiber-bg); color: var(--st-fiber-fg); border: 1px solid var(--st-fiber-border); white-space:nowrap; }
   .temp-cell { color: var(--muted); }
   .serial-cell { font-family: monospace; font-size: 12px; color: var(--muted); }
   .btn-row-refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
@@ -146,6 +146,28 @@
   .row-refresh-icon { display:inline-block; width:11px; height:11px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; flex-shrink:0; }
   .btn-row-refresh:not(:disabled) .row-refresh-icon { border-top-color: currentColor; border-bottom-color: transparent; }
   .btn-row-refresh:disabled .row-refresh-icon, .row-refresh-icon.spin { animation: spin .7s linear infinite; border-top-color: transparent; }
+  /* ── Open Router button (per-row, fetches WAN IP from OLT, bypasses GenieACS) ── */
+  .btn-row-open {
+    background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.35);
+    color: #93c5fd; padding: 5px 10px; border-radius: 6px; font-size: 11px;
+    font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+    transition: all .15s;
+  }
+  .btn-row-open:hover:not(:disabled) { background: rgba(59,130,246,.25); border-color: rgba(59,130,246,.55); }
+  .btn-row-open:disabled { opacity: .55; cursor: wait; }
+  .btn-row-open .open-icon.spin { display: inline-block; animation: spin .7s linear infinite; }
+  /* ONU Open Router — same style as ONT, GenieACS TR-069 provides the WAN IP */
+  .btn-row-open.is-onu:hover { background: rgba(122,128,153,.18); }
+
+  /* ── Device type pill (Type column) ─────────────────────────────────────── */
+  .type-pill {
+    display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 11px;
+    font-weight: 700; letter-spacing: .4px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    border: 1px solid;
+  }
+  .type-pill.type-ont { background: rgba(34,197,94,.14);  color: var(--st-online-fg, #86efac); border-color: var(--st-online-border, rgba(34,197,94,.4)); }
+  .type-pill.type-onu { background: rgba(59,130,246,.14); color: #93c5fd;                       border-color: rgba(59,130,246,.4); }
+  .type-pill.type-unk { background: rgba(122,128,153,.14);color: var(--muted, #7a8099);          border-color: rgba(122,128,153,.3); }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #pyro-bar { position:fixed; top:0; left:0; right:0; height:4px; z-index:99999; background:rgba(34,197,94,.18); opacity:0; pointer-events:none; transition:opacity .2s ease; overflow:hidden; }
@@ -618,6 +640,16 @@
   .ontmgr-head .btn-close:hover { color:var(--text); }
   .ontmgr-body { padding:20px 22px; overflow-y:auto; flex:1; }
   .ontmgr-loading { display:flex; align-items:center; justify-content:center; gap:10px; padding:60px; color:var(--muted); font-size:14px; }
+  .ontmgr-tabs { display:flex; gap:2px; padding:10px 16px 0; border-bottom:1px solid var(--border); background:var(--bg2); }
+  .omtab { padding:7px 16px; border-radius:6px 6px 0 0; font-size:13px; cursor:pointer; background:transparent; border:none; color:var(--muted); transition:color .15s,background .15s; }
+  .omtab.active { background:var(--bg3); color:var(--text); font-weight:600; }
+  .omtab:hover:not(.active) { color:var(--text); }
+  .ont-graph-wrap { padding:14px 16px; display:flex; flex-direction:column; gap:16px; }
+  .ont-graph-range { display:flex; gap:6px; justify-content:flex-end; }
+  .grng { padding:3px 11px; border-radius:12px; font-size:11px; font-weight:600; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; transition:all .15s; }
+  .grng.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ont-chart-box { background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .ont-chart-box h4 { font-size:11px; color:var(--muted); margin:0 0 10px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
   .ontmgr-error { padding:30px; text-align:center; color:#f87171; font-size:14px; }
   .ontmgr-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; margin-bottom:18px; }
   .ontmgr-card { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
@@ -664,6 +696,13 @@
   .wlan-state { font-size:10px; font-weight:700; padding:1px 7px; border-radius:4px; text-transform:uppercase; letter-spacing:.4px; }
   .wlan-state.ok  { background:rgba(34,197,94,.18); color:#86efac; }
   .wlan-state.off { background:rgba(148,163,184,.18); color:#cbd5e1; }
+  /* ── Edit mode (v3.0.0) ─────────────────────────────────────── */
+  .cfg-action-bar { display:flex; align-items:center; gap:8px; padding:10px 0 2px; flex-wrap:wrap; }
+  .cfg-edit-label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); width:100%; }
+  .cfg-pwd-wrap   { display:flex; align-items:center; gap:4px; }
+  .cfg-pwd-wrap .edit-input { flex:1; }
+  .cfg-eye-btn    { background:none; border:1px solid var(--border); border-radius:5px; padding:3px 7px; color:var(--muted); cursor:pointer; font-size:13px; line-height:1; }
+  .cfg-eye-btn:hover { color:var(--fg); border-color:var(--accent); }
   @media (max-width:640px) {
     .ontmgr-box { max-height:96vh; border-radius:10px; }
     .ontmgr-head { padding:14px 16px; gap:10px; }
@@ -718,8 +757,8 @@
 <div class="header">
   <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="openMobileSidebar()" title="Open navigation" aria-label="Open navigation">☰</button>
   <div class="header-dot"></div>
-  <img src="/logo.png" alt="Logo" style="height:32px;object-fit:contain;opacity:.9;filter:brightness(1.1);">
-  <div style="line-height:1.2;"><div class="header-title">Indus Broadband</div><div style="font-size:10px;color:var(--muted);letter-spacing:.3px;">PyroNMS by PyroNet Solutions</div></div>
+  <img src="/logo.png" alt="PyroNet Solutions" style="height:32px;object-fit:contain;opacity:.95;filter:brightness(1.1);">
+  <div style="line-height:1.2;"><div class="header-title">PyroNet Solutions</div><div style="font-size:10px;color:var(--muted);letter-spacing:.3px;">PyroNMS — Network Management System</div></div>
   <button class="btn-refresh-all" onclick="refreshAll()">⟳ Refresh All</button>
   
   <div style="position:relative;margin-left:auto;" id="profileWrap">
@@ -840,7 +879,7 @@
     <div class="sidebar-version" style="padding:10px 14px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;">
       <div id="sidebarFooter">
         <img src="/pyronet-logo.png" style="height:18px;opacity:.5;vertical-align:middle;"> 
-        <span style="vertical-align:middle;">PyroNMS v2.8.2</span>
+        <span style="vertical-align:middle;">PyroNMS v4.0.0</span>
       </div>
     </div>
   </div>
@@ -861,46 +900,85 @@
         <!-- Stats Cards Grid -->
         <div id="dash-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;">
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(59,130,246,.12),rgba(59,130,246,.03));border:1px solid rgba(59,130,246,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');resetAdvFilters()" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#3b82f6'" onmouseout="this.style.transform='';this.style.borderColor='rgba(59,130,246,.35)'">
+          <div class="dash-card" style="background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');resetAdvFilters()" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--accent)'" onmouseout="this.style.transform='';this.style.borderColor='rgba(59,130,246,.4)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Total ONTs</div>
-            <div style="font-size:34px;font-weight:800;color:#3b82f6;line-height:1;" id="dash-total">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--accent);line-height:1;" id="dash-total">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(34,197,94,.12),rgba(34,197,94,.03));border:1px solid rgba(34,197,94,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('active')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#22c55e'" onmouseout="this.style.transform='';this.style.borderColor='rgba(34,197,94,.35)'">
+          <div class="dash-card" style="background:var(--st-online-bg);border:1px solid var(--st-online-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('active')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-online-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-online-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Active ONTs</div>
-            <div style="font-size:34px;font-weight:800;color:#22c55e;line-height:1;" id="dash-active">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-online-fg);line-height:1;" id="dash-active">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(100,116,139,.12),rgba(100,116,139,.03));border:1px solid rgba(100,116,139,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#64748b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(100,116,139,.35)'">
+          <div class="dash-card" style="background:rgba(100,116,139,.10);border:1px solid rgba(100,116,139,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('offline')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#64748b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(100,116,139,.4)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Offline ONTs</div>
-            <div style="font-size:34px;font-weight:800;color:#94a3b8;line-height:1;" id="dash-offline">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--muted);line-height:1;" id="dash-offline">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(236,72,153,.14),rgba(236,72,153,.03));border:1px solid rgba(236,72,153,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('power-failure')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ec4899'" onmouseout="this.style.transform='';this.style.borderColor='rgba(236,72,153,.4)'">
+          <div class="dash-card" style="background:var(--st-power-bg);border:1px solid var(--st-power-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('power-failure')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-power-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-power-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">⚡ Power Down</div>
-            <div style="font-size:34px;font-weight:800;color:#f9a8d4;line-height:1;" id="dash-power">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-power-fg);line-height:1;" id="dash-power">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(185,28,28,.14),rgba(185,28,28,.03));border:1px solid rgba(239,68,68,.4);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('fiber-issue')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#ef4444'" onmouseout="this.style.transform='';this.style.borderColor='rgba(239,68,68,.4)'">
+          <div class="dash-card" style="background:var(--st-fiber-bg);border:1px solid var(--st-fiber-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('fiber-issue')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-fiber-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-fiber-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Fiber Down</div>
-            <div style="font-size:34px;font-weight:800;color:#fca5a5;line-height:1;" id="dash-fiber">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-fiber-fg);line-height:1;" id="dash-fiber">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(245,158,11,.12),rgba(245,158,11,.03));border:1px solid rgba(245,158,11,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('weak')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f59e0b'" onmouseout="this.style.transform='';this.style.borderColor='rgba(245,158,11,.35)'">
+          <div class="dash-card" style="background:var(--st-weak-bg);border:1px solid var(--st-weak-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('weak')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-weak-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-weak-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">-26 to -28 dBm</div>
-            <div style="font-size:34px;font-weight:800;color:#f59e0b;line-height:1;" id="dash-weak">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-weak-fg);line-height:1;" id="dash-weak">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(249,115,22,.12),rgba(249,115,22,.03));border:1px solid rgba(249,115,22,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('critical')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#f97316'" onmouseout="this.style.transform='';this.style.borderColor='rgba(249,115,22,.35)'">
+          <div class="dash-card" style="background:var(--st-bad-bg);border:1px solid var(--st-bad-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('ont');setOntFilter('critical')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-bad-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-bad-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">-29 dBm or Kam</div>
-            <div style="font-size:34px;font-weight:800;color:#f97316;line-height:1;" id="dash-bad">0</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-bad-fg);line-height:1;" id="dash-bad">0</div>
           </div>
 
-          <div class="dash-card" style="background:linear-gradient(135deg,rgba(168,85,247,.12),rgba(168,85,247,.03));border:1px solid rgba(168,85,247,.35);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('unreg')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='#a855f7'" onmouseout="this.style.transform='';this.style.borderColor='rgba(168,85,247,.35)'">
+          <div class="dash-card" style="background:var(--st-unreg-bg);border:1px solid var(--st-unreg-border);border-radius:12px;padding:18px 16px;cursor:pointer;transition:all .2s;" onclick="switchSection('unreg')" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--st-unreg-fg)'" onmouseout="this.style.transform='';this.style.borderColor='var(--st-unreg-border)'">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;font-weight:600;">Unregistered</div>
-            <div style="font-size:34px;font-weight:800;color:#a855f7;line-height:1;" id="dash-unreg">—</div>
+            <div style="font-size:34px;font-weight:800;color:var(--st-unreg-fg);line-height:1;" id="dash-unreg">—</div>
           </div>
 
+        </div>
+
+        <!-- PON Traffic Heatmap -->
+        <div id="pon-heatmap-panel" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-size:14px;font-weight:700;color:var(--text);">PON Port Traffic <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px;">live · 30s refresh</span></div>
+            <div style="display:flex;align-items:center;gap:16px;">
+              <div style="font-size:12px;color:var(--muted);">
+                ↓ <span id="pon-total-rx" style="color:#4ade80;font-weight:600;">—</span> Mbps &nbsp;
+                ↑ <span id="pon-total-tx" style="color:#60a5fa;font-weight:600;">—</span> Mbps
+              </div>
+              <div style="font-size:11px;color:var(--muted);" id="pon-heatmap-ts">—</div>
+            </div>
+          </div>
+          <!-- legend -->
+          <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1e293b;border:1px solid #334155;"></span>Idle</div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#14532d;"></span>&lt;100 Mbps</div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#15803d;"></span>100–300</div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ca8a04;"></span>300–600</div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ea580c;"></span>600–900</div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dc2626;"></span>&gt;900 Mbps</div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table id="pon-heatmap-grid" style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">PON Port</th>
+                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">↓ RX Mbps</th>
+                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">↑ TX Mbps</th>
+                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Total Mbps</th>
+                  <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;width:40%;">Utilization</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">⟳ Loading PON traffic…</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Recent Activity Section -->
@@ -945,25 +1023,25 @@
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Total</div>
       <div style="font-size:16px;font-weight:700;color:var(--accent);" id="fc-total">-</div>
     </div>
-    <div onclick="setStatFilter('active')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(34,197,94,.3);background:rgba(34,197,94,.08);min-width:60px;" title="Active ONTs">
+    <div onclick="setStatFilter('active')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-online-border);background:var(--st-online-bg);min-width:60px;" title="Active ONTs">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Active</div>
-      <div style="font-size:16px;font-weight:700;color:#22c55e;" id="fc-active">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-online-fg);" id="fc-active">-</div>
     </div>
-    <div onclick="setOntFilter('power-failure')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="Power Down">
+    <div onclick="setOntFilter('power-failure')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-power-border);background:var(--st-power-bg);min-width:60px;" title="Power Down">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">⚡ Power Down</div>
-      <div style="font-size:16px;font-weight:700;color:#f97316;" id="fc-power">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-power-fg);" id="fc-power">-</div>
     </div>
-    <div onclick="setOntFilter('fiber-issue')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);min-width:60px;" title="Fiber Down">
+    <div onclick="setOntFilter('fiber-issue')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-fiber-border);background:var(--st-fiber-bg);min-width:60px;" title="Fiber Down">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">Fiber Down</div>
-      <div style="font-size:16px;font-weight:700;color:#ef4444;" id="fc-fiber">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-fiber-fg);" id="fc-fiber">-</div>
     </div>
-    <div onclick="setStatFilter('weak')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(245,158,11,.3);background:rgba(245,158,11,.08);min-width:60px;" title="-26 to -28 dBm">
+    <div onclick="setStatFilter('weak')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-weak-border);background:var(--st-weak-bg);min-width:60px;" title="-26 to -28 dBm">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">-26/-28</div>
-      <div style="font-size:16px;font-weight:700;color:#f59e0b;" id="fc-weak">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-weak-fg);" id="fc-weak">-</div>
     </div>
-    <div onclick="setStatFilter('bad')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid rgba(249,115,22,.3);background:rgba(249,115,22,.08);min-width:60px;" title="-29 dBm or worse">
+    <div onclick="setStatFilter('bad')" style="cursor:pointer;text-align:center;padding:4px 10px;border-radius:6px;border:1px solid var(--st-bad-border);background:var(--st-bad-bg);min-width:60px;" title="-29 dBm or worse">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">-29 kam</div>
-      <div style="font-size:16px;font-weight:700;color:#f97316;" id="fc-bad">-</div>
+      <div style="font-size:16px;font-weight:700;color:var(--st-bad-fg);" id="fc-bad">-</div>
     </div>
   </div>
 
@@ -1007,6 +1085,8 @@
         <th style="width:70px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('temp')" id="fth-temp">Temp</th>
         <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-sn">Serial Number</th>
         <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('vlan')" id="fth-vlan">VLAN</th>
+        <th style="width:70px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('type')" id="fth-type" title="Device type — ONT (router) vs ONU (bridge), from OLT">Type</th>
+        <th style="width:120px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" title="Open ONT router web UI (resolved via OLT, bypasses GenieACS)">Open Router</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
       </tr>
     </thead>
@@ -1026,6 +1106,8 @@
         <th style="width:80px" onclick="sortTable('temp')" id="th-temp">Temp</th>
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
         <th style="width:60px" onclick="sortTable('vlan')" id="th-vlan" style="cursor:pointer">VLAN</th>
+        <th style="width:70px" onclick="sortTable('type')" id="th-type" title="Device type">Type</th>
+        <th style="width:120px" title="Open ONT router web UI">Open Router</th>
         <th style="width:90px">Refresh</th>
       </tr>
     </thead>
@@ -1132,6 +1214,8 @@ function updateDashboard() {
 
   // Activity feed
   updateActivityFeed();
+  // PON heatmap
+  refreshPonHeatmap();
 }
 
 function updateActivityFeed() {
@@ -1159,6 +1243,126 @@ function updateActivityFeed() {
   });
   if (!html) html = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">✓ No critical alerts</div>';
   feed.innerHTML = html;
+}
+
+// ── PON Traffic Heatmap ───────────────────────────────────────────────────
+let _ponHeatTimer = null;
+const PON_REFRESH_MS = 30000; // 30 s live refresh
+
+function _ponColor(rx, tx) {
+  const t = (rx||0)+(tx||0);
+  if (t <= 0)  return { bg:'#1e293b', border:'#334155', text:'#94a3b8' };
+  if (t < 100) return { bg:'#14532d', border:'#166534', text:'#86efac' };
+  if (t < 300) return { bg:'#15803d', border:'#16a34a', text:'#bbf7d0' };
+  if (t < 600) return { bg:'#713f12', border:'#ca8a04', text:'#fde68a' };
+  if (t < 900) return { bg:'#7c2d12', border:'#ea580c', text:'#fed7aa' };
+  return              { bg:'#7f1d1d', border:'#dc2626', text:'#fca5a5' };
+}
+
+async function refreshPonHeatmap() {
+  clearTimeout(_ponHeatTimer);
+  const grid = document.getElementById('pon-heatmap-grid');
+  if (!grid) return;
+
+  // Show spinner in subtitle while fetching
+  const tsEl = document.getElementById('pon-heatmap-ts');
+  if (tsEl) tsEl.textContent = '⟳ updating…';
+
+  try {
+    const r = await fetch(`${API}/pon/traffic`, { headers: authHeaders() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'api error');
+
+    const setEl = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
+    setEl('pon-total-rx', d.total_rx_mbps != null ? d.total_rx_mbps.toFixed(0) : '—');
+    setEl('pon-total-tx', d.total_tx_mbps != null ? d.total_tx_mbps.toFixed(0) : '—');
+    if (tsEl) tsEl.textContent = new Date().toLocaleTimeString();
+
+    // Sort by slot then port
+    const ports = (d.ports || []).slice().sort((a,b) => {
+      const [,as,ap] = (a.fsp||'0/0/0').split('/').map(Number);
+      const [,bs,bp] = (b.fsp||'0/0/0').split('/').map(Number);
+      return as !== bs ? as-bs : ap-bp;
+    });
+
+    const maxTotal = Math.max(1, ...ports.map(p => (p.rx_mbps||0)+(p.tx_mbps||0)));
+
+    // Group by slot
+    const slotMap = {};
+    ports.forEach(p => {
+      const slot = (p.fsp||'0/0/0').split('/')[1] || '?';
+      if (!slotMap[slot]) slotMap[slot] = [];
+      slotMap[slot].push(p);
+    });
+
+    let rows = '';
+    let rowIdx = 0;
+    Object.keys(slotMap).sort((a,b)=>Number(a)-Number(b)).forEach(slot => {
+      const slotPorts = slotMap[slot];
+      // Slot subtotals
+      const slotRx = slotPorts.reduce((s,p)=>s+(p.rx_mbps||0),0);
+      const slotTx = slotPorts.reduce((s,p)=>s+(p.tx_mbps||0),0);
+      rows += `<tr>
+        <td colspan="5" style="padding:6px 12px 4px;background:rgba(255,255,255,.05);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+          <span style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.7px;">Slot ${slot}</span>
+          <span style="font-size:10px;color:var(--muted);margin-left:10px;">${slotPorts.length} ports</span>
+          <span style="font-size:10px;color:#4ade80;margin-left:14px;">↓ ${slotRx.toFixed(1)}</span>
+          <span style="font-size:10px;color:#60a5fa;margin-left:8px;">↑ ${slotTx.toFixed(1)} Mbps</span>
+        </td>
+      </tr>`;
+      slotPorts.forEach(p => {
+        const rx = p.rx_mbps||0, tx = p.tx_mbps||0, total = rx+tx;
+        const c = _ponColor(rx, tx);
+        const barPct = Math.min(100,(total/maxTotal)*100).toFixed(1);
+        const zebra = rowIdx++ % 2 === 0 ? 'background:rgba(255,255,255,.015);' : '';
+        rows += `<tr style="${zebra}border-bottom:1px solid rgba(255,255,255,.04);">
+          <td style="padding:8px 12px 8px 20px;font-weight:600;color:${c.text};white-space:nowrap;">
+            <span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${c.bg};border:1px solid ${c.border};margin-right:8px;vertical-align:middle;"></span>${p.fsp||'—'}
+          </td>
+          <td style="padding:8px 12px;text-align:right;color:#4ade80;font-variant-numeric:tabular-nums;font-size:12px;">${rx.toFixed(1)}</td>
+          <td style="padding:8px 12px;text-align:right;color:#60a5fa;font-variant-numeric:tabular-nums;font-size:12px;">${tx.toFixed(1)}</td>
+          <td style="padding:8px 12px;text-align:right;color:${c.text};font-weight:700;font-variant-numeric:tabular-nums;font-size:12px;">${total.toFixed(1)}</td>
+          <td style="padding:8px 12px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div style="flex:1;height:5px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;">
+                <div style="height:100%;width:${barPct}%;background:${c.border};border-radius:3px;transition:width .5s ease;"></div>
+              </div>
+              <span style="font-size:10px;color:var(--muted);min-width:36px;text-align:right;">${barPct}%</span>
+            </div>
+          </td>
+        </tr>`;
+      });
+    });
+
+    // Grand total footer
+    const totalRx = ports.reduce((s,p)=>s+(p.rx_mbps||0),0);
+    const totalTx = ports.reduce((s,p)=>s+(p.tx_mbps||0),0);
+    rows += `<tr style="border-top:2px solid var(--border);background:rgba(255,255,255,.05);">
+      <td style="padding:10px 12px;font-weight:700;color:var(--text);font-size:12px;">Total (${ports.length} ports)</td>
+      <td style="padding:10px 12px;text-align:right;color:#4ade80;font-weight:700;font-size:12px;">${totalRx.toFixed(1)}</td>
+      <td style="padding:10px 12px;text-align:right;color:#60a5fa;font-weight:700;font-size:12px;">${totalTx.toFixed(1)}</td>
+      <td style="padding:10px 12px;text-align:right;color:var(--text);font-weight:700;font-size:12px;">${(totalRx+totalTx).toFixed(1)}</td>
+      <td style="padding:10px 12px;color:var(--muted);font-size:11px;">Mbps</td>
+    </tr>`;
+
+    if (!ports.length) rows = '<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">No PON data yet — poller warming up</td></tr>';
+    const tbody = grid.querySelector('tbody');
+    if (tbody) tbody.innerHTML = rows; else grid.innerHTML = rows;
+
+  } catch(e) {
+    const grid2 = document.getElementById('pon-heatmap-grid');
+    const tb = grid2 && grid2.querySelector('tbody');
+    const errHtml = `<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">Unable to load PON traffic: ${e.message}</td></tr>`;
+    if (tb) tb.innerHTML = errHtml; else if (grid2) grid2.innerHTML = errHtml;
+    if (tsEl) tsEl.textContent = 'error';
+  }
+
+  // Live refresh every 30s while dashboard is active
+  _ponHeatTimer = setTimeout(() => {
+    const dash = document.getElementById('section-dashboard');
+    if (dash && dash.classList.contains('active')) refreshPonHeatmap();
+  }, PON_REFRESH_MS);
 }
 
 // ── Advanced Filter Bar ───────────────────────────────────────────────────
@@ -1404,33 +1608,48 @@ function normalizeSidebarProfileMenu() {
 }
 
 // ── Theme engine ──────────────────────────────────────────────────────────
+// Status color tokens — each theme provides foreground/background/border for
+// the 6 ONT status states so dashboards & badges remain readable on any bg.
+const STATUS_DARK = {
+  '--st-online-fg':'#86efac','--st-online-bg':'rgba(34,197,94,.14)','--st-online-border':'rgba(34,197,94,.4)',
+  '--st-power-fg' :'#f9a8d4','--st-power-bg' :'rgba(236,72,153,.14)','--st-power-border':'rgba(236,72,153,.4)',
+  '--st-fiber-fg' :'#fca5a5','--st-fiber-bg' :'rgba(185,28,28,.14)','--st-fiber-border':'rgba(239,68,68,.4)',
+  '--st-weak-fg'  :'#f59e0b','--st-weak-bg'  :'rgba(245,158,11,.12)','--st-weak-border':'rgba(245,158,11,.35)',
+  '--st-bad-fg'   :'#f97316','--st-bad-bg'   :'rgba(249,115,22,.12)','--st-bad-border':'rgba(249,115,22,.35)',
+  '--st-unreg-fg' :'#a855f7','--st-unreg-bg' :'rgba(168,85,247,.12)','--st-unreg-border':'rgba(168,85,247,.35)',
+};
+const STATUS_LIGHT = {
+  '--st-online-fg':'#15803d','--st-online-bg':'rgba(22,163,74,.10)','--st-online-border':'rgba(22,163,74,.45)',
+  '--st-power-fg' :'#9d174d','--st-power-bg' :'rgba(236,72,153,.10)','--st-power-border':'rgba(190,24,93,.5)',
+  '--st-fiber-fg' :'#b91c1c','--st-fiber-bg' :'rgba(220,38,38,.10)','--st-fiber-border':'rgba(220,38,38,.55)',
+  '--st-weak-fg'  :'#b45309','--st-weak-bg'  :'rgba(217,119,6,.12)','--st-weak-border':'rgba(217,119,6,.5)',
+  '--st-bad-fg'   :'#9a3412','--st-bad-bg'   :'rgba(194,65,12,.12)','--st-bad-border':'rgba(194,65,12,.5)',
+  '--st-unreg-fg' :'#6b21a8','--st-unreg-bg' :'rgba(126,34,206,.10)','--st-unreg-border':'rgba(126,34,206,.5)',
+};
 const THEMES = {
-  pyro: {'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'},
-  dark: {'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--bg4':'#1a1a1a','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444','--yellow':'#f59e0b'},
-  light: {'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--bg4':'#dde2e8','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626','--yellow':'#d97706'},
+  pyro:  Object.assign({'--bg':'#0b0e18','--bg2':'#12151f','--bg3':'#1a1e2e','--bg4':'#222638','--border':'#2c3150','--text':'#dde3f5','--muted':'#6b7394','--accent':'#4f8ef7','--green':'#26d97f','--red':'#f25c5c','--yellow':'#f5b83a'}, STATUS_DARK),
+  dark:  Object.assign({'--bg':'#000000','--bg2':'#0d0d0d','--bg3':'#111111','--bg4':'#1a1a1a','--border':'#222222','--text':'#e8eaf0','--muted':'#555b6e','--accent':'#3b82f6','--green':'#22c55e','--red':'#ef4444','--yellow':'#f59e0b'}, STATUS_DARK),
+  light: Object.assign({'--bg':'#f0f2f5','--bg2':'#ffffff','--bg3':'#e8ecf0','--bg4':'#dde2e8','--border':'#c8d0da','--text':'#1a2030','--muted':'#5a6478','--accent':'#2563eb','--green':'#16a34a','--red':'#dc2626','--yellow':'#d97706'}, STATUS_LIGHT),
 };
 function applyTheme(name){const t=THEMES[name]||THEMES.pyro;Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));}
 function loadTheme(){applyTheme(localStorage.getItem('pyronms_theme')||'pyro');}
 
-// ── Dynamic Favicon (from branding) ──────────────────────────────────────
-function applyFavicon() {
-  const b = JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
-  const favicon = document.getElementById('favicon');
-  if (!favicon) return;
-  if (b.favicon) favicon.href = b.favicon;
-  else if (b.clientLogo) favicon.href = b.clientLogo;
-}
-function applyBranding(){
-  const b=JSON.parse(localStorage.getItem('pyronms_branding')||'{}');
-  if(b.clientLogo) document.querySelectorAll('img[data-client-logo]').forEach(el=>el.src=b.clientLogo);
-  if(b.company) document.querySelectorAll('[data-company]').forEach(el=>el.textContent=b.company);
-}
+// Brand-locked: identity is fixed at PyroNet Solutions. Clear any legacy
+// branding override stored by previous versions so old logos/favicons stop
+// rendering on first load after the v4.0.0 upgrade.
+try { localStorage.removeItem('pyronms_branding'); } catch(e) {}
 loadTheme();
-applyFavicon();
 
 // Receive theme changes from settings.html iframe
 window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'setTheme') { applyTheme(e.data.name); }
+  if (e.data && e.data.type === 'setTheme') {
+    applyTheme(e.data.name);
+    // Forward to admin iframe (settings already changed it on its own document)
+    try {
+      const adm = document.getElementById('adminFrame');
+      if (adm && adm.contentWindow) adm.contentWindow.postMessage(e.data, '*');
+    } catch(_) {}
+  }
 });
 
 
@@ -1655,6 +1874,13 @@ function getSortedFiltered(){
     else if(sortCol==='name'){va=(a.name||'').toLowerCase();vb=(b.name||'').toLowerCase();}
     else if(sortCol==='sn'){va=a.sn||'';vb=b.sn||'';}
     else if(sortCol==='vlan'){va=parseInt(a.vlan)||0;vb=parseInt(b.vlan)||0;return(va-vb)*sortDir;}
+    else if(sortCol==='type'){
+      // ONT first (most useful), then ONU, then ? (offline/unknown)
+      const order = {'ONT': 0, 'ONU': 1, '?': 2};
+      va = order[a.device_type] ?? 3;
+      vb = order[b.device_type] ?? 3;
+      return (va-vb)*sortDir;
+    }
     else return 0;
     return va<vb?-sortDir:va>vb?sortDir:0;
   });
@@ -1821,15 +2047,50 @@ let _oltCfgData = null;
 
 async function loadOltConfig(force) {
   if (_oltCfgData && !force) { renderOltConfig(_oltCfgData); return; }
+  // Find Refresh button (the one wired with onclick=loadOltConfig(true))
+  const btn = force ? document.querySelector('button[onclick="loadOltConfig(true)"]') : null;
+  const origText = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span style="display:inline-block;animation:spin .7s linear infinite">⟳</span> Refreshing…';
+    btn.style.opacity = '.7';
+  }
+  const updEl = document.getElementById('oltcfg-updated');
   _barStart();
   try {
     const r = await fetch(API+'/olt/profiles', {headers: authHeaders()});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     _oltCfgData = await r.json();
     renderOltConfig(_oltCfgData);
+    if (btn) {
+      btn.innerHTML = '✓ Refreshed';
+      btn.style.background = 'rgba(34,197,94,.18)';
+      btn.style.borderColor = 'rgba(34,197,94,.4)';
+      btn.style.color = '#86efac';
+    }
+    if (typeof toast === 'function') toast('✓ OLT config refreshed', 'ok');
   } catch(e) {
     console.error('loadOltConfig:', e);
+    if (btn) {
+      btn.innerHTML = '✗ Failed';
+      btn.style.background = 'rgba(239,68,68,.18)';
+      btn.style.borderColor = 'rgba(239,68,68,.4)';
+      btn.style.color = '#fca5a5';
+    }
+    if (typeof toast === 'function') toast('✗ Refresh failed: ' + e.message, 'err');
   } finally {
     _barDone();
+    if (btn) {
+      // Reset after 1.5s
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+        btn.style.background = '';
+        btn.style.borderColor = '';
+        btn.style.color = '';
+        btn.style.opacity = '';
+      }, 1500);
+    }
   }
 }
 
@@ -1965,7 +2226,11 @@ async function submitProvision() {
       srv_profile_id: document.getElementById('prov-srvprofile').value,
       vlan_id: document.getElementById('prov-vlan').value || '10',
       user_vlan: document.getElementById('prov-uservlan').value || document.getElementById('prov-vlan').value || '10',
-      vas_profile: document.getElementById('prov-vasprofile').value || 'PPP-10-IPV4-IPV6',
+      vas_profile:      document.getElementById('prov-vasprofile').value    || 'PPP-10-IPV4-IPV6',
+      alarm_profile:    document.getElementById('prov-alarm-profile').value  || 'alarm-profile_1',
+      optical_alarm:    document.getElementById('prov-optical-alarm').value  || 'optical_alarm_profile_1',
+      slevel_profile:   document.getElementById('prov-slevel-profile').value || 'alarm-policy_0',
+      tr069_profile:    document.getElementById('prov-tr069-profile').value  || 'ACS',
       description: desc,
       method: (document.querySelector('input[name="prov-method"]:checked') || {value:'ssh'}).value,
     };
@@ -2167,7 +2432,7 @@ async function init() {
     }
   }
   if(!checkAuth()) return;
-  applyBranding();
+  // Brand-locked in v4.0.0 — applyBranding() removed; identity is hardcoded HTML
   // Apply sidebar state
   if (isMobileView()) {
     sidebarCollapsed = true;
@@ -2857,6 +3122,12 @@ function renderTable() {
         <td class="temp-cell">${temp}</td>
         <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
         <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
+        <td style="text-align:center;">${deviceTypePill(o.device_type)}</td>
+        <td onclick="event.stopPropagation()" style="text-align:center;">
+          <button class="btn-row-open" onclick="openRouter('${escAttr(o.sn)}','${escAttr(o.pon || '')}','${escAttr(o.ont_id || '')}','${escAttr(o.device_type || '')}',this)" title="Open router web UI (WAN IP via GenieACS TR-069)">
+            <span class="open-icon">🛜</span> Open Router
+          </button>
+        </td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
           <button class="btn-row-refresh" onclick="refreshRow('${o.sn}',this)"><span class="row-refresh-icon"></span>Refresh</button>
         </td>
@@ -2868,7 +3139,7 @@ function renderTable() {
         if (ev.target.closest('button, a, input, select, textarea, label')) return;
         const sn = tr.dataset.sn || '';
         const name = tr.dataset.name || sn;
-        if (sn) openOntManager(sn, name);
+        if (sn) openDeviceModal(sn, name);
       });
     });
 
@@ -3128,6 +3399,98 @@ function signalBadge(o) {
   if (rx >= -26)        return { cls:'sig-good',  text: `${rx} dBm` };
   if (rx >= -28)        return { cls:'sig-weak',  text: `${rx} dBm` };
   return                       { cls:'sig-bad',   text: `${rx} dBm` };
+}
+
+// ── Device type pill (ONT router vs ONU bridge) ─────────────────────────────
+function deviceTypePill(type) {
+  const t = String(type || '?').toUpperCase();
+  if (t === 'ONT') return `<span class="type-pill type-ont" title="Router CPE — has WAN IP, web UI accessible">ONT</span>`;
+  if (t === 'ONU') return `<span class="type-pill type-onu" title="L2 bridge — no router web UI">ONU</span>`;
+  return `<span class="type-pill type-unk" title="Unknown (offline) — open the popup to detect">?</span>`;
+}
+
+// ── Open Router: resolve WAN IP from OLT (cache → SSH live), open in new tab ─
+// Bypasses GenieACS entirely — uses /ont/wan-ip endpoint which reads from
+// InfluxDB worker cache first, then falls back to direct SSH `display ont wan-info`.
+// Open Router: cached WAN IP first (instant), SSH fallback if not cached.
+// Works for ONT and ONU — any device that has dialled PPPoE or has a static WAN IP.
+async function openRouter(sn, pon, ont_id, deviceType, btn) {
+  if (!sn || !btn) return;
+
+  const icon     = btn.querySelector('.open-icon');
+  const origIcon = icon ? icon.textContent : '🛜';
+
+  // ── Fast path: WAN IP already in allONTs cache (from /onts API) ────────────
+  const row      = allONTs.find(o => o.sn === sn) || {};
+  const cachedIp = (btn.dataset.ip || row.wan_ip || '').trim();
+  if (cachedIp && cachedIp !== '-' && cachedIp !== '0.0.0.0') {
+    window.open(`http://${cachedIp}/`, '_blank', 'noopener,noreferrer');
+    if (typeof toast === 'function') toast(`🛜 Opening ${cachedIp}`, 'ok');
+    return;
+  }
+
+  // ── Slow path: resolve via OLT SSH (ONT) or GenieACS direct (ONU) ──────────
+  btn.disabled = true;
+  if (icon) { icon.textContent = '⟳'; icon.classList.add('spin'); }
+  try {
+    // ONU bridge mode: PPPoE IP is invisible to OLT SSH — go straight to GenieACS
+    const isOnu = String(deviceType || '').toUpperCase() === 'ONU';
+    const qs = new URLSearchParams({
+      sn, pon: pon || '', ont_id: ont_id || '',
+      ...(isOnu ? { genie: '1' } : {})
+    }).toString();
+    const r = await fetch(`${API}/ont/wan-ip?${qs}`, { headers: authHeaders() });
+    const data = await r.json();
+    const ip = (data && data.ip) || '';
+    if (!ip || ip === '-' || ip === '0.0.0.0') {
+      let reason = 'ONT may be offline or WAN not connected';
+      if (data.status) reason = `WAN status: ${data.status}`;
+      if (data.error)  reason = data.error;
+      if (typeof toast === 'function') toast(`✗ No WAN IP for ${sn} — ${reason}`, 'err');
+      else if (typeof showToast === 'function') showToast(`✗ No WAN IP — ${reason}`, 'err');
+      return;
+    }
+    // Cache the resolved IP on the row for next click
+    const idx = allONTs.findIndex(o => o.sn === sn);
+    if (idx >= 0) allONTs[idx].wan_ip = ip;
+    window.open(`http://${ip}/`, '_blank', 'noopener,noreferrer');
+    if (typeof toast === 'function') toast(`🛜 Opening ${ip}`, 'ok');
+  } catch (e) {
+    if (typeof toast === 'function') toast(`✗ Failed to resolve WAN IP: ${e.message}`, 'err');
+    else if (typeof showToast === 'function') showToast(`✗ Failed: ${e.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+    if (icon) { icon.textContent = origIcon; icon.classList.remove('spin'); }
+  }
+}
+
+// ── Open Router from device detail popup header button ────────────────────────
+async function devOpenRouter(btn) {
+  const sn    = btn.dataset.sn  || (_devCurrent && _devCurrent.sn) || '';
+  const pon   = btn.dataset.pon || '';
+  const wanIp = (btn.dataset.ip || '').trim();
+  const row   = allONTs.find(o => o.sn === sn) || {};
+  const ont_id   = row.ont_id     || '';
+  const devType  = row.device_type || 'ONT';
+
+  const origHtml = btn.innerHTML;
+
+  // ── Fast path: WAN IP already loaded from GenieACS ────────────────────────
+  if (wanIp && wanIp !== '-' && wanIp !== '0.0.0.0') {
+    window.open(`http://${wanIp}/`, '_blank', 'noopener,noreferrer');
+    if (typeof toast === 'function') toast(`🛜 Opening ${wanIp}`, 'ok');
+    return;
+  }
+
+  // ── Slow path: resolve via backend (GenieACS for ONU, SSH for ONT) ─────────
+  btn.innerHTML = '⟳ Resolving…';
+  btn.disabled  = true;
+  try {
+    await openRouter(sn, pon, ont_id, devType, btn);
+  } finally {
+    btn.innerHTML = origHtml;
+    btn.disabled  = false;
+  }
 }
 
 async function refreshRow(sn, btn) {
@@ -4408,6 +4771,135 @@ init();
 let _ontMgrCurrent = null;
 let _ontMgrReq = 0;
 
+// ── ONT Popup Tab Switching ───────────────────────────────────────────────
+function switchOmTab(name, btn) {
+  ['overview','graphs'].forEach(t => {
+    const el = document.getElementById('omTab-' + t);
+    if (el) el.style.display = t === name ? '' : 'none';
+  });
+  document.querySelectorAll('.omtab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (name === 'graphs') {
+    const sn = _ontMgrCurrent && _ontMgrCurrent.sn;
+    if (sn && !_graphLoaded) loadOntGraphs(sn, _graphRange);
+  } else {
+    // Stop auto-refresh when leaving graphs tab
+    if (_graphRefreshTimer) { clearInterval(_graphRefreshTimer); _graphRefreshTimer = null; }
+  }
+}
+
+// ── ONT Graphs ───────────────────────────────────────────────────────────
+let _graphLoaded   = false;
+let _graphRange    = '1h';
+let _graphRefreshTimer = null;
+let _chartRx       = null;
+let _chartTemp     = null;
+
+function switchGraphRange(btn) {
+  document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _graphRange = btn.dataset.r;
+  _graphLoaded = false;
+  const sn = _ontMgrCurrent && _ontMgrCurrent.sn;
+  if (sn) loadOntGraphs(sn, _graphRange);
+}
+
+async function loadOntGraphs(sn, range) {
+  const noData = document.getElementById('graphNoData');
+  const rxCanvas = document.getElementById('chartRx');
+  const tmpCanvas = document.getElementById('chartTemp');
+  if (noData) noData.style.display = 'none';
+  try {
+    const r = await fetch(`${API}/ont/graph?sn=${encodeURIComponent(sn)}&range=${range}`, { headers: authHeaders() });
+    const data = await r.json();
+    if (!data.ok || !data.labels || !data.labels.length) {
+      if (noData) noData.style.display = '';
+      if (rxCanvas) rxCanvas.style.display = 'none';
+      if (tmpCanvas) tmpCanvas.style.display = 'none';
+      return;
+    }
+    if (rxCanvas) rxCanvas.style.display = '';
+    if (tmpCanvas) tmpCanvas.style.display = '';
+    renderOntGraphs(data);
+    _graphLoaded = true;
+    // Auto-refresh every 60s
+    if (_graphRefreshTimer) clearInterval(_graphRefreshTimer);
+    _graphRefreshTimer = setInterval(() => {
+      const cur = _ontMgrCurrent && _ontMgrCurrent.sn;
+      if (cur) loadOntGraphs(cur, _graphRange);
+    }, 60000);
+  } catch(e) {
+    console.warn('[Graphs]', e);
+    if (noData) noData.style.display = '';
+  }
+}
+
+function renderOntGraphs(data) {
+  const chartDefaults = {
+    responsive: true, maintainAspectRatio: true,
+    animation: { duration: 400 },
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { ticks: { color: '#7a8099', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,.04)' } },
+      y: { ticks: { color: '#7a8099', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.07)' } }
+    }
+  };
+
+  // RX Signal chart
+  if (_chartRx) { _chartRx.destroy(); _chartRx = null; }
+  const rxCtx = document.getElementById('chartRx');
+  if (rxCtx) {
+    const rxData = data.rx_power.map(v => v);
+    _chartRx = new Chart(rxCtx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          { label: 'RX (dBm)', data: rxData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.08)',
+            borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+          { label: 'Warn -27', data: data.labels.map(() => -27), borderColor: 'rgba(245,158,11,.5)',
+            borderWidth: 1, borderDash: [4,4], pointRadius: 0 },
+          { label: 'Critical -32', data: data.labels.map(() => -32), borderColor: 'rgba(239,68,68,.5)',
+            borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+        ]
+      },
+      options: { ...chartDefaults, scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, min: -40, max: -5,
+             ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + ' dBm' } } } }
+    });
+  }
+
+  // Temperature chart
+  if (_chartTemp) { _chartTemp.destroy(); _chartTemp = null; }
+  const tmpCtx = document.getElementById('chartTemp');
+  if (tmpCtx) {
+    _chartTemp = new Chart(tmpCtx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          { label: 'Temp (°C)', data: data.temp, borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,.08)',
+            borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+          { label: 'Warn 75°C', data: data.labels.map(() => 75), borderColor: 'rgba(239,68,68,.5)',
+            borderWidth: 1, borderDash: [4,4], pointRadius: 0 }
+        ]
+      },
+      options: { ...chartDefaults, scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, min: 0, max: 90,
+             ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '°C' } } } }
+    });
+  }
+}
+
+// Reset graph state when popup closes
+function _resetGraphState() {
+  _graphLoaded = false;
+  _graphRange  = '1h';
+  if (_graphRefreshTimer) { clearInterval(_graphRefreshTimer); _graphRefreshTimer = null; }
+  if (_chartRx)   { _chartRx.destroy();   _chartRx   = null; }
+  if (_chartTemp) { _chartTemp.destroy(); _chartTemp = null; }
+}
+
 function themeForModel(model) {
   const m = (model || '').toUpperCase();
   if (/^(EG8|HG8|HS8|HN8|EG9|MA56)/.test(m) || m.includes('HUAWEI')) return { cls:'theme-huawei',  vendor:'Huawei' };
@@ -4436,6 +4928,9 @@ function closeOntManager(e) {
   document.getElementById('ontManagerOverlay').classList.remove('open');
   _ontMgrCurrent = null;
   _ontMgrReq++;   // invalidate any in-flight request
+  _resetGraphState();
+  // Reset tab back to Overview for next open
+  switchOmTab('overview', document.querySelector('.omtab'));
 }
 
 async function loadOntManagerData(sn) {
@@ -4533,8 +5028,9 @@ function renderOntManager(d) {
   loadOntConfig(d.sn);
 }
 
-// ─── ONT Configuration (WAN + WLAN, v2.9.0) ────────────────────────────────
+// ─── ONT Configuration (WAN + WLAN, v3.0.0) ────────────────────────────────
 let _ontCfgReq = 0;
+let _ontCfgData = null;   // last loaded config data, used by edit mode
 
 async function loadOntConfig(sn) {
   const myReq = ++_ontCfgReq;
@@ -4551,7 +5047,9 @@ async function loadOntConfig(sn) {
       box.innerHTML = `<div class="ontmgr-config-error">⚠ ${escHtml(data.error || 'Failed to load config')}</div>`;
       return;
     }
+    _ontCfgData = data;
     box.innerHTML = renderOntConfigCards(data);
+    _wireOntConfigEdit(data, sn);
   } catch(e) {
     if (myReq !== _ontCfgReq) return;
     const box = document.getElementById('ontmgrConfig');
@@ -4562,14 +5060,13 @@ async function loadOntConfig(sn) {
 }
 
 function renderOntConfigCards(d) {
-  const wan = d.wan || {};
+  const wan  = d.wan  || {};
   const wlan = d.wlan || { ssids: [], bands_present: [] };
-  const mgmt = d.mgmt || {};
-  const row = (k, v) => `<div class="ontmgr-row"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(String(v ?? '—'))}</span></div>`;
+  const row  = (k, v) => `<div class="ontmgr-row"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(String(v ?? '—'))}</span></div>`;
   const modeLabel = ({pppoe:'PPPoE',static:'Static IP','ip-routed':'IP Routed',dhcp:'DHCP',bridge:'Bridge'}[wan.mode] || (wan.mode || '—'));
-  const modeClass = (wan.mode === 'bridge' ? 'mode-bridge' : (wan.mode === 'pppoe' ? 'mode-pppoe' : 'mode-static'));
+  const modeClass  = (wan.mode === 'bridge' ? 'mode-bridge' : (wan.mode === 'pppoe' ? 'mode-pppoe' : 'mode-static'));
 
-  // WAN card content
+  // ── WAN card ──────────────────────────────────────────────────────────────
   let wanInner = '';
   if (!wan.mode && !wan.ipv4) {
     wanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">No WAN configuration reported</span></div>`;
@@ -4579,52 +5076,78 @@ function renderOntConfigCards(d) {
       ${row('Connection Type', wan.connection_type)}
       ${row('Service Type',    wan.service_type)}
       ${wan.mode === 'pppoe' ? `
-        ${row('PPPoE Username', wan.pppoe_user || '— (not exposed by OLT)')}
-        <div class="ontmgr-row"><span class="k">PPPoE Password</span><span class="v" style="color:var(--muted);font-style:italic">stored on ONT — Phase 2</span></div>
+        <div class="ontmgr-row cfg-view-row" id="cfgViewPppoeUser">
+          <span class="k">PPPoE Username</span>
+          <span class="v">${escHtml(wan.pppoe_user || '— (not exposed by OLT)')}</span>
+        </div>
+        <div class="ontmgr-row cfg-edit-row" id="cfgEditPppoe" style="display:none;flex-direction:column;gap:6px;padding:6px 0">
+          <label class="cfg-edit-label">PPPoE Username
+            <input id="cfgInputPppoeUser" class="edit-input" type="text" placeholder="username" autocomplete="off" value="${escHtml(wan.pppoe_user || '')}">
+          </label>
+          <label class="cfg-edit-label">PPPoE Password
+            <span class="cfg-pwd-wrap">
+              <input id="cfgInputPppoePass" class="edit-input" type="password" placeholder="new password" autocomplete="new-password">
+              <button type="button" class="cfg-eye-btn" data-target="cfgInputPppoePass">👁</button>
+            </span>
+          </label>
+        </div>
       ` : ''}
-      ${row('IPv4 Address',  wan.ipv4)}
-      ${row('Subnet Mask',   wan.subnet)}
+      ${row('IPv4 Address',    wan.ipv4)}
+      ${row('Subnet Mask',     wan.subnet)}
       ${row('Default Gateway', wan.gateway)}
-      ${row('Primary DNS',   wan.dns1)}
-      ${row('Secondary DNS', wan.dns2)}
-      ${row('Manage VLAN',   wan.vlan)}
-      ${row('MAC Address',   wan.mac)}
-      ${row('NAT',           wan.nat)}
-      ${row('Status',        wan.status)}
+      ${row('Primary DNS',     wan.dns1)}
+      ${row('Secondary DNS',   wan.dns2)}
+      ${row('Manage VLAN',     wan.vlan)}
+      ${row('MAC Address',     wan.mac)}
+      ${row('NAT',             wan.nat)}
+      ${row('Status',          wan.status)}
     `;
   }
 
-  // WLAN per-band cards
+  // ── WLAN card ─────────────────────────────────────────────────────────────
   let wlanInner = '';
-  if (!wlan.ssids || wlan.ssids.length === 0) {
+  if (wlan.supported === false) {
+    wlanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">⚠ This ONT model does not expose WLAN data via OLT CLI.<br><small style="color:var(--muted)">Older models (HG8245, bridge-mode ONUs) report "The ONT can not support" — WiFi info is stored on the device only.</small></span></div>`;
+  } else if (!wlan.ssids || wlan.ssids.length === 0) {
     wlanInner = `<div class="ontmgr-row"><span class="v" style="color:var(--muted)">No WLAN SSIDs reported (ONT may not have WiFi)</span></div>`;
   } else {
     const bandsHtml = (wlan.bands_present || []).map(b =>
       `<span class="band-chip band-${b === '5G' ? '5g' : '24g'}">${escHtml(b)}</span>`
     ).join(' ');
     wlanInner = `<div class="wlan-bands-row">${bandsHtml}</div>`;
-    wlanInner += wlan.ssids.map(s => `
+    wlanInner += wlan.ssids.map((s, i) => `
       <div class="wlan-ssid-block">
         <div class="wlan-ssid-head">
           <span class="band-chip band-${s.band === '5G' ? '5g' : '24g'}">${escHtml(s.band || '?')}</span>
           <span class="wlan-ssid-name">${escHtml(s.ssid || '—')}</span>
           <span class="wlan-state ${s.enabled ? 'ok' : 'off'}">${s.enabled ? 'enabled' : 'disabled'}</span>
         </div>
-        ${row('SSID Index',         s.index)}
-        ${row('Wireless Standard',  s.wireless_standard)}
-        ${row('Operational',        s.operational ? 'up' : 'down')}
-        ${row('Connected Clients',  (s.current_clients ?? '—') + ' / ' + (s.max_clients ?? '—'))}
-        <div class="ontmgr-row"><span class="k">WiFi Password</span><span class="v" style="color:var(--muted);font-style:italic">stored on ONT — Phase 2</span></div>
-        <div class="ontmgr-row"><span class="k">Security / Channel</span><span class="v" style="color:var(--muted);font-style:italic">not exposed by OLT — Phase 2</span></div>
+        ${row('Wireless Standard', s.wireless_standard)}
+        ${row('Connected Clients', (s.current_clients ?? '—') + ' / ' + (s.max_clients ?? '—'))}
+        <div class="ontmgr-row cfg-edit-row" id="cfgEditWifi${i}" style="display:none;flex-direction:column;gap:6px;padding:6px 0"
+             data-ssid-index="${escHtml(String(s.index ?? i+1))}">
+          <label class="cfg-edit-label">WiFi Password
+            <span class="cfg-pwd-wrap">
+              <input id="cfgInputWifiPass${i}" class="edit-input" type="password" placeholder="new password" autocomplete="new-password">
+              <button type="button" class="cfg-eye-btn" data-target="cfgInputWifiPass${i}">👁</button>
+            </span>
+          </label>
+        </div>
       </div>
     `).join('');
   }
 
-  const warningsHtml = (d.warnings && d.warnings.length) ?
-    `<div class="ontmgr-config-warn">⚠ ${d.warnings.map(w => escHtml(w)).join('<br>')}</div>` : '';
+  // ── Edit action bar ───────────────────────────────────────────────────────
+  const canEdit = (wan.mode === 'pppoe') || (wlan.supported !== false && wlan.ssids && wlan.ssids.length > 0);
+  const editBar = canEdit ? `
+    <div id="cfgActionBar" class="cfg-action-bar">
+      <button id="cfgEditBtn"   class="edit-btn">✎ Edit Config</button>
+      <button id="cfgSaveBtn"   class="btn-save"        style="display:none">💾 Save Changes</button>
+      <button id="cfgCancelBtn" class="btn-cancel-edit" style="display:none">✕ Cancel</button>
+      <div    id="cfgStatus"    class="save-status"></div>
+    </div>` : '';
 
   return `
-    ${warningsHtml}
     <div class="ontmgr-grid">
       <div class="ontmgr-card">
         <h4>🌐 WAN Configuration</h4>
@@ -4635,10 +5158,141 @@ function renderOntConfigCards(d) {
         ${wlanInner}
       </div>
     </div>
-    <div class="ontmgr-config-note">
-      ℹ️ PPPoE password, WiFi password, security mode, channel and country are stored on the ONT itself and not exposed by the OLT. They'll be readable in Phase 2 via direct ONT access.
-    </div>
+    ${editBar}
   `;
+}
+
+// Wire up Edit / Cancel / Save after innerHTML is set
+function _wireOntConfigEdit(d, sn) {
+  const wan  = d.wan  || {};
+  const wlan = d.wlan || { ssids: [] };
+
+  // Eye-button toggles
+  document.querySelectorAll('.cfg-eye-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = document.getElementById(btn.dataset.target);
+      if (inp) inp.type = inp.type === 'password' ? 'text' : 'password';
+    });
+  });
+
+  const editBtn   = document.getElementById('cfgEditBtn');
+  const saveBtn   = document.getElementById('cfgSaveBtn');
+  const cancelBtn = document.getElementById('cfgCancelBtn');
+  const status    = document.getElementById('cfgStatus');
+  if (!editBtn) return;
+
+  function enterEdit() {
+    editBtn.style.display   = 'none';
+    saveBtn.style.display   = '';
+    cancelBtn.style.display = '';
+    status.textContent = '';
+    status.className   = 'save-status';
+    // Show PPPoE edit row
+    const pppoeEdit = document.getElementById('cfgEditPppoe');
+    const pppoeView = document.getElementById('cfgViewPppoeUser');
+    if (pppoeEdit) { pppoeEdit.style.display = 'flex'; }
+    if (pppoeView) { pppoeView.style.display = 'none'; }
+    // Show WiFi password rows
+    document.querySelectorAll('[id^="cfgEditWifi"]').forEach(el => el.style.display = 'flex');
+  }
+
+  function exitEdit() {
+    editBtn.style.display   = '';
+    saveBtn.style.display   = 'none';
+    cancelBtn.style.display = 'none';
+    status.textContent = '';
+    status.className   = 'save-status';
+    const pppoeEdit = document.getElementById('cfgEditPppoe');
+    const pppoeView = document.getElementById('cfgViewPppoeUser');
+    if (pppoeEdit) { pppoeEdit.style.display = 'none'; }
+    if (pppoeView) { pppoeView.style.display = ''; }
+    document.querySelectorAll('[id^="cfgEditWifi"]').forEach(el => el.style.display = 'none');
+  }
+
+  editBtn.addEventListener('click', enterEdit);
+  cancelBtn.addEventListener('click', exitEdit);
+
+  saveBtn.addEventListener('click', async () => {
+    status.textContent = '⟳ Saving…';
+    status.className   = 'save-status saving';
+    saveBtn.disabled   = true;
+    cancelBtn.disabled = true;
+
+    let anyError = false;
+    let anySuccess = false;
+
+    // ── PPPoE save ──────────────────────────────────────────────────────────
+    if (wan.mode === 'pppoe') {
+      const uEl = document.getElementById('cfgInputPppoeUser');
+      const pEl = document.getElementById('cfgInputPppoePass');
+      const uVal = (uEl ? uEl.value.trim() : '');
+      const pVal = (pEl ? pEl.value.trim() : '');
+      if (uVal || pVal) {
+        if (!uVal || !pVal) {
+          status.textContent = '✗ Both PPPoE username and password are required';
+          status.className   = 'save-status fail';
+          saveBtn.disabled   = false;
+          cancelBtn.disabled = false;
+          return;
+        }
+        try {
+          _barStart();
+          const r = await fetch(`${API}/ont/settings/pppoe_creds`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sn, kind: 'pppoe_creds',
+              pppoe_username: uVal, pppoe_password: pVal,
+              vlan_id: String(wan.vlan || '') })
+          });
+          const data = await r.json();
+          _barDone();
+          if (r.ok && data.ok !== false) { anySuccess = true; }
+          else { anyError = true; showToast('✗ PPPoE save failed: ' + escHtml(data.error || 'OLT error'), 'err'); }
+        } catch(e) { _barDone(); anyError = true; showToast('✗ Network error: ' + escHtml(e.message), 'err'); }
+      }
+    }
+
+    // ── WiFi saves (one per SSID with a non-empty password) ─────────────────
+    const wifiRows = document.querySelectorAll('[id^="cfgEditWifi"]');
+    for (let i = 0; i < wifiRows.el; i++) { /* handled below */ }
+    for (const row of wifiRows) {
+      const idx  = parseInt(row.dataset.ssidIndex || '1', 10);
+      const pInp = row.querySelector('input[type="password"], input[type="text"]');
+      const pVal = pInp ? pInp.value.trim() : '';
+      if (!pVal) continue;
+      try {
+        _barStart();
+        const r = await fetch(`${API}/ont/settings/wifi`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sn, kind: 'wifi', ssid_index: idx, password: pVal })
+        });
+        const data = await r.json();
+        _barDone();
+        if (r.ok && data.ok !== false) { anySuccess = true; }
+        else { anyError = true; showToast('✗ WiFi save failed: ' + escHtml(data.error || 'OLT error'), 'err'); }
+      } catch(e) { _barDone(); anyError = true; showToast('✗ Network error: ' + escHtml(e.message), 'err'); }
+    }
+
+    saveBtn.disabled   = false;
+    cancelBtn.disabled = false;
+
+    if (!anySuccess && !anyError) {
+      status.textContent = 'Nothing to save — enter a value first';
+      status.className   = 'save-status';
+      return;
+    }
+    if (anyError && !anySuccess) {
+      status.textContent = '✗ Save failed — see toast above';
+      status.className   = 'save-status fail';
+      return;
+    }
+
+    status.textContent = '✓ Saved — reloading config…';
+    status.className   = 'save-status ok';
+    if (anySuccess) showToast('✓ Config saved', 'ok');
+    setTimeout(() => { exitEdit(); loadOntConfig(sn); }, 900);
+  });
 }
 
 
@@ -4799,60 +5453,89 @@ async function confirmProceed() {
 
       <!-- Fields grid -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+
+        <!-- Customer Name — full width -->
         <div style="grid-column:1/-1;">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Customer Name / Description *</div>
-          <input id="prov-desc" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;" placeholder="e.g. kkn.johnsmith">
+          <input id="prov-desc" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="e.g. kkn.johnsmith">
         </div>
+
+        <!-- ── GREEN: Dropdowns (selectable) ── -->
         <div>
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Line Profile</div>
-          <select id="prov-lineprofile" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+          <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Line Profile</div>
+          <select id="prov-lineprofile" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
             <option>Loading...</option>
           </select>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Service Profile</div>
-          <select id="prov-srvprofile" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+          <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Service Profile</div>
+          <select id="prov-srvprofile" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
             <option>Loading...</option>
           </select>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Network VLAN ID</div>
-          <select id="prov-vlan" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+          <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">General ONT VAS Profile</div>
+          <select id="prov-vasprofile" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+            <option value="PPP-10-IPV4-IPV6" selected>PPP-10-IPV4-IPV6</option>
+            <option value="PPP-10-IPV4">PPP-10-IPV4</option>
+            <option value="STATIC-IP">STATIC-IP</option>
+            <option value="BRIDGE-MODE">BRIDGE-MODE</option>
+            <option value="TEST-ACS">TEST-ACS</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Network VLAN ID</div>
+          <select id="prov-vlan" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
             <option value="">-- optional --</option>
           </select>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">User VLAN (ONT-side)</div>
-          <input id="prov-uservlan" type="number" min="1" max="4094" placeholder="e.g. 10" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+          <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">User VLAN (ONT-side)</div>
+          <input id="prov-uservlan" type="number" min="1" max="4094" placeholder="e.g. 10" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;">
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Service Type</div>
-          <select id="prov-svctype" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+          <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Service Type</div>
+          <select id="prov-svctype" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
             <option value="multi-service">Multi-Service VLAN</option>
             <option value="smart">Smart VLAN</option>
           </select>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Service Description</div>
-          <select id="prov-svcdesc" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
+          <div style="font-size:11px;color:#4ade80;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Service Description</div>
+          <select id="prov-svcdesc" style="width:100%;background:var(--bg3);border:1px solid rgba(74,222,128,.35);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
             <option value="HSI">HSI (High-Speed Internet)</option>
             <option value="VOIP">VOIP</option>
             <option value="IPTV">IPTV</option>
             <option value="MANAGEMENT">MANAGEMENT</option>
           </select>
         </div>
-        <div>
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:6px;">General ONT VAS Profile</div>
-          <select id="prov-vasprofile" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;">
-            <option value="PPP-10-IPV4-IPV6" selected>PPP-10-IPV4-IPV6</option>
-            <option value="STATIC-IP">STATIC-IP</option>
-            <option value="TEST-ACS">TEST-ACS</option>
-            <option value="BRIDGE-MODE">BRIDGE-MODE</option>
-          </select>
+
+        <!-- ── RED: Compulsory defaults ── -->
+        <div style="grid-column:1/-1;border-top:1px solid rgba(239,68,68,.2);padding-top:12px;margin-top:2px;">
+          <div style="font-size:10px;color:#f87171;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">⚠ Compulsory Profiles (pre-filled · editable)</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+              <div style="font-size:11px;color:#f87171;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Alarm Profile</div>
+              <input id="prov-alarm-profile" value="alarm-profile_1" style="width:100%;background:var(--bg3);border:1px solid rgba(239,68,68,.4);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="alarm-profile_1">
+            </div>
+            <div>
+              <div style="font-size:11px;color:#f87171;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Optical Alarm Profile</div>
+              <input id="prov-optical-alarm" value="optical_alarm_profile_1" style="width:100%;background:var(--bg3);border:1px solid rgba(239,68,68,.4);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="optical_alarm_profile_1">
+            </div>
+            <div>
+              <div style="font-size:11px;color:#f87171;text-transform:uppercase;font-weight:600;margin-bottom:6px;">ONU Service Level Profile</div>
+              <input id="prov-slevel-profile" value="alarm-policy_0" style="width:100%;background:var(--bg3);border:1px solid rgba(239,68,68,.4);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="alarm-policy_0">
+            </div>
+            <div>
+              <div style="font-size:11px;color:#f87171;text-transform:uppercase;font-weight:600;margin-bottom:6px;">TR069 Server Profile</div>
+              <input id="prov-tr069-profile" value="ACS" style="width:100%;background:var(--bg3);border:1px solid rgba(239,68,68,.4);color:var(--text);border-radius:7px;padding:9px 12px;font-size:13px;box-sizing:border-box;" placeholder="ACS">
+            </div>
+          </div>
         </div>
-        <!-- Provision Method Selector -->
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
-          <span style="font-size:12px;color:var(--muted);min-width:110px;">Method</span>
+
+        <!-- Provision Method Selector — full width -->
+        <div style="grid-column:1/-1;display:flex;gap:8px;align-items:center;">
+          <span style="font-size:12px;color:var(--muted);min-width:60px;">Method</span>
           <div style="display:flex;gap:6px;flex:1;">
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 12px;flex:1;justify-content:center;" id="prov-method-ssh-lbl">
               <input type="radio" name="prov-method" id="prov-method-ssh" value="ssh" checked onchange="provMethodChange()"> 🔐 SSH
@@ -4888,7 +5571,37 @@ async function confirmProceed() {
         <button class="btn-close" onclick="closeOntManager()" title="Close">✕</button>
       </div>
       <div id="ontmgrBody" class="ontmgr-body">
-        <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
+        <!-- Tab bar -->
+        <div class="ontmgr-tabs">
+          <button class="omtab active" onclick="switchOmTab('overview',this)">📡 Overview</button>
+          <button class="omtab" onclick="switchOmTab('graphs',this)">📈 Graphs</button>
+        </div>
+        <!-- Tab: Overview -->
+        <div id="omTab-overview">
+          <div class="ontmgr-loading"><span class="spin" style="display:inline-block">⟳</span> Loading ONT info via SSH…</div>
+        </div>
+        <!-- Tab: Graphs -->
+        <div id="omTab-graphs" style="display:none">
+          <div class="ont-graph-wrap">
+            <div class="ont-graph-range">
+              <button class="grng active" data-r="1h" onclick="switchGraphRange(this)">1H</button>
+              <button class="grng" data-r="6h" onclick="switchGraphRange(this)">6H</button>
+              <button class="grng" data-r="24h" onclick="switchGraphRange(this)">24H</button>
+              <button class="grng" data-r="7d" onclick="switchGraphRange(this)">7D</button>
+            </div>
+            <div class="ont-chart-box">
+              <h4>📶 RX Signal (dBm)</h4>
+              <canvas id="chartRx" height="120"></canvas>
+            </div>
+            <div class="ont-chart-box">
+              <h4>🌡️ Temperature (°C)</h4>
+              <canvas id="chartTemp" height="100"></canvas>
+            </div>
+            <div id="graphNoData" style="display:none;text-align:center;padding:32px;color:var(--muted);font-size:13px;">
+              No signal data available for this ONT yet.<br>Data is collected every poll cycle via SNMP/SSH.
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -4913,6 +5626,1471 @@ async function confirmProceed() {
       <div id="actionOverlayText" class="action-overlay-text">Running action on 1 ONT(s)…</div>
     </div>
   </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       Device Modal (v3.3.0) — GenieACS-driven router-admin popup with SSH fallback
+       Router-style: sidebar nav, status dot, card grid, inline edits
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <style>
+    .dev-overlay { position: fixed; inset: 0; background: rgba(8,10,18,.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 9000; padding: 16px; animation: devFadeIn .18s ease; }
+    @keyframes devFadeIn   { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes devSlideUp  { from { transform: translateY(20px) scale(.97); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+    @keyframes devTabFade  { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes devPulse    { 0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,.45); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+    .dev-overlay.open { display: flex; }
+
+    /* ── Modal shell ────────────────────────────────────────────────── */
+    .dev-card { background: linear-gradient(180deg, #181b24 0%, #14161f 100%); border: 1px solid rgba(255,255,255,.06); border-radius: 16px; width: 100%; max-width: 1180px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 40px 100px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.02) inset; animation: devSlideUp .25s cubic-bezier(.2,.9,.3,1.2); }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    .dev-header { padding: 18px 24px; border-bottom: 1px solid rgba(255,255,255,.06); display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; background: linear-gradient(90deg, rgba(59,130,246,.08) 0%, transparent 50%); }
+    .dev-header-left { display: flex; gap: 14px; align-items: center; min-width: 0; flex: 1; }
+    .dev-status-dot { width: 12px; height: 12px; border-radius: 50%; background: #7a8099; flex-shrink: 0; box-shadow: 0 0 0 3px rgba(122,128,153,.18); }
+    .dev-status-dot.online { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.25); animation: devPulse 2s infinite; }
+    .dev-status-dot.offline { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.25); }
+    .dev-status-dot.warn { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.25); }
+    .dev-header-text { min-width: 0; flex: 1; }
+    .dev-title { font-size: 18px; font-weight: 700; color: #e8eaf3; letter-spacing: -.2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .dev-model-chip { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: rgba(59,130,246,.18); color: #93c5fd; border: 1px solid rgba(59,130,246,.35); letter-spacing: .3px; }
+    .dev-sub { font-size: 12px; color: #7a8099; margin-top: 4px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .dev-sub .sep { opacity: .4; }
+    .dev-sub .sn  { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+    .dev-header-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .dev-badge { font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; letter-spacing: .2px; }
+    .dev-badge.src-genieacs  { background: linear-gradient(180deg, rgba(34,197,94,.16), rgba(34,197,94,.08)); color: #86efac; border: 1px solid rgba(34,197,94,.35); }
+    .dev-badge.src-ssh       { background: linear-gradient(180deg, rgba(245,158,11,.16), rgba(245,158,11,.08)); color: #fcd34d; border: 1px solid rgba(245,158,11,.35); }
+    .dev-badge.src-tr069-on  { background: linear-gradient(180deg, rgba(34,197,94,.16), rgba(34,197,94,.08)); color: #86efac; border: 1px solid rgba(34,197,94,.35); }
+    .dev-badge.src-tr069-off { background: linear-gradient(180deg, rgba(239,68,68,.12), rgba(239,68,68,.06)); color: #fca5a5; border: 1px solid rgba(239,68,68,.3); }
+    .dev-btn-open-router { font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 6px; border: 1px solid rgba(59,130,246,.4); background: rgba(59,130,246,.12); color: #93c5fd; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; transition: all .15s; white-space: nowrap; }
+    .dev-btn-open-router:hover:not(:disabled) { background: rgba(59,130,246,.22); border-color: rgba(59,130,246,.6); }
+    .dev-btn-open-router:disabled { opacity: .55; cursor: wait; }
+    .dev-icon-btn { width: 34px; height: 34px; border-radius: 8px; border: 1px solid rgba(255,255,255,.07); background: rgba(255,255,255,.03); color: #e8eaf3; cursor: pointer; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; transition: all .15s; }
+    .dev-icon-btn:hover { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.12); }
+    .dev-icon-btn.danger:hover { background: rgba(239,68,68,.15); border-color: rgba(239,68,68,.4); color: #fca5a5; }
+
+    /* ── Body layout: sidebar + content ─────────────────────────────── */
+    .dev-main { display: flex; flex: 1; min-height: 0; }
+    .dev-nav { width: 220px; background: rgba(0,0,0,.18); border-right: 1px solid rgba(255,255,255,.05); padding: 14px 0; flex-shrink: 0; overflow-y: auto; }
+    .dev-nav-section { font-size: 10px; font-weight: 700; color: #7a8099; text-transform: uppercase; letter-spacing: .8px; padding: 6px 18px 8px; }
+    .dev-nav-item { display: flex; align-items: center; gap: 11px; padding: 10px 18px; cursor: pointer; color: #b8bcc8; font-size: 13px; font-weight: 500; border-left: 3px solid transparent; transition: all .15s; user-select: none; }
+    .dev-nav-item:hover { background: rgba(255,255,255,.03); color: #e8eaf3; }
+    .dev-nav-item.active { background: linear-gradient(90deg, rgba(59,130,246,.15) 0%, transparent 100%); color: #93c5fd; border-left-color: #3b82f6; font-weight: 600; }
+    .dev-nav-item .ic { font-size: 15px; width: 18px; text-align: center; }
+
+    .dev-body { padding: 24px 28px; overflow-y: auto; flex: 1; min-width: 0; animation: devTabFade .22s ease; }
+    .dev-section-head { margin-bottom: 18px; }
+    .dev-section-title { font-size: 16px; font-weight: 700; color: #e8eaf3; letter-spacing: -.2px; }
+    .dev-section-sub   { font-size: 12px; color: #7a8099; margin-top: 4px; }
+
+    /* ── Cards ──────────────────────────────────────────────────────── */
+    .dev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    .dev-cell { background: linear-gradient(180deg, rgba(255,255,255,.025) 0%, rgba(255,255,255,.01) 100%); border: 1px solid rgba(255,255,255,.06); border-radius: 12px; padding: 16px 18px; transition: all .2s; }
+    .dev-cell:hover { border-color: rgba(255,255,255,.1); box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+    .dev-cell-head { font-size: 11px; font-weight: 700; color: #7a8099; text-transform: uppercase; letter-spacing: .7px; margin-bottom: 14px; display: flex; align-items: center; gap: 7px; }
+    .dev-cell-head .ic { font-size: 14px; }
+
+    /* ── Read-only rows ─────────────────────────────────────────────── */
+    .dev-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.04); gap: 12px; }
+    .dev-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .dev-row .k { color: #7a8099; font-size: 12.5px; }
+    .dev-row .v { color: #e8eaf3; font-size: 13px; font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-all; text-align: right; }
+
+    /* ── Editable rows (single Apply button in header) ──────────────── */
+    .dev-edit-section { background: linear-gradient(180deg, rgba(59,130,246,.04), transparent); border: 1px solid rgba(59,130,246,.15); border-radius: 12px; padding: 18px 20px; margin-top: 14px; }
+    .dev-edit-row { display: grid; grid-template-columns: 160px 1fr; gap: 14px 12px; align-items: center; padding: 12px 0; border-bottom: 1px dashed rgba(255,255,255,.05); }
+    .dev-edit-row:last-child { border-bottom: none; }
+    .dev-edit-row .lbl { color: #b8bcc8; font-size: 13px; font-weight: 500; }
+    .dev-edit-row input, .dev-edit-row select { background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 9px 12px; color: #e8eaf3; font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, monospace; width: 100%; transition: all .15s; outline: none; }
+    .dev-edit-row input:focus, .dev-edit-row select:focus { border-color: rgba(59,130,246,.6); background: rgba(0,0,0,.4); box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+    .dev-edit-row input:disabled { opacity: .4; cursor: not-allowed; }
+    .dev-edit-row input.dirty, .dev-edit-row select.dirty { border-color: rgba(245,158,11,.6); background: rgba(245,158,11,.06); }
+    .dev-save-status { font-size: 11px; padding: 3px 8px; border-radius: 5px; display: inline-block; margin-top: 4px; grid-column: 2 / 3; justify-self: start; font-weight: 600; }
+    .dev-save-status:empty { display: none; }
+    .dev-save-status.ok    { color: #86efac; background: rgba(34,197,94,.15); }
+    .dev-save-status.fail  { color: #fca5a5; background: rgba(239,68,68,.15); }
+    .dev-save-status.busy  { color: #fcd34d; background: rgba(245,158,11,.15); }
+    .dev-save-status.dirty { color: #fcd34d; background: rgba(245,158,11,.1); }
+
+    /* ── Apply button in header ─────────────────────────────────────── */
+    .dev-apply-btn { padding: 7px 16px; background: linear-gradient(180deg, #3b82f6, #2563eb); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 7px; transition: all .15s; box-shadow: 0 4px 14px rgba(59,130,246,.25); }
+    .dev-apply-btn:hover:not(:disabled) { background: linear-gradient(180deg, #4f93ff, #3b82f6); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59,130,246,.4); }
+    .dev-apply-btn:disabled { opacity: .6; cursor: not-allowed; }
+    .dev-apply-btn.busy { background: linear-gradient(180deg, #f59e0b, #d97706); }
+    .dev-apply-btn.success { background: linear-gradient(180deg, #22c55e, #16a34a); }
+
+    /* ── Misc ───────────────────────────────────────────────────────── */
+    .dev-loading { text-align: center; padding: 60px 20px; color: #7a8099; font-size: 14px; }
+    .dev-error   { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; padding: 14px 18px; border-radius: 10px; font-size: 13px; }
+    .dev-note    { background: linear-gradient(180deg, rgba(245,158,11,.1), rgba(245,158,11,.04)); border: 1px solid rgba(245,158,11,.3); color: #fcd34d; padding: 12px 16px; border-radius: 10px; font-size: 12.5px; margin-bottom: 16px; display: flex; align-items: flex-start; gap: 10px; }
+    .dev-note .ic { font-size: 16px; flex-shrink: 0; }
+
+    /* ── WLAN bands ─────────────────────────────────────────────────── */
+    .dev-wlan-card { background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.01)); border: 1px solid rgba(255,255,255,.06); border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; }
+    .dev-wlan-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,.05); }
+    .dev-band-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .3px; background: linear-gradient(180deg, rgba(59,130,246,.2), rgba(59,130,246,.1)); color: #93c5fd; border: 1px solid rgba(59,130,246,.35); }
+    .dev-wlan-name { font-size: 15px; font-weight: 600; color: #e8eaf3; flex: 1; }
+    .dev-wlan-state { padding: 3px 9px; border-radius: 5px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+    .dev-wlan-state.on  { background: rgba(34,197,94,.18); color: #86efac; border: 1px solid rgba(34,197,94,.4); }
+    .dev-wlan-state.off { background: rgba(122,128,153,.15); color: #7a8099; border: 1px solid rgba(122,128,153,.3); }
+
+    /* ── Stat tiles (Summary tab) ───────────────────────────────────── */
+    .dev-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .dev-stat { background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.005)); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 14px 16px; }
+    .dev-stat-lbl { font-size: 11px; color: #7a8099; text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+    .dev-stat-val { font-size: 19px; font-weight: 700; color: #e8eaf3; margin-top: 6px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+    .dev-stat-val .unit { font-size: 12px; color: #7a8099; font-weight: 500; margin-left: 3px; }
+
+    .dev-pwd-wrap { position: relative; display: flex; align-items: center; }
+    .dev-pwd-wrap input { padding-right: 36px !important; }
+    .dev-eye-btn { position: absolute; right: 6px; background: transparent; border: none; cursor: pointer; padding: 4px 8px; color: #7a8099; font-size: 14px; border-radius: 4px; }
+    .dev-eye-btn:hover { background: rgba(255,255,255,.05); color: #e8eaf3; }
+
+    /* ── Responsive ─────────────────────────────────────────────────── */
+    /* ── iOS-style toggle switch ────────────────────────────────────── */
+    .dev-toggle { position: relative; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+    .dev-toggle input { display: none; }
+    .dev-toggle-slider { width: 46px; height: 26px; background: rgba(122,128,153,.3); border-radius: 13px; position: relative; transition: background .2s; flex-shrink: 0; }
+    .dev-toggle-slider::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: #fff; border-radius: 50%; transition: transform .2s, background .2s; box-shadow: 0 2px 4px rgba(0,0,0,.3); }
+    .dev-toggle input:checked ~ .dev-toggle-slider { background: linear-gradient(180deg, #22c55e, #16a34a); }
+    .dev-toggle input:checked ~ .dev-toggle-slider::after { transform: translateX(20px); }
+    .dev-toggle input:disabled ~ .dev-toggle-slider { opacity: .4; cursor: not-allowed; }
+    .dev-toggle-label { font-size: 12.5px; font-weight: 600; color: #b8bcc8; min-width: 70px; }
+    .dev-toggle-label.on  { color: #86efac; }
+    .dev-toggle-label.off { color: #7a8099; }
+
+    /* ── Select dropdown ────────────────────────────────────────────── */
+    .dev-edit-row select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%237a8099' d='M6 8L0 0h12z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 10px; padding-right: 32px; cursor: pointer; }
+    .dev-edit-row select option { background: #181b24; color: #e8eaf3; }
+
+    /* ── Hint text under input ──────────────────────────────────────── */
+    .dev-hint { font-size: 11px; color: #7a8099; margin-top: 4px; grid-column: 2 / 3; font-style: italic; }
+
+    /* ── Empty state placeholder ────────────────────────────────────── */
+    .dev-empty { text-align: center; padding: 40px 20px; color: #7a8099; }
+    .dev-empty .ic { font-size: 32px; opacity: .4; margin-bottom: 10px; }
+    .dev-empty .msg { font-size: 13px; }
+
+    /* ── Mini chips (NAT, Service, conn-type, status) ───────────────── */
+    .dev-mini-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 5px; font-size: 11px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; }
+    .dev-mini-chip.on,  .dev-mini-chip.ok,    .dev-mini-chip.pppoe   { background: rgba(34,197,94,.18); color: #86efac; border: 1px solid rgba(34,197,94,.35); }
+    .dev-mini-chip.off, .dev-mini-chip.idle                          { background: rgba(122,128,153,.15); color: #b8bcc8; border: 1px solid rgba(122,128,153,.3); }
+    .dev-mini-chip.warn,.dev-mini-chip.connecting                    { background: rgba(245,158,11,.18); color: #fcd34d; border: 1px solid rgba(245,158,11,.35); }
+    .dev-mini-chip.bad, .dev-mini-chip.disconnected                  { background: rgba(239,68,68,.15); color: #fca5a5; border: 1px solid rgba(239,68,68,.35); }
+    .dev-mini-chip.ipoe, .dev-mini-chip.bridge                       { background: rgba(59,130,246,.18); color: #93c5fd; border: 1px solid rgba(59,130,246,.35); }
+    .dev-mini-chip.static, .dev-mini-chip.dhcp                       { background: rgba(168,85,247,.18); color: #d8b4fe; border: 1px solid rgba(168,85,247,.35); }
+
+    /* ── Clients table ──────────────────────────────────────────────── */
+    .dev-client-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .dev-client-table thead th { text-align: left; padding: 10px 12px; color: #7a8099; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.15); }
+    .dev-client-table tbody td { padding: 11px 12px; border-bottom: 1px solid rgba(255,255,255,.04); color: #e8eaf3; }
+    .dev-client-table tbody tr:last-child td { border-bottom: none; }
+    .dev-client-table tbody tr:hover { background: rgba(255,255,255,.025); }
+    .dev-client-table td.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #b8bcc8; }
+    .dev-client-table .dev-host-name { font-weight: 600; }
+
+    /* ── RSSI signal pill ───────────────────────────────────────────── */
+    .dev-rssi { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+    .dev-rssi.strong { background: rgba(34,197,94,.15);  color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+    .dev-rssi.ok     { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.3); }
+    .dev-rssi.weak   { background: rgba(239,68,68,.15);  color: #fca5a5; border: 1px solid rgba(239,68,68,.3); }
+    .dev-rssi::before { content: '📶'; font-size: 11px; }
+
+    @media (max-width: 820px) {
+      .dev-main { flex-direction: column; }
+      .dev-nav  { width: 100%; display: flex; gap: 4px; overflow-x: auto; padding: 10px; border-right: none; border-bottom: 1px solid rgba(255,255,255,.05); }
+      .dev-nav-section { display: none; }
+      .dev-nav-item { border-left: none; border-bottom: 3px solid transparent; padding: 8px 14px; white-space: nowrap; }
+      .dev-nav-item.active { border-left: none; border-bottom-color: #3b82f6; background: rgba(59,130,246,.1); }
+    }
+    @media (max-width: 540px) {
+      .dev-edit-row { grid-template-columns: 1fr; }
+      .dev-edit-row .lbl { padding-bottom: 4px; }
+      .dev-hint { grid-column: auto; }
+      .dev-grid { grid-template-columns: 1fr; }
+      .dev-body { padding: 16px; }
+      .dev-header { padding: 14px 16px; }
+    }
+  </style>
+
+  <div id="devOverlay" class="dev-overlay" onclick="closeDeviceModal(event)">
+    <div class="dev-card" onclick="event.stopPropagation()">
+      <div class="dev-header">
+        <div class="dev-header-left">
+          <span id="devStatusDot" class="dev-status-dot" title="Status"></span>
+          <div class="dev-header-text">
+            <div class="dev-title">
+              <span id="devTitle">—</span>
+              <span id="devModelChip" class="dev-model-chip" style="display:none"></span>
+            </div>
+            <div class="dev-sub">
+              <span class="sn" id="devSN">—</span>
+              <span class="sep">·</span>
+              <span id="devSubMeta">—</span>
+            </div>
+          </div>
+        </div>
+        <div class="dev-header-right">
+          <span id="devSourceBadge" class="dev-badge src-tr069-off">…</span>
+          <button id="devOpenRouterBtn" class="dev-btn-open-router" style="display:none" onclick="devOpenRouter(this)" title="Open ONT router web UI">🛜 Open Router</button>
+          <button id="devApplyBtn" class="dev-apply-btn" style="display:none" onclick="saveAllDevChanges()">💾 <span id="devApplyLbl">Apply Changes</span></button>
+          <button class="dev-icon-btn" id="devRefreshBtn" onclick="reloadDeviceModal()" title="Refresh">⟳</button>
+          <button class="dev-icon-btn danger" onclick="closeDeviceModal({forceClose:true})" title="Close">✕</button>
+        </div>
+      </div>
+      <div class="dev-main">
+        <nav class="dev-nav">
+          <div class="dev-nav-section">Device</div>
+          <div class="dev-nav-item active" data-tab="summary" onclick="switchDevTab('summary')"><span class="ic">📊</span><span>Status</span></div>
+          <div class="dev-nav-section">Network</div>
+          <div class="dev-nav-item" data-tab="wan"  onclick="switchDevTab('wan')"><span class="ic">🌐</span><span>Internet</span></div>
+          <div class="dev-nav-item" data-tab="lan"  onclick="switchDevTab('lan')"><span class="ic">🖧</span><span>LAN</span></div>
+          <div class="dev-nav-item" data-tab="wlan" onclick="switchDevTab('wlan')"><span class="ic">📶</span><span>Wi-Fi</span></div>
+          <div class="dev-nav-section">Connections</div>
+          <div class="dev-nav-item" data-tab="clients" onclick="switchDevTab('clients')"><span class="ic">👥</span><span>Clients</span></div>
+          <div class="dev-nav-section">System</div>
+          <div class="dev-nav-item" data-tab="tr069" onclick="switchDevTab('tr069')"><span class="ic">⚙️</span><span>Management</span></div>
+          <div class="dev-nav-section">Analytics</div>
+          <div class="dev-nav-item" data-tab="graphs" onclick="switchDevTab('graphs')"><span class="ic">📈</span><span>Graphs</span></div>
+        </nav>
+        <div id="devBody" class="dev-body">
+          <div class="dev-loading"><span class="spin" style="display:inline-block;font-size:24px">⟳</span><br><br>Loading device data…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // ═══════════════════════════════════════════════════════════════════════
+  // Device Modal — GenieACS-driven 5-tab popup (v3.3.0)
+  // ═══════════════════════════════════════════════════════════════════════
+  let _devCurrent = null;     // { sn, name, data }
+  let _devTab     = 'summary';
+  let _devReq     = 0;
+
+  function openDeviceModal(sn, name) {
+    if (!sn) return;
+    _devCurrent = { sn, name: name || sn, data: null };
+    _devTab = 'summary';
+    document.getElementById('devTitle').textContent  = name || sn;
+    document.getElementById('devSN').textContent     = 'SN ' + sn;
+    document.getElementById('devSubMeta').textContent = 'Loading…';
+    document.getElementById('devModelChip').style.display = 'none';
+    document.getElementById('devStatusDot').className = 'dev-status-dot';
+    document.getElementById('devBody').innerHTML = '<div class="dev-loading"><span class="spin" style="display:inline-block;font-size:24px">⟳</span><br><br>Loading device data…</div>';
+    document.querySelectorAll('.dev-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === 'summary'));
+    const badge = document.getElementById('devSourceBadge');
+    badge.className = 'dev-badge'; badge.textContent = '…';
+    document.getElementById('devOverlay').classList.add('open');
+    loadDeviceData(sn);
+  }
+
+  function closeDeviceModal(e) {
+    if (e && !e.forceClose && e.target !== document.getElementById('devOverlay')) return;
+    document.getElementById('devOverlay').classList.remove('open');
+    _devCurrent = null;
+    _devReq++;
+    _destroyDevGraphs();
+  }
+
+  function switchDevTab(tab) {
+    _devTab = tab;
+    document.querySelectorAll('.dev-nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    if (tab === 'graphs') { renderDevGraphsTab(); return; }
+    if (_devCurrent && _devCurrent.data) renderDeviceTab(tab, _devCurrent.data);
+  }
+
+  async function reloadDeviceModal() {
+    if (!_devCurrent) return;
+    const btn = document.getElementById('devRefreshBtn');
+    if (btn) { btn.style.opacity = '.5'; btn.disabled = true; btn.style.transform = 'rotate(180deg)'; btn.style.transition = 'transform .5s'; }
+    document.getElementById('devBody').innerHTML =
+      '<div class="dev-loading"><span class="spin" style="display:inline-block;font-size:24px">⟳</span><br><br>Refreshing…</div>';
+    await loadDeviceData(_devCurrent.sn);
+    if (btn) { btn.style.opacity = '1'; btn.disabled = false; btn.style.transform = 'rotate(0deg)'; }
+  }
+
+  // Compute "X ago" from ISO/string timestamp
+  function _devTimeAgo(ts) {
+    if (!ts || ts === '-') return '—';
+    try {
+      // Accept "12/05/2026, 23:55:42" or ISO
+      let dt;
+      if (/^\d{2}\/\d{2}\/\d{4}/.test(ts)) {
+        const [d, t] = ts.split(', ');
+        const [dd, mm, yyyy] = d.split('/');
+        dt = new Date(`${yyyy}-${mm}-${dd}T${t}`);
+      } else { dt = new Date(ts); }
+      const diff = (Date.now() - dt.getTime()) / 1000;
+      if (isNaN(diff)) return ts;
+      if (diff < 60)      return Math.floor(diff) + 's ago';
+      if (diff < 3600)    return Math.floor(diff/60) + 'm ago';
+      if (diff < 86400)   return Math.floor(diff/3600) + 'h ago';
+      return Math.floor(diff/86400) + 'd ago';
+    } catch { return ts; }
+  }
+
+  async function loadDeviceData(sn) {
+    const myReq = ++_devReq;
+    try {
+      const r = await fetch(`${API}/device?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
+      const data = await r.json();
+      if (myReq !== _devReq) return;
+      if (!_devCurrent || _devCurrent.sn !== sn) return;
+      if (!r.ok) {
+        document.getElementById('devBody').innerHTML =
+          `<div class="dev-error">⚠ ${escHtml(data.error || 'Failed to load device')}</div>`;
+        return;
+      }
+      _devCurrent.data = data;
+
+      // ── Update header chips/dot/subtitle ──
+      const s = data.summary || {};
+      const dot = document.getElementById('devStatusDot');
+      const runState = (s.run_state || '').toLowerCase();
+      // Online inference: GenieACS = if last_inform within 5 min, SSH = run_state
+      let isOnline = false;
+      if (data._source === 'genieacs') {
+        // Always treat as "online with GenieACS" (greenish) — GenieACS only stores connected devices
+        isOnline = true;
+      } else {
+        isOnline = runState === 'online';
+      }
+      dot.className = 'dev-status-dot ' + (isOnline ? 'online' : (runState && runState.includes('off') ? 'offline' : 'warn'));
+      dot.title = isOnline ? 'Online' : (s.run_state || 'Unknown');
+
+      // Model chip
+      const chip = document.getElementById('devModelChip');
+      if (s.model && s.model !== '-') {
+        chip.textContent = s.model;
+        chip.style.display = '';
+      } else { chip.style.display = 'none'; }
+
+      // Subtitle: source + last seen
+      const lastSeen = data._source === 'genieacs'
+        ? `Last seen ${_devTimeAgo(s.last_inform)}`
+        : (s.fsp ? `PON ${s.fsp} · ID ${s.ont_id}` : '—');
+      document.getElementById('devSubMeta').textContent = lastSeen;
+
+      // Source badge — TR-069 status
+      const badge = document.getElementById('devSourceBadge');
+      const openRouterBtn = document.getElementById('devOpenRouterBtn');
+      if (data._source === 'genieacs') {
+        badge.className = 'dev-badge src-tr069-on';
+        badge.innerHTML = '✓ TR069 - Enabled';
+        // Show Open Router button — store sn, pon, and WAN IP so we skip SSH lookup
+        if (openRouterBtn) {
+          openRouterBtn.style.display = '';
+          openRouterBtn.dataset.sn  = _devCurrent.sn || '';
+          openRouterBtn.dataset.pon = (s.fsp || '');
+          // WAN IP from GenieACS data — covers PPPoE (ONT & ONU) and static
+          const wanIp = (data.wan && data.wan.ip) || '';
+          const validIp = (wanIp && wanIp !== '-' && wanIp !== '0.0.0.0') ? wanIp : '';
+          openRouterBtn.dataset.ip  = validIp;
+          // Write back to allONTs so the list-row Open Router button also has it
+          if (validIp && _devCurrent.sn) {
+            const idx = allONTs.findIndex(o => o.sn === _devCurrent.sn);
+            if (idx >= 0 && !allONTs[idx].wan_ip) allONTs[idx].wan_ip = validIp;
+          }
+        }
+      } else {
+        badge.className = 'dev-badge src-tr069-off';
+        badge.innerHTML = '❌ TR069 - Not Config';
+        if (openRouterBtn) openRouterBtn.style.display = 'none';
+      }
+
+      renderDeviceTab(_devTab, data);
+
+      // ── Inject SNMP cache data (instant — no SSH) ──────────────────
+      // Fire in background; updates signal stats when ready
+      _injectSnmpData(sn, myReq);
+
+    } catch (e) {
+      if (myReq !== _devReq) return;
+      document.getElementById('devBody').innerHTML =
+        `<div class="dev-error">⚠ Network error: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function _injectSnmpData(sn, myReq) {
+    try {
+      const r = await fetch(`${API}/ont/snmp?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!d.ok || myReq !== _devReq) return;
+
+      // Update status dot with SNMP live status
+      if (d.online !== null) {
+        const dot = document.getElementById('devStatusDot');
+        if (dot) {
+          dot.className = 'dev-status-dot ' + (d.online === 1 ? 'online' : 'offline');
+          dot.title = d.online === 1 ? 'Online (SNMP)' : 'Offline (SNMP)';
+        }
+      }
+
+      // Update subtitle with FSP info
+      const sub = document.getElementById('devSubMeta');
+      if (sub && d.fsp) {
+        const cur = sub.textContent || '';
+        if (!cur.includes('PON')) sub.textContent = `PON ${d.fsp} · ONT-ID ${d.ont_id}`;
+      }
+
+      // Inject/update signal stat tiles
+      const rxPow = d.rx_power_dbm;
+      const temp  = d.temperature_c;
+      if (rxPow != null || temp != null) {
+        let el = document.getElementById('_snmp_stat_row');
+        if (!el) {
+          // Create stat row and inject at top of devBody
+          const body = document.getElementById('devBody');
+          if (!body) return;
+          el = document.createElement('div');
+          el.id = '_snmp_stat_row';
+          el.style.cssText = 'margin-bottom:14px';
+          body.insertBefore(el, body.firstChild);
+        }
+        const rxColor = rxPow == null ? '#7a8099'
+          : rxPow >= -20 ? '#22c55e'
+          : rxPow >= -27 ? '#84cc16'
+          : rxPow >= -30 ? '#f59e0b'
+          : '#ef4444';
+        const tmpColor = temp == null ? '#7a8099'
+          : temp < 65 ? '#22c55e' : temp < 75 ? '#f59e0b' : '#ef4444';
+        el.innerHTML = `<div class="dev-stat-grid" style="margin-bottom:0">
+          <div class="dev-stat-tile">
+            <div class="dev-stat-label">📡 RX Power</div>
+            <div class="dev-stat-value" style="color:${rxColor}">${rxPow != null ? rxPow.toFixed(2) + ' dBm' : '—'}</div>
+            <div class="dev-stat-sub">SNMP live</div>
+          </div>
+          <div class="dev-stat-tile">
+            <div class="dev-stat-label">🌡️ Temperature</div>
+            <div class="dev-stat-value" style="color:${tmpColor}">${temp != null ? temp.toFixed(1) + ' °C' : '—'}</div>
+            <div class="dev-stat-sub">SNMP live</div>
+          </div>
+          <div class="dev-stat-tile">
+            <div class="dev-stat-label">📍 PON Port</div>
+            <div class="dev-stat-value" style="color:#a0aec0;font-size:16px">${d.fsp || '—'}</div>
+            <div class="dev-stat-sub">ONT-ID ${d.ont_id ?? '—'}</div>
+          </div>
+          <div class="dev-stat-tile">
+            <div class="dev-stat-label">🔗 Status</div>
+            <div class="dev-stat-value" style="color:${d.online===1?'#22c55e':'#ef4444'};font-size:16px">${d.online===1?'Online':'Offline'}</div>
+            <div class="dev-stat-sub">SNMP polled</div>
+          </div>
+        </div>`;
+      }
+    } catch(e) { /* silent fail — SNMP data is supplementary */ }
+  }
+
+  function renderDeviceTab(tab, data) {
+    const body = document.getElementById('devBody');
+    let html = '';
+    if (data._source === 'ssh' && tab !== 'summary') {
+      html += `<div class="dev-note"><span class="ic">⚠</span><span>${escHtml(data._message || 'ONT not registered with TR-069')}. <strong>Edits not available</strong> until the ONT registers with GenieACS.</span></div>`;
+    }
+    // Section header
+    const sectionMeta = {
+      summary: { title: 'Device Status',       sub: 'Overview, hardware info, and live signal' },
+      wan:     { title: 'Internet Connection', sub: 'WAN settings, IP, gateway, PPPoE credentials' },
+      lan:     { title: 'Local Network',       sub: 'LAN gateway, subnet, DHCP range' },
+      wlan:    { title: 'Wireless Network',    sub: 'SSID, password, channel, security' },
+      clients: { title: 'Connected Devices',   sub: 'All clients currently associated with this ONT (LAN + Wi-Fi)' },
+      tr069:   { title: 'Management Server',   sub: 'TR-069 ACS settings and ONT admin accounts' },
+    };
+    const meta = sectionMeta[tab] || { title: '', sub: '' };
+    html += `<div class="dev-section-head">
+      <div class="dev-section-title">${escHtml(meta.title)}</div>
+      <div class="dev-section-sub">${escHtml(meta.sub)}</div>
+    </div>` + html.replace(/^.*$/, m => m);  // no-op; section head goes first
+    // Re-build correctly: section head first, then note (if any), then content
+    html = `<div class="dev-section-head">
+      <div class="dev-section-title">${escHtml(meta.title)}</div>
+      <div class="dev-section-sub">${escHtml(meta.sub)}</div>
+    </div>`;
+    if (data._source === 'ssh' && tab !== 'summary') {
+      html += `<div class="dev-note"><span class="ic">⚠</span><span>${escHtml(data._message || 'ONT not registered with TR-069')}. <strong>Edits not available</strong> until the ONT registers with GenieACS.</span></div>`;
+    }
+    if (tab === 'summary')      html += renderDevSummary(data.summary || {}, data._source);
+    else if (tab === 'wan')     html += renderDevWAN(data.wan || {}, data._editable, data.wan_connections || []);
+    else if (tab === 'lan')     html += renderDevLAN(data.lan || {}, data._editable);
+    else if (tab === 'wlan')    html += renderDevWLAN(data.wlan || [], data._editable);
+    else if (tab === 'clients') html += renderDevClients(data.clients || []);
+    else if (tab === 'tr069')   html += renderDevTR069(data.tr069 || {}, data._editable, data.users || []);
+    body.innerHTML = html;
+    wireDevEdits(data);
+  }
+
+  // ── Format helpers (human-friendly) ────────────────────────────────
+  function _fmtSeconds(s) {
+    const n = parseInt(s);
+    if (isNaN(n) || n <= 0) return s || '—';
+    if (n < 60)     return n + ' sec';
+    if (n < 3600)   return Math.floor(n/60) + ' min';
+    if (n < 86400)  { const h = Math.floor(n/3600), m = Math.floor((n%3600)/60); return h + 'h' + (m ? ' ' + m + 'm' : ''); }
+    const d = Math.floor(n/86400), h = Math.floor((n%86400)/3600);
+    return d + 'd' + (h ? ' ' + h + 'h' : '');
+  }
+  function _fmtVal(v, fallback) {
+    if (v == null || v === '' || v === '-' || String(v).toLowerCase() === 'none') return fallback || '—';
+    return v;
+  }
+  function _fmtBool(v) {
+    const s = String(v).toLowerCase();
+    return (s === 'true' || s === '1' || s === 'enabled' || s === 'yes') ? 'Enabled' : 'Disabled';
+  }
+  // TR-069 BeaconType → friendly label
+  const SECURITY_LABELS = { 'None':'Open (no security)', 'Basic':'WEP (legacy)', 'WPA':'WPA-PSK', '11i':'WPA2-PSK', 'WPAand11i':'WPA / WPA2-PSK (mixed)' };
+  const SECURITY_OPTIONS = [
+    { value:'11i',       label:'WPA2-PSK (recommended)' },
+    { value:'WPAand11i', label:'WPA / WPA2-PSK (mixed)' },
+    { value:'WPA',       label:'WPA-PSK (legacy)' },
+    { value:'Basic',     label:'WEP (insecure)' },
+    { value:'None',      label:'Open · no security' },
+  ];
+  function _securityLabel(v) { return SECURITY_LABELS[v] || _fmtVal(v); }
+
+  // Channel options per band
+  function _channelOptions(bandIndex) {
+    const is5G = parseInt(bandIndex) >= 5;
+    const opts = [{ value:'0', label:'Auto (recommended)' }];
+    if (is5G) {
+      [36,40,44,48,52,56,60,64,149,153,157,161,165].forEach(c => opts.push({ value:String(c), label:'Channel '+c }));
+    } else {
+      for (let c=1; c<=13; c++) opts.push({ value:String(c), label:'Channel '+c });
+    }
+    return opts;
+  }
+
+  function _dr(k, v) {
+    return `<div class="dev-row"><span class="k">${escHtml(k)}</span><span class="v">${escHtml(String(v ?? '—'))}</span></div>`;
+  }
+  function _stat(lbl, val, unit) {
+    return `<div class="dev-stat"><div class="dev-stat-lbl">${escHtml(lbl)}</div><div class="dev-stat-val">${escHtml(String(val ?? '—'))}${unit ? `<span class="unit">${escHtml(unit)}</span>` : ''}</div></div>`;
+  }
+
+  // Unified editable field renderer
+  // opts: { type: 'text'|'password'|'number'|'select'|'toggle', options:[{value,label}], hint, disabled, placeholder }
+  function _de(field, label, value, opts) {
+    opts = opts || {};
+    const id = 'edit-' + field.replace(/[^a-z0-9]/gi, '-');
+    const disabled = opts.disabled ? 'disabled' : '';
+    const type = opts.type || 'text';
+    const placeholder = opts.placeholder || '';
+    let inputHtml;
+
+    if (type === 'password') {
+      inputHtml = `<span class="dev-pwd-wrap"><input id="${id}" type="password" value="${escAttr(value||'')}" placeholder="${escAttr(placeholder)}" ${disabled}><button class="dev-eye-btn" data-target="${id}" type="button">👁</button></span>`;
+    } else if (type === 'select') {
+      const optsHtml = (opts.options || []).map(o => {
+        const sel = (String(o.value) === String(value || '')) ? 'selected' : '';
+        return `<option value="${escAttr(o.value)}" ${sel}>${escHtml(o.label)}</option>`;
+      }).join('');
+      inputHtml = `<select id="${id}" ${disabled}>${optsHtml}</select>`;
+    } else if (type === 'toggle') {
+      const checked = (String(value).toLowerCase() === 'true' || value === '1' || value === true) ? 'checked' : '';
+      inputHtml = `<label class="dev-toggle">
+        <input type="checkbox" id="${id}" ${checked} ${disabled}>
+        <span class="dev-toggle-slider"></span>
+        <span class="dev-toggle-label ${checked ? 'on' : 'off'}" id="${id}-lbl">${checked ? 'Enabled' : 'Disabled'}</span>
+      </label>`;
+    } else {
+      inputHtml = `<input id="${id}" type="${type}" value="${escAttr(value||'')}" placeholder="${escAttr(placeholder)}" ${disabled}>`;
+    }
+
+    const hintHtml = opts.hint ? `<div class="dev-hint">${escHtml(opts.hint)}</div>` : '';
+    return `<div class="dev-edit-row" data-edit-field="${escAttr(field)}" data-input-id="${id}" data-input-type="${escAttr(type)}">
+      <span class="lbl">${escHtml(label)}</span>
+      ${inputHtml}
+      ${hintHtml}
+      <span class="dev-save-status" id="status-${id}"></span>
+    </div>`;
+  }
+
+  function renderDevSummary(s, source) {
+    let html = '';
+
+    // Live signal stat tiles (SSH fallback or if data has these)
+    if (s.rx_power != null || s.tx_power != null || s.temp != null || s.distance_m != null) {
+      html += `<div class="dev-stat-grid">
+        ${_stat('RX Power',    s.rx_power != null ? s.rx_power  : '—', s.rx_power != null ? 'dBm' : '')}
+        ${_stat('TX Power',    s.tx_power != null ? s.tx_power  : '—', s.tx_power != null ? 'dBm' : '')}
+        ${_stat('Temperature', s.temp     != null ? s.temp      : '—', s.temp     != null ? '°C'  : '')}
+        ${_stat('Distance',    s.distance_m != null ? s.distance_m : '—', s.distance_m != null ? 'm' : '')}
+      </div>`;
+    }
+
+    const cells = [
+      ['📦', 'Device Information', [
+        ['Serial Number', s.serial_number],
+        ['Manufacturer',  s.manufacturer],
+        ['Model',         s.model],
+        ['OUI',           s.oui],
+      ]],
+      ['🔧', 'Firmware & Uptime', [
+        ['HW Version',  s.hw_version],
+        ['SW Version',  s.sw_version],
+        ['Uptime',      s.uptime],
+        ['Last Inform', s.last_inform],
+      ]],
+    ];
+    if (s.run_state || s.fsp) {
+      cells.push(['📡', 'OLT Connection', [
+        ['Run State', s.run_state],
+        ['PON Port',  s.fsp],
+        ['ONT-ID',    s.ont_id],
+      ]]);
+    }
+    html += `<div class="dev-grid">${cells.map(([ic, h, rows]) =>
+      `<div class="dev-cell"><div class="dev-cell-head"><span class="ic">${ic}</span><span>${escHtml(h)}</span></div>${rows.map(([k,v]) => _dr(k,v)).join('')}</div>`
+    ).join('')}</div>`;
+    return html;
+  }
+
+  function renderDevWAN(wan, editable, allConns) {
+    if (!wan || Object.keys(wan).length === 0) {
+      return `<div class="dev-empty"><div class="ic">🌐</div><div class="msg">No WAN data reported by this ONT yet.<br><small>The ONT may still be establishing its connection.</small></div></div>`;
+    }
+    const dis = !editable;
+    const kind = String(wan.kind || '').toLowerCase();
+    const kindChip = `<span class="dev-mini-chip ${kind === 'pppoe' ? 'pppoe' : 'ipoe'}">${escHtml(wan.kind || 'WAN')}</span>`;
+    const statusRaw = String(wan.status || '').toLowerCase();
+    let statusCls = 'idle';
+    if (statusRaw === 'connected')       statusCls = 'ok';
+    else if (statusRaw.includes('disc')) statusCls = 'bad';
+    else if (statusRaw)                  statusCls = 'warn';
+    const statusChip = wan.status && wan.status !== '-'
+      ? `<span class="dev-mini-chip ${statusCls}">${escHtml(wan.status)}</span>`
+      : '';
+    const natChip = String(wan.nat).toLowerCase() === 'true'
+      ? '<span class="dev-mini-chip on">NAT On</span>'
+      : (wan.nat === '-' ? '—' : '<span class="dev-mini-chip off">NAT Off</span>');
+
+    // PPPoE edit only makes sense for PPPoE kind
+    const showPppoe = kind === 'pppoe';
+
+    let html = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      ${kindChip} ${statusChip}
+      ${wan.name && wan.name !== '-' ? `<span style="font-size:14px;font-weight:600;color:#e8eaf3">${escHtml(wan.name)}</span>` : ''}
+    </div>
+    <div class="dev-grid">
+      <div class="dev-cell">
+        <div class="dev-cell-head"><span class="ic">🧬</span><span>Connection Details</span></div>
+        ${_dr('Name',         _fmtVal(wan.name))}
+        ${_dr('Type',         _fmtVal(wan.conn_type))}
+        ${_dr('Service',      _fmtVal(wan.service))}
+        ${_dr('VLAN',         _fmtVal(wan.vlan, 'Untagged'))}
+        ${_dr('MAC Address',  _fmtVal(wan.mac))}
+        <div class="dev-row"><span class="k">NAT</span><span class="v">${natChip}</span></div>
+      </div>
+      <div class="dev-cell">
+        <div class="dev-cell-head"><span class="ic">🌍</span><span>Public IP &amp; Routing</span></div>
+        ${_dr('IP Address',  _fmtVal(wan.ip,      'Not assigned'))}
+        ${_dr('Gateway',     _fmtVal(wan.gateway, 'Not assigned'))}
+        ${_dr('DNS Servers', _fmtVal(wan.dns,     'Not assigned'))}
+        ${_dr('Uptime',      _fmtSeconds(wan.uptime))}
+      </div>
+      ${showPppoe ? `<div class="dev-cell">
+        <div class="dev-cell-head"><span class="ic">🔑</span><span>PPPoE Account</span></div>
+        ${_dr('Current User', _fmtVal(wan.pppoe_user, 'Not configured'))}
+        <div style="margin-top:8px;font-size:11px;color:#7a8099;font-style:italic">Password hidden for security. Submit a new one below to change.</div>
+      </div>` : ''}
+    </div>`;
+
+    // Multiple WAN connections — show summary table if more than one
+    if (allConns && allConns.length > 1) {
+      html += `<div class="dev-cell" style="margin-top:14px">
+        <div class="dev-cell-head"><span class="ic">🔌</span><span>All WAN Connections (${allConns.length})</span></div>
+        <table class="dev-client-table">
+          <thead><tr><th>Name</th><th>Type</th><th>VLAN</th><th>Service</th><th>IP</th><th>Status</th></tr></thead>
+          <tbody>${allConns.map(c => `<tr>
+            <td>${escHtml(c.name)} <span class="dev-mini-chip ${c.kind === 'PPPoE' ? 'pppoe' : 'ipoe'}" style="margin-left:4px">${escHtml(c.kind)}</span></td>
+            <td>${escHtml(c.conn_type)}</td>
+            <td class="mono">${escHtml(c.vlan)}</td>
+            <td>${escHtml(c.service_list || '—')}</td>
+            <td class="mono">${escHtml(c.ip)}</td>
+            <td>${String(c.status).toLowerCase()==='connected' ? '<span class="dev-mini-chip ok">Connected</span>' : escHtml(c.status)}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+    }
+
+    if (showPppoe) {
+      html += `<div class="dev-edit-section">
+        <div class="dev-cell-head" style="margin-bottom:14px"><span class="ic">✏️</span><span>Edit PPPoE Credentials</span></div>
+        ${_de('wan.pppoe_user', 'PPPoE Username', wan.pppoe_user === '-' ? '' : wan.pppoe_user, {disabled: dis, placeholder: 'e.g. customer@isp', hint: 'Username provided by your ISP'})}
+        ${_de('wan.pppoe_pass', 'PPPoE Password', '',                                            {disabled: dis, type: 'password', placeholder: 'new password', hint: 'Leave blank to keep current password'})}
+      </div>`;
+    }
+    return html;
+  }
+
+  function renderDevLAN(lan, editable) {
+    if (!lan || Object.keys(lan).length === 0) {
+      return `<div class="dev-empty"><div class="ic">🖧</div><div class="msg">No LAN data reported by this ONT.</div></div>`;
+    }
+    const dis = !editable;
+    // Detect if all values are empty/dash
+    const allEmpty = ['gateway_ip','subnet_mask','dhcp_min','dhcp_max','lease_time','dns']
+      .every(k => !lan[k] || lan[k] === '-');
+
+    // Status chips at top
+    const enabledChip = String(lan.enabled).toLowerCase() === 'true'
+      ? '<span class="dev-mini-chip on">● Enabled</span>'
+      : (lan.enabled === '-' ? '—' : '<span class="dev-mini-chip off">○ Disabled</span>');
+    const typeRaw = String(lan.type || '').toLowerCase();
+    const typeChip = (typeRaw === 'static') ? '<span class="dev-mini-chip static">Static</span>'
+                    : (typeRaw === 'dhcp') ? '<span class="dev-mini-chip dhcp">DHCP</span>'
+                    : (lan.type && lan.type !== '-' ? `<span class="dev-mini-chip idle">${escHtml(lan.type)}</span>` : '—');
+    const dhcpChip = String(lan.dhcp_enabled).toLowerCase() === 'true'
+      ? '<span class="dev-mini-chip on">● Running</span>'
+      : (lan.dhcp_enabled === '-' ? '—' : '<span class="dev-mini-chip off">○ Stopped</span>');
+
+    return `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <div class="dev-stat" style="min-width:140px"><div class="dev-stat-lbl">LAN Interface</div><div class="dev-stat-val" style="font-size:14px;font-family:inherit">${enabledChip}</div></div>
+      <div class="dev-stat" style="min-width:140px"><div class="dev-stat-lbl">Addressing</div><div class="dev-stat-val" style="font-size:14px;font-family:inherit">${typeChip}</div></div>
+      <div class="dev-stat" style="min-width:140px"><div class="dev-stat-lbl">DHCP Server</div><div class="dev-stat-val" style="font-size:14px;font-family:inherit">${dhcpChip}</div></div>
+    </div>
+    ${allEmpty ? `<div class="dev-note"><span class="ic">ℹ</span><span>This ONT is in <strong>bridge mode</strong> — LAN settings are managed by your downstream router, not the ONT.</span></div>` : ''}
+    <div class="dev-grid">
+      <div class="dev-cell">
+        <div class="dev-cell-head"><span class="ic">🏠</span><span>Local Gateway</span></div>
+        ${_dr('Gateway IP',  _fmtVal(lan.gateway_ip,  'Not configured'))}
+        ${_dr('Subnet Mask', _fmtVal(lan.subnet_mask, 'Not configured'))}
+        ${_dr('DNS',         _fmtVal(lan.dns,         'Not configured'))}
+      </div>
+      <div class="dev-cell">
+        <div class="dev-cell-head"><span class="ic">📡</span><span>DHCP Server</span></div>
+        ${_dr('Pool Start', _fmtVal(lan.dhcp_min, 'Not configured'))}
+        ${_dr('Pool End',   _fmtVal(lan.dhcp_max, 'Not configured'))}
+        ${_dr('Lease Time', _fmtSeconds(lan.lease_time))}
+      </div>
+    </div>
+    <div class="dev-edit-section">
+      <div class="dev-cell-head" style="margin-bottom:14px"><span class="ic">✏️</span><span>Edit LAN Settings</span></div>
+      ${_de('lan.gateway_ip',  'Gateway IP',   lan.gateway_ip  === '-' ? '' : lan.gateway_ip,  {disabled: dis, placeholder: '192.168.1.1', hint: "Router's IP address on the LAN side"})}
+      ${_de('lan.subnet_mask', 'Subnet Mask',  lan.subnet_mask === '-' ? '' : lan.subnet_mask, {disabled: dis, placeholder: '255.255.255.0'})}
+      ${_de('lan.dhcp_min',    'DHCP Start',   lan.dhcp_min    === '-' ? '' : lan.dhcp_min,    {disabled: dis, placeholder: '192.168.1.100', hint: 'First IP address handed to clients'})}
+      ${_de('lan.dhcp_max',    'DHCP End',     lan.dhcp_max    === '-' ? '' : lan.dhcp_max,    {disabled: dis, placeholder: '192.168.1.200'})}
+      ${_de('lan.lease_time',  'Lease Time',   lan.lease_time  === '-' ? '' : lan.lease_time,  {disabled: dis, type: 'number', placeholder: '86400', hint: 'Seconds — common values: 3600 (1h), 86400 (24h)'})}
+    </div>`;
+  }
+
+  function renderDevWLAN(bands, editable) {
+    if (!bands || bands.length === 0) {
+      return `<div class="dev-empty"><div class="ic">📶</div><div class="msg">No Wi-Fi reported by this ONT.<br><small>This may be a bridge-mode device or the WLAN is disabled.</small></div></div>`;
+    }
+    const dis = !editable;
+    return bands.map(b => {
+      const bi = b.band_index;
+      const is5G = parseInt(bi) >= 5;
+      const bandLabel = is5G ? '5 GHz' : '2.4 GHz';
+      const bandIcon = is5G ? '⚡' : '📶';
+      const isEnabled = String(b.enabled).toLowerCase() === 'true' || b.enabled === '1';
+      const channelOpts = _channelOptions(bi);
+      // For pretty channel display: 0 or "auto" → "Auto"
+      const chanDisplay = (b.channel === '0' || !b.channel || b.channel === '-') ? 'Auto' : b.channel;
+      return `<div class="dev-wlan-card">
+        <div class="dev-wlan-head">
+          <span class="dev-band-chip">${bandIcon} ${bandLabel} · SSID ${bi}</span>
+          <span class="dev-wlan-name">${escHtml(b.ssid || '—')}</span>
+          <span class="dev-wlan-state ${isEnabled ? 'on' : 'off'}">${isEnabled ? 'Enabled' : 'Disabled'}</span>
+        </div>
+        <div class="dev-grid" style="grid-template-columns:repeat(auto-fill, minmax(180px, 1fr))">
+          <div>${_dr('Channel',  chanDisplay)}${_dr('Standard', _fmtVal(b.band, '802.11'))}${_dr('BSSID', _fmtVal(b.bssid, 'Not reported'))}</div>
+          <div>${_dr('Security', _securityLabel(b.security))}${_dr('Clients', _fmtVal(b.clients, '0'))}${_dr('Auto Channel', _fmtBool(b.auto_channel))}</div>
+          <div>${_dr('TX Power', _fmtVal(b.tx_power, '100%'))}${_dr('Broadcast', _fmtBool(b.ssid_broadcast))}</div>
+        </div>
+        <div class="dev-edit-section" style="margin-top:14px">
+          <div class="dev-cell-head" style="margin-bottom:14px"><span class="ic">✏️</span><span>Edit ${bandLabel} settings</span></div>
+          ${_de('wlan.'+bi+'.ssid',         'SSID Name',     b.ssid === '-' ? '' : b.ssid, {disabled: dis, placeholder: 'Network name', hint: 'Visible name of your Wi-Fi network'})}
+          ${_de('wlan.'+bi+'.password',     'Password',      '',                            {disabled: dis, type: 'password', placeholder: 'new password', hint: 'Minimum 8 characters · leave blank to keep current'})}
+          ${_de('wlan.'+bi+'.security',     'Security Mode', b.security || '11i',           {disabled: dis, type: 'select', options: SECURITY_OPTIONS, hint: 'WPA2-PSK is recommended'})}
+          ${_de('wlan.'+bi+'.auto_channel', 'Auto Channel',  String(b.auto_channel).toLowerCase()==='true', {disabled: dis, type: 'toggle'})}
+          ${_de('wlan.'+bi+'.channel',      'Channel',       (b.channel === '0' || b.channel === '-') ? '0' : (b.channel || '0'), {disabled: dis, type: 'select', options: channelOpts, hint: 'Ignored when Auto Channel is on'})}
+          ${_de('wlan.'+bi+'.tx_power',     'TX Power',      _fmtVal(b.tx_power, '100'),    {disabled: dis, type: 'select', options: [{value:'100',label:'100% (max)'},{value:'75',label:'75%'},{value:'50',label:'50%'},{value:'25',label:'25% (min)'}], hint: 'Higher = wider range but more interference'})}
+          ${_de('wlan.'+bi+'.ssid_broadcast', 'SSID Visible', String(b.ssid_broadcast).toLowerCase()==='true', {disabled: dis, type: 'toggle'})}
+          ${_de('wlan.'+bi+'.enabled',      'Radio On',      isEnabled,                     {disabled: dis, type: 'toggle'})}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function _rssiClass(rssi) {
+    const n = parseInt(rssi);
+    if (isNaN(n)) return 'ok';
+    if (n >= -50) return 'strong';
+    if (n >= -70) return 'ok';
+    return 'weak';
+  }
+
+  function renderDevClients(clients) {
+    if (!clients || clients.length === 0) {
+      return `<div class="dev-empty"><div class="ic">👥</div><div class="msg">No connected clients reported by this ONT.<br><small>Devices appear here when they obtain an IP from the ONT's DHCP server or associate with its Wi-Fi.</small></div></div>`;
+    }
+    const wifi = clients.filter(c => /wi-?fi|802\.11/i.test(c.interface_type || ''));
+    const eth  = clients.filter(c => !/wi-?fi|802\.11/i.test(c.interface_type || ''));
+    const active = clients.filter(c => String(c.active).toLowerCase() === 'true');
+
+    return `<div class="dev-stat-grid">
+      ${_stat('Total Devices', clients.length, '')}
+      ${_stat('Wi-Fi',          wifi.length,    '')}
+      ${_stat('Ethernet',       eth.length,     '')}
+      ${_stat('Active Now',     active.length,  '')}
+    </div>
+    <div class="dev-cell" style="padding:0;overflow:hidden">
+      <table class="dev-client-table">
+        <thead><tr>
+          <th>Device</th>
+          <th>IP Address</th>
+          <th>MAC Address</th>
+          <th>Connection</th>
+          <th>Signal</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>${clients.map(c => {
+          const isActive = String(c.active).toLowerCase() === 'true' || c.active === '1';
+          const itype = c.interface_type || '';
+          const isWifi = /wi-?fi|802\.11/i.test(itype);
+          const ifaceDisplay = itype === 'Ethernet'
+            ? '🖧 Ethernet'
+            : isWifi ? '📶 ' + itype.replace(/wi-?fi/i, 'Wi-Fi') : itype === '-' ? 'Unknown' : itype;
+          const hostDisplay = (!c.host_name || c.host_name === '-' || c.host_name === '—')
+            ? '<span style="color:#7a8099;font-style:italic">(unknown device)</span>'
+            : `<span class="dev-host-name">${escHtml(c.host_name)}</span>`;
+          const rssiDisplay = (c.rssi && c.rssi !== '-')
+            ? `<span class="dev-rssi ${_rssiClass(c.rssi)}">${escHtml(c.rssi)} dBm</span>`
+            : (isWifi ? '<span style="color:#7a8099">—</span>' : '<span style="color:#7a8099">N/A</span>');
+          const statusChip = isActive
+            ? '<span class="dev-mini-chip on">● Active</span>'
+            : '<span class="dev-mini-chip idle">○ Idle</span>';
+          return `<tr>
+            <td>${hostDisplay}</td>
+            <td class="mono">${escHtml(_fmtVal(c.ip))}</td>
+            <td class="mono">${escHtml((c.mac || '—').toUpperCase())}</td>
+            <td>${escHtml(ifaceDisplay)}</td>
+            <td>${rssiDisplay}</td>
+            <td>${statusChip}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+  }
+
+  function renderDevTR069(t, editable, users) {
+    const dis = !editable;
+    const intervalOptions = [
+      { value:'60',    label:'Every 1 minute (debug)' },
+      { value:'300',   label:'Every 5 minutes (recommended)' },
+      { value:'600',   label:'Every 10 minutes' },
+      { value:'1800',  label:'Every 30 minutes' },
+      { value:'3600',  label:'Every 1 hour' },
+      { value:'21600', label:'Every 6 hours' },
+      { value:'86400', label:'Every 24 hours' },
+    ];
+    // Pick the closest matching value, or fallback to first
+    const currentInterval = String(parseInt(t.interval) || 300);
+    let html = `<div class="dev-grid">
+      <div class="dev-cell">
+        <div class="dev-cell-head"><span class="ic">🛰️</span><span>ACS Connection</span></div>
+        ${_dr('ACS URL',         _fmtVal(t.acs_url, 'Not configured'))}
+        ${_dr('Username',        _fmtVal(t.username, 'Not configured'))}
+        ${_dr('Inform Interval', _fmtSeconds(t.interval))}
+      </div>
+      <div class="dev-cell">
+        <div class="dev-cell-head"><span class="ic">📞</span><span>Connection Request</span></div>
+        ${_dr('Endpoint', _fmtVal(t.conn_req_url, 'Not available'))}
+        <div style="margin-top:8px;font-size:11px;color:#7a8099;font-style:italic">URL the ACS calls to wake this ONT on demand.</div>
+      </div>
+    </div>
+    <div class="dev-edit-section">
+      <div class="dev-cell-head" style="margin-bottom:14px"><span class="ic">✏️</span><span>Edit ACS Settings</span></div>
+      ${_de('tr069.acs_url',  'ACS URL',         t.acs_url  === '-' ? '' : t.acs_url,  {disabled: dis, placeholder: 'http://acs.example.com:7547', hint: 'Auto Configuration Server endpoint'})}
+      ${_de('tr069.username', 'ACS Username',    t.username === '-' ? '' : t.username, {disabled: dis, placeholder: 'acs user'})}
+      ${_de('tr069.password', 'ACS Password',    '',                                    {disabled: dis, type: 'password', placeholder: 'new password', hint: 'Leave blank to keep current'})}
+      ${_de('tr069.interval', 'Check-in Frequency', currentInterval, {disabled: dis, type: 'select', options: intervalOptions, hint: 'How often the ONT contacts the ACS — shorter = more responsive but higher load'})}
+    </div>`;
+
+    // ── ONT Web Admin Accounts (when firmware exposes X_HW_WebUserInfo) ──
+    if (users && users.length > 0) {
+      html += `<div class="dev-cell" style="margin-top:16px">
+        <div class="dev-cell-head"><span class="ic">👤</span><span>ONT Web Admin Accounts</span></div>
+        ${users.map(u => {
+          const levelLabel = String(u.level) === '2' ? 'Super Admin' : (u.username && u.username.toLowerCase() === 'admin' ? 'Super Admin' : 'User');
+          return `<div class="dev-row"><span class="k">${escHtml(levelLabel)}</span><span class="v">${escHtml(u.username)}</span></div>`;
+        }).join('')}
+      </div>
+      <div class="dev-edit-section">
+        <div class="dev-cell-head" style="margin-bottom:14px"><span class="ic">🔐</span><span>Change Admin Passwords</span></div>
+        ${users.map(u => _de(
+          'user.' + u.index + '.password',
+          (String(u.level) === '2' ? 'Super Admin' : 'User') + ' (' + u.username + ')',
+          '',
+          { disabled: dis, type: 'password', placeholder: 'new password', hint: 'For ONT web UI login at http://<ont-ip>/' }
+        )).join('')}
+      </div>`;
+    } else {
+      html += `<div class="dev-note" style="margin-top:16px"><span class="ic">ℹ</span><span>This ONT firmware does not expose web admin credentials via TR-069. Use the ONT's web UI directly to change admin passwords.</span></div>`;
+    }
+    return html;
+  }
+
+  function wireDevEdits(data) {
+    // Eye toggles
+    document.querySelectorAll('#devBody .dev-eye-btn').forEach(btn => {
+      btn.onclick = () => {
+        const input = document.getElementById(btn.dataset.target);
+        if (!input) return;
+        input.type = input.type === 'password' ? 'text' : 'password';
+        btn.textContent = input.type === 'password' ? '👁' : '👁‍🗨';
+      };
+    });
+    // Toggle live-label updates
+    document.querySelectorAll('#devBody .dev-toggle input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const lbl = document.getElementById(cb.id + '-lbl');
+        if (lbl) {
+          lbl.textContent = cb.checked ? 'Enabled' : 'Disabled';
+          lbl.className = 'dev-toggle-label ' + (cb.checked ? 'on' : 'off');
+        }
+        markDevDirty(cb);
+      });
+    });
+
+    // Track dirty fields: capture original values, mark on change
+    document.querySelectorAll('#devBody .dev-edit-row').forEach(row => {
+      const id = row.dataset.inputId;
+      const type = row.dataset.inputType;
+      const el = document.getElementById(id);
+      if (!el) return;
+      // Capture baseline value
+      if (type === 'toggle') el.dataset.original = el.checked ? 'true' : 'false';
+      else                    el.dataset.original = el.value;
+      const evt = (type === 'select' || type === 'toggle') ? 'change' : 'input';
+      el.addEventListener(evt, () => markDevDirty(el));
+    });
+
+    updateDevApplyButton();
+  }
+
+  function markDevDirty(el) {
+    const row  = el.closest('.dev-edit-row');
+    const type = row?.dataset.inputType;
+    let curVal;
+    if (type === 'toggle') curVal = el.checked ? 'true' : 'false';
+    else                    curVal = el.value;
+    const isDirty = String(curVal) !== String(el.dataset.original);
+    const statusEl = document.getElementById('status-' + el.id);
+
+    if (isDirty) {
+      el.classList.add('dirty');
+      if (statusEl) {
+        // Don't overwrite success/error status from a prior save
+        if (!statusEl.classList.contains('ok') && !statusEl.classList.contains('fail')) {
+          statusEl.textContent = '● unsaved';
+          statusEl.className = 'dev-save-status dirty';
+        }
+      }
+    } else {
+      el.classList.remove('dirty');
+      if (statusEl && statusEl.classList.contains('dirty')) {
+        statusEl.textContent = '';
+        statusEl.className = 'dev-save-status';
+      }
+    }
+    updateDevApplyButton();
+  }
+
+  function _devCollectDirty() {
+    const out = [];
+    document.querySelectorAll('#devBody .dev-edit-row').forEach(row => {
+      const field = row.dataset.editField;
+      const id    = row.dataset.inputId;
+      const type  = row.dataset.inputType;
+      const el    = document.getElementById(id);
+      if (!el || el.disabled) return;
+      let value;
+      if (type === 'toggle')      value = el.checked ? 'true' : 'false';
+      else if (type === 'select') value = el.value;
+      else                         value = el.value.trim();
+      const original = el.dataset.original || '';
+      if (String(value) === String(original)) return;
+      // Skip password fields if value is empty (means "keep current")
+      if (type === 'password' && !value) return;
+      out.push({ field, value, id, type, el });
+    });
+    return out;
+  }
+
+  function updateDevApplyButton() {
+    const btn = document.getElementById('devApplyBtn');
+    const lbl = document.getElementById('devApplyLbl');
+    if (!btn) return;
+    const dirty = _devCollectDirty();
+    if (dirty.length === 0) {
+      btn.style.display = 'none';
+    } else {
+      btn.style.display = '';
+      btn.className = 'dev-apply-btn';
+      btn.disabled = false;
+      lbl.textContent = `Apply ${dirty.length} change${dirty.length > 1 ? 's' : ''}`;
+    }
+  }
+
+  async function saveAllDevChanges() {
+    if (!_devCurrent) return;
+    const btn = document.getElementById('devApplyBtn');
+    const lbl = document.getElementById('devApplyLbl');
+    const dirty = _devCollectDirty();
+    if (dirty.length === 0) return;
+
+    btn.disabled = true;
+    btn.className = 'dev-apply-btn busy';
+    const sn = _devCurrent.sn;
+    let okCount = 0, failCount = 0;
+
+    for (let i = 0; i < dirty.length; i++) {
+      const d = dirty[i];
+      lbl.textContent = `Saving ${i+1}/${dirty.length}…`;
+      const statusEl = document.getElementById('status-' + d.id);
+      if (statusEl) { statusEl.textContent = '⟳ saving…'; statusEl.className = 'dev-save-status busy'; }
+
+      // Extract band_index from wlan.<N>.<field>
+      let band_index = null;
+      const m = d.field.match(/^wlan\.(\d+)\./);
+      if (m) band_index = m[1];
+
+      try {
+        const r = await fetch(`${API}/device/set`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sn, field: d.field, value: d.value, band_index })
+        });
+        const data = await r.json();
+        if (r.ok && (data.success || data.ok)) {
+          okCount++;
+          if (statusEl) { statusEl.textContent = '✓ saved'; statusEl.className = 'dev-save-status ok'; }
+          d.el.classList.remove('dirty');
+          d.el.dataset.original = d.value;
+        } else {
+          failCount++;
+          const msg = data.error || data.message || 'TR-069 error';
+          if (statusEl) { statusEl.textContent = '✗ ' + msg.substring(0, 60); statusEl.className = 'dev-save-status fail'; }
+        }
+      } catch (e) {
+        failCount++;
+        if (statusEl) { statusEl.textContent = '✗ network'; statusEl.className = 'dev-save-status fail'; }
+      }
+    }
+
+    if (failCount === 0) {
+      btn.className = 'dev-apply-btn success';
+      lbl.textContent = `✓ Saved ${okCount}`;
+      if (typeof toast === 'function') toast(`✓ Applied ${okCount} change${okCount > 1 ? 's' : ''} via TR-069`, 'ok');
+      setTimeout(() => { reloadDeviceModal(); }, 1500);
+    } else {
+      btn.className = 'dev-apply-btn';
+      lbl.textContent = `${okCount} ok · ${failCount} failed`;
+      btn.disabled = false;
+      if (typeof toast === 'function') toast(`✗ ${failCount} of ${dirty.length} change${dirty.length > 1 ? 's' : ''} failed`, 'err');
+    }
+  }
+
+  // Local escape helpers (in case escHtml/escAttr defined elsewhere have different signatures)
+  if (typeof escHtml !== 'function') {
+    window.escHtml = function(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); };
+  }
+  if (typeof escAttr !== 'function') {
+    window.escAttr = function(s) { return escHtml(s); };
+  }
+
+  // ── Device Modal — Graphs Tab ────────────────────────────────────────────
+  let _devChartRx      = null;
+  let _devChartTemp    = null;
+  let _devGrRange      = '1h';
+  let _devGrTimer      = null;
+  let _devGrLoaded     = false;
+  // ── PON Traffic state ────────────────────────────────────────────────────
+  let _liveTrafficTimer  = null;
+  let _liveTrafficChart  = null;
+  let _liveTrafficRange  = '1h';
+  let _liveRtTimer       = null;   // real-time polling timer
+  let _liveRtPoints      = [];     // [{rx, tx}]  scrolling buffer
+  let _liveRtChart       = null;
+  let _rtCountdownTimer  = null;   // 1-second countdown between polls
+  const LIVE_RT_MAX      = 60;     // keep 60 points (~10 min at 10s interval)
+  const LIVE_RT_INTERVAL = 10000;  // 10 s poll
+
+  function _destroyDevGraphs() {
+    if (_devChartRx)      { _devChartRx.destroy();      _devChartRx      = null; }
+    if (_devChartTemp)    { _devChartTemp.destroy();     _devChartTemp    = null; }
+    if (_liveTrafficChart){ _liveTrafficChart.destroy(); _liveTrafficChart= null; }
+    if (_liveRtChart)     { _liveRtChart.destroy();      _liveRtChart     = null; }
+    if (_devGrTimer)      { clearInterval(_devGrTimer);  _devGrTimer      = null; }
+    if (_liveTrafficTimer){ clearTimeout(_liveTrafficTimer);  _liveTrafficTimer = null; }
+    if (_liveRtTimer)        { clearTimeout(_liveRtTimer);        _liveRtTimer       = null; }
+    if (_rtCountdownTimer)   { clearInterval(_rtCountdownTimer);  _rtCountdownTimer  = null; }
+    _devGrLoaded   = false;
+    _liveRtPoints  = [];
+    _rtPrevReading = null;
+  }
+
+  function renderDevGraphsTab() {
+    const body = document.getElementById('devBody');
+    const sn   = _devCurrent && _devCurrent.sn;
+    _liveTrafficRange = _devGrRange;
+    _liveRtPoints = [];
+
+    body.innerHTML = `
+      <!-- ══ REAL-TIME SNMP TRAFFIC ══════════════════════════════════ -->
+      <div class="dev-section-head" style="margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div class="dev-section-title">📡 Live Interface Traffic</div>
+          <span id="rtLiveDot" style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25);">⟳ connecting…</span>
+          <span id="rtFspLabel" style="font-size:11px;color:var(--muted);"></span>
+          <span id="rtCountdown" style="font-size:10px;color:var(--muted);margin-left:4px;"></span>
+        </div>
+        <div class="dev-section-sub" id="rtSub" style="margin-top:3px;">Initialising…</div>
+      </div>
+
+      <!-- Current Mbps big tiles -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↓ Download (RX)</div>
+          <div id="rtRxVal" style="font-size:32px;font-weight:800;color:#4ade80;line-height:1;transition:color .3s;">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
+        </div>
+        <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↑ Upload (TX)</div>
+          <div id="rtTxVal" style="font-size:32px;font-weight:800;color:#60a5fa;line-height:1;transition:color .3s;">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
+        </div>
+      </div>
+
+      <!-- Scrolling real-time chart -->
+      <div class="ont-chart-box" style="margin-bottom:20px;">
+        <h4 style="display:flex;align-items:center;justify-content:space-between;">
+          <span>RX / TX Mbps — live (GenieACS TR-069)</span>
+          <span id="rtTs" style="font-size:10px;font-weight:400;color:var(--muted);">waiting…</span>
+        </h4>
+        <canvas id="rtChart" height="120"></canvas>
+      </div>
+
+      <!-- ══ HISTORICAL RANGE (InfluxDB) ══════════════════════════════ -->
+      <div class="dev-section-head" style="margin-bottom:10px;">
+        <div class="dev-section-title">📊 Traffic History</div>
+        <div class="dev-section-sub" id="liveTrafficSub">Per-ONT · GenieACS TR-069 · InfluxDB</div>
+      </div>
+      <div class="ont-graph-range" style="margin-bottom:12px;">
+        <button class="grng ${_devGrRange==='1h'?'active':''}"  data-r="1h"  onclick="switchDevGrRange(this)">1H</button>
+        <button class="grng ${_devGrRange==='6h'?'active':''}"  data-r="6h"  onclick="switchDevGrRange(this)">6H</button>
+        <button class="grng ${_devGrRange==='24h'?'active':''}" data-r="24h" onclick="switchDevGrRange(this)">24H</button>
+        <button class="grng ${_devGrRange==='7d'?'active':''}"  data-r="7d"  onclick="switchDevGrRange(this)">7D</button>
+      </div>
+      <div class="ont-chart-box" style="margin-bottom:20px;">
+        <h4 style="display:flex;align-items:center;justify-content:space-between;">
+          <span>RX / TX Mbps — history</span>
+          <span id="liveTrafficTs" style="font-size:10px;font-weight:400;color:var(--muted);"></span>
+        </h4>
+        <div id="liveTrafficNoData" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:12px;">No data in this range yet.</div>
+        <canvas id="liveTrafficChart" height="110"></canvas>
+      </div>
+
+      <!-- ══ SIGNAL HISTORY ══════════════════════════════════════════ -->
+      <div class="dev-section-head" style="margin-bottom:10px;">
+        <div class="dev-section-title">📶 Signal History</div>
+        <div class="dev-section-sub">RX optical power and temperature — InfluxDB</div>
+      </div>
+      <div class="ont-chart-box" style="margin-bottom:14px;">
+        <h4>📶 RX Signal (dBm)</h4>
+        <canvas id="devChartRx" height="110"></canvas>
+      </div>
+      <div class="ont-chart-box">
+        <h4>🌡️ Temperature (°C)</h4>
+        <canvas id="devChartTemp" height="90"></canvas>
+      </div>
+      <div id="devGraphNoData" style="display:none;text-align:center;padding:28px;color:var(--muted);font-size:13px;">
+        No signal data yet. Collected every poll cycle via SNMP.
+      </div>`;
+
+    if (sn) {
+      _startRtSNMP(sn);
+      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
+      _loadDevGraphs(sn, _devGrRange);
+    }
+  }
+
+  // switchDevGrRange also reloads history chart
+  window.switchDevGrRange = function(btn) {
+    document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _devGrRange = _liveTrafficRange = btn.dataset.r;
+    _devGrLoaded = false;
+    const sn = _devCurrent && _devCurrent.sn;
+    if (sn) {
+      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
+      _loadDevGraphs(sn, _devGrRange);
+    }
+  };
+
+  // ── Real-time traffic polling ─────────────────────────────────────────────
+  let _rtPrevReading = null; // {rx_bytes, tx_bytes, ts} for GenieACS delta calc
+
+  function _startRtSNMP(sn) {
+    if (_liveRtTimer) { clearTimeout(_liveRtTimer); _liveRtTimer = null; }
+    _liveRtPoints  = [];
+    _rtPrevReading = null;
+    _pollRtSNMP(sn);
+  }
+
+  async function _pollRtSNMP(sn) {
+    // Clear any running countdown
+    if (_rtCountdownTimer) { clearInterval(_rtCountdownTimer); _rtCountdownTimer = null; }
+
+    const dotEl = document.getElementById('rtLiveDot');
+    const subEl = document.getElementById('rtSub');
+    const tsEl  = document.getElementById('rtTs');
+    const fspEl = document.getElementById('rtFspLabel');
+    const rxEl  = document.getElementById('rtRxVal');
+    const txEl  = document.getElementById('rtTxVal');
+    const cdEl  = document.getElementById('rtCountdown');
+
+    const _setBadge = (text, color, bg) => {
+      if (!dotEl) return;
+      dotEl.textContent = text;
+      dotEl.style.color = color;
+      dotEl.style.borderColor = `${color}55`;
+      dotEl.style.background  = bg;
+    };
+    _setBadge('⟳ polling…', '#fbbf24', 'rgba(251,191,36,.08)');
+    if (cdEl) cdEl.textContent = '';
+
+    try {
+      const r = await fetch(`${API}/ont/traffic/live?sn=${encodeURIComponent(sn)}`, { headers: authHeaders() });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'error');
+
+      // Server calculates Mbps delta server-side using _genie_prev_readings
+      const rx_mbps = d.rx_mbps ?? 0;
+      const tx_mbps = d.tx_mbps ?? 0;
+
+      if (fspEl) fspEl.textContent = '📶 per-ONT · GenieACS TR-069';
+
+      if (d.is_first) {
+        // First sample — baseline collected, Mbps available on next poll
+        if (rxEl) rxEl.textContent = '—';
+        if (txEl) txEl.textContent = '—';
+        _setBadge('⟳ baseline', '#fbbf24', 'rgba(251,191,36,.08)');
+        if (subEl) subEl.textContent = `Baseline collected · Mbps will appear on next poll (~10s)`;
+      } else {
+        if (rxEl) rxEl.textContent = rx_mbps.toFixed(2);
+        if (txEl) txEl.textContent = tx_mbps.toFixed(2);
+        _setBadge('● LIVE', '#4ade80', 'rgba(34,197,94,.12)');
+        if (subEl) subEl.textContent = `Per-ONT TR-069 · ${new Date(d.ts * 1000).toLocaleTimeString()} · RX total ${(d.rx_bytes / 1e9).toFixed(2)} GB`;
+        _liveRtPoints.push({ rx: rx_mbps, tx: tx_mbps });
+        if (_liveRtPoints.length > LIVE_RT_MAX) _liveRtPoints.shift();
+      }
+
+      if (tsEl) tsEl.textContent = new Date(d.ts * 1000).toLocaleTimeString();
+      if (_liveRtPoints.length) _renderRtChart();
+
+    } catch(e) {
+      _setBadge('✕ error', '#f87171', 'rgba(248,113,113,.08)');
+      if (subEl) subEl.textContent = `Error: ${e.message}`;
+    }
+
+    // 1-second countdown UI between polls
+    const POLL_MS = 10000;
+    let remaining = Math.round(POLL_MS / 1000);
+    if (cdEl) cdEl.textContent = `· next in ${remaining}s`;
+    _rtCountdownTimer = setInterval(() => {
+      remaining--;
+      if (remaining <= 0) {
+        if (cdEl) cdEl.textContent = '';
+        clearInterval(_rtCountdownTimer);
+        _rtCountdownTimer = null;
+      } else {
+        if (cdEl) cdEl.textContent = `· next in ${remaining}s`;
+      }
+    }, 1000);
+
+    _liveRtTimer = setTimeout(() => {
+      if (_devTab === 'graphs' && _devCurrent && _devCurrent.sn === sn)
+        _pollRtSNMP(sn);
+    }, POLL_MS);
+  }
+
+  function _renderRtChart() {
+    const canvas = document.getElementById('rtChart');
+    if (!canvas || !_liveRtPoints.length) return;
+    const n = _liveRtPoints.length;
+    const labels = _liveRtPoints.map((_, i) => {
+      const secsAgo = (n - 1 - i) * 10;   // each point = ~10s poll
+      return secsAgo === 0 ? 'now' : `-${secsAgo}s`;
+    });
+    const rxData = _liveRtPoints.map(p => p.rx);
+    const txData = _liveRtPoints.map(p => p.tx);
+    const opts = {
+      responsive: true, maintainAspectRatio: true,
+      animation: { duration: 200 },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color:'#7a8099', font:{ size:10 }, boxWidth:12, padding:12 } },
+        tooltip: { mode:'index', intersect:false, callbacks:{ label: ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} Mbps` } }
+      },
+      scales: {
+        x: { ticks:{ color:'#7a8099', font:{ size:10 }, maxRotation:0 }, grid:{ color:'rgba(255,255,255,.04)' } },
+        y: { min:0, ticks:{ color:'#7a8099', font:{ size:10 }, callback: v=>v+' Mbps' }, grid:{ color:'rgba(255,255,255,.07)' } }
+      }
+    };
+    if (_liveRtChart) {
+      _liveRtChart.data.labels           = labels;
+      _liveRtChart.data.datasets[0].data = rxData;
+      _liveRtChart.data.datasets[1].data = txData;
+      _liveRtChart.update('none');
+    } else {
+      _liveRtChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label:'↓ RX Mbps', data:rxData, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.10)', borderWidth:2, pointRadius:2, tension:0.3, fill:true },
+            { label:'↑ TX Mbps', data:txData, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.08)', borderWidth:2, pointRadius:2, tension:0.3, fill:true }
+          ]
+        },
+        options: opts
+      });
+    }
+  }
+
+  async function _loadLiveTrafficSNMP(sn, range) {
+    if (_liveTrafficTimer) { clearInterval(_liveTrafficTimer); _liveTrafficTimer = null; }
+    const subEl  = document.getElementById('liveTrafficSub');
+    const tsEl   = document.getElementById('liveTrafficTs');
+    const rxEl   = document.getElementById('liveRxVal');
+    const txEl   = document.getElementById('liveTxVal');
+    const noData = document.getElementById('liveTrafficNoData');
+    try {
+      const r = await fetch(
+        `${API}/ont/traffic?sn=${encodeURIComponent(sn)}&range=${range}`,
+        { headers: authHeaders() }
+      );
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'api error');
+
+      // Update header info
+      if (rxEl)  rxEl.textContent  = d.rx_now != null ? d.rx_now.toFixed(2) : '—';
+      if (txEl)  txEl.textContent  = d.tx_now != null ? d.tx_now.toFixed(2) : '—';
+      if (subEl) subEl.textContent = `Per-ONT · GenieACS TR-069 · updated ${new Date().toLocaleTimeString()} · auto-refresh every 60s`;
+      if (tsEl)  tsEl.textContent  = new Date().toLocaleTimeString();
+
+      const canvas = document.getElementById('liveTrafficChart');
+      if (!canvas) return;
+
+      if (!d.labels || !d.labels.length) {
+        if (noData)  noData.style.display  = '';
+        if (canvas)  canvas.style.display  = 'none';
+      } else {
+        if (noData)  noData.style.display  = 'none';
+        if (canvas)  canvas.style.display  = '';
+        const chartOpts = {
+          responsive: true, maintainAspectRatio: true,
+          animation: { duration: 400 },
+          plugins: {
+            legend: { display: true, position: 'top', labels: { color:'#7a8099', font:{ size:10 }, boxWidth:12, padding:12 } },
+            tooltip: { mode:'index', intersect:false,
+              callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} Mbps` }
+            }
+          },
+          scales: {
+            x: { ticks:{ color:'#7a8099', font:{ size:10 }, maxTicksLimit:10, maxRotation:0 }, grid:{ color:'rgba(255,255,255,.04)' } },
+            y: { min:0, ticks:{ color:'#7a8099', font:{ size:10 }, callback: v => v+' Mbps' }, grid:{ color:'rgba(255,255,255,.07)' } }
+          }
+        };
+        if (_liveTrafficChart) {
+          _liveTrafficChart.data.labels           = d.labels;
+          _liveTrafficChart.data.datasets[0].data = d.rx_mbps;
+          _liveTrafficChart.data.datasets[1].data = d.tx_mbps;
+          _liveTrafficChart.update();
+        } else {
+          _liveTrafficChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+              labels: d.labels,
+              datasets: [
+                { label:'↓ RX Mbps', data:d.rx_mbps, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.10)', borderWidth:2, pointRadius:1, tension:0.35, fill:true },
+                { label:'↑ TX Mbps', data:d.tx_mbps, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.08)', borderWidth:2, pointRadius:1, tension:0.35, fill:true }
+              ]
+            },
+            options: chartOpts
+          });
+        }
+      }
+    } catch(e) {
+      if (subEl) subEl.textContent = `Error: ${e.message}`;
+      if (tsEl)  tsEl.textContent  = 'error';
+    }
+    // Auto-refresh every 60s (history chart — GenieACS writes on each live poll ~10s)
+    _liveTrafficTimer = setTimeout(() => {
+      if (_devTab === 'graphs' && _devCurrent && _devCurrent.sn === sn)
+        _loadLiveTrafficSNMP(sn, _liveTrafficRange);
+    }, 60000);
+  }
+
+  function switchDevGrRange(btn) {
+    document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _devGrRange  = btn.dataset.r;
+    _devGrLoaded = false;
+    const sn = _devCurrent && _devCurrent.sn;
+    if (sn) _loadDevGraphs(sn, _devGrRange);
+  }
+
+  async function _loadDevGraphs(sn, range) {
+    try {
+      const r = await fetch(`${API}/ont/graph?sn=${encodeURIComponent(sn)}&range=${range}`, { headers: authHeaders() });
+      const data = await r.json();
+      const noData = document.getElementById('devGraphNoData');
+      const rxC  = document.getElementById('devChartRx');
+      const tmpC = document.getElementById('devChartTemp');
+      if (!noData) return; // tab was switched away
+      if (!data.ok || !data.labels || !data.labels.length) {
+        if (noData) noData.style.display = '';
+        if (rxC)  rxC.style.display  = 'none';
+        if (tmpC) tmpC.style.display = 'none';
+        return;
+      }
+      if (noData) noData.style.display = 'none';
+      // Destroy old charts
+      if (_devChartRx)   { _devChartRx.destroy();   _devChartRx   = null; }
+      if (_devChartTemp) { _devChartTemp.destroy();  _devChartTemp = null; }
+      const base = {
+        responsive:true, maintainAspectRatio:true, animation:{duration:350},
+        plugins:{legend:{display:false}, tooltip:{mode:'index',intersect:false}},
+        scales:{
+          x:{ticks:{color:'#7a8099',font:{size:10},maxTicksLimit:8},grid:{color:'rgba(255,255,255,.04)'}},
+          y:{ticks:{color:'#7a8099',font:{size:10}},grid:{color:'rgba(255,255,255,.07)'}}
+        }
+      };
+      if (rxC) {
+        _devChartRx = new Chart(rxC, { type:'line', data:{ labels:data.labels, datasets:[
+          {label:'RX (dBm)',data:data.rx_power,borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.08)',borderWidth:2,pointRadius:0,tension:0.3,fill:true},
+          {label:'Warn -27',data:data.labels.map(()=>-27),borderColor:'rgba(245,158,11,.5)',borderWidth:1,borderDash:[4,4],pointRadius:0},
+          {label:'Critical -32',data:data.labels.map(()=>-32),borderColor:'rgba(239,68,68,.5)',borderWidth:1,borderDash:[4,4],pointRadius:0}
+        ]}, options:{...base,scales:{...base.scales,y:{...base.scales.y,min:-40,max:-5,ticks:{...base.scales.y.ticks,callback:v=>v+' dBm'}}}}});
+      }
+      if (tmpC) {
+        _devChartTemp = new Chart(tmpC, { type:'line', data:{ labels:data.labels, datasets:[
+          {label:'Temp (°C)',data:data.temp,borderColor:'#f97316',backgroundColor:'rgba(249,115,22,.08)',borderWidth:2,pointRadius:0,tension:0.3,fill:true},
+          {label:'Warn 75°C',data:data.labels.map(()=>75),borderColor:'rgba(239,68,68,.5)',borderWidth:1,borderDash:[4,4],pointRadius:0}
+        ]}, options:{...base,scales:{...base.scales,y:{...base.scales.y,min:0,max:90,ticks:{...base.scales.y.ticks,callback:v=>v+'°C'}}}}});
+      }
+      _devGrLoaded = true;
+      if (_devGrTimer) clearInterval(_devGrTimer);
+      _devGrTimer = setInterval(() => {
+        if (_devTab === 'graphs' && _devCurrent) _loadDevGraphs(_devCurrent.sn, _devGrRange);
+      }, 60000);
+    } catch(e) { console.warn('[DevGraphs]', e); }
+  }
+
+  </script>
 
 </body>
 </html>

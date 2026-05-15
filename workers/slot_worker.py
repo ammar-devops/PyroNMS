@@ -29,7 +29,7 @@ from config.config import (
     SNMP_READ_COMMUNITY,
     SNMP_OID_TEMPLATES,
 )
-from workers.olt_helper import connect_olt, get_ont_list, get_optical
+from workers.olt_helper import connect_olt, get_ont_list, get_optical, get_optical_port
 from workers.snmp_helper import snmp_ping, get_ont_metrics_by_index
 
 from influxdb_client import InfluxDBClient, Point
@@ -135,32 +135,52 @@ def poll_slot(slot, log):
                     except Exception as e:
                         log.warning(f"down_cause error: {e}")
 
-                for ont in onts:
-                    if ont["state"] != "online":
-                        continue
+                # ── Phase 1: Batch optical collection ──────────────────────────────
+                # Enter 'interface gpon 0/{slot}' ONCE for all online ONTs on this
+                # port, instead of entering/quitting per-ONT (3× SSH commands each).
+                # Falls back to SNMP if OID templates are configured.
+                online_onts = [o for o in onts if o["state"] == "online"]
 
-                    # Phase 1: SNMP-first for metrics
-                    snmp_metrics = {}
-                    if snmp_enabled and snmp_ok and any(SNMP_OID_TEMPLATES.values()):
+                # SNMP-first: build per-ONT metrics map (only if OIDs configured)
+                snmp_metrics_map = {}
+                if snmp_enabled and snmp_ok and any(SNMP_OID_TEMPLATES.values()):
+                    for ont in online_onts:
                         try:
                             idx = _ont_index(slot, port_num, ont["ont_id"])
-                            snmp_metrics = get_ont_metrics_by_index(
+                            m = get_ont_metrics_by_index(
                                 OLT_HOST, SNMP_READ_COMMUNITY, idx, SNMP_OID_TEMPLATES
                             )
+                            if m:
+                                snmp_metrics_map[ont["ont_id"]] = m
                         except Exception as e:
                             log.warning(f"snmp metrics error ({pon}/{ont['ont_id']}): {e}")
 
-                    # SSH fallback (or full SSH mode)
-                    optical = None
-                    if "rx_power" in snmp_metrics or "temp" in snmp_metrics:
+                # Determine which ONTs need SSH optical (those not covered by SNMP)
+                need_ssh = [
+                    o for o in online_onts
+                    if "rx_power" not in snmp_metrics_map.get(o["ont_id"], {})
+                    and "temp" not in snmp_metrics_map.get(o["ont_id"], {})
+                ]
+
+                # Batch SSH optical: one interface entry for all remaining ONTs
+                ssh_optical_map = {}
+                if need_ssh:
+                    ssh_optical_map = get_optical_port(
+                        conn, slot, port_num, [o["ont_id"] for o in need_ssh]
+                    )
+
+                # Build optical InfluxDB points for every online ONT
+                for ont in online_onts:
+                    snmp_m = snmp_metrics_map.get(ont["ont_id"], {})
+                    if "rx_power" in snmp_m or "temp" in snmp_m:
                         optical = {
-                            "rx_power": snmp_metrics.get("rx_power"),
+                            "rx_power": snmp_m.get("rx_power"),
                             "tx_power": None,
-                            "olt_rx": None,
-                            "temp": snmp_metrics.get("temp"),
+                            "olt_rx":   None,
+                            "temp":     snmp_m.get("temp"),
                         }
                     else:
-                        optical = get_optical(conn, slot, port_num, ont["ont_id"])
+                        optical = ssh_optical_map.get(ont["ont_id"])
 
                     if optical:
                         op = (
@@ -177,23 +197,20 @@ def poll_slot(slot, log):
                         op = op.time(now, "s")
                         points.append(op)
 
+                # ── Phase 2.2: WAN sampling (throttled by shard) ───────────────────
+                for ont in online_onts:
+                    snmp_m = snmp_metrics_map.get(ont["ont_id"], {})
                     try:
-                        # Phase 2.2 WAN sampling:
-                        # avoid expensive WAN command on every ONT every cycle.
                         want_wan_probe = (ont["ont_id"] % WAN_CACHE_SHARDS) == shard
-                        wan = {}
-                        wan_ip = ""
-                        wan_status = ""
-                        wan_vlan = ""
+                        wan_ip = wan_status = wan_vlan = ""
                         if want_wan_probe:
                             from workers.olt_helper import get_wan_ip
                             wan = get_wan_ip(conn, slot, port_num, ont["ont_id"]) or {}
-                            wan_ip = (wan.get("ip") or "").strip()
+                            wan_ip    = (wan.get("ip") or "").strip()
                             wan_status = (wan.get("status") or "").strip()
-                            wan_vlan = (wan.get("vlan") or "").strip()
+                            wan_vlan  = (wan.get("vlan") or "").strip()
 
-                        # Prefer SNMP VLAN if available, otherwise WAN parse fallback.
-                        vlan = snmp_metrics.get("vlan") or wan_vlan
+                        vlan = snmp_m.get("vlan") or wan_vlan
                         if vlan:
                             vp = (
                                 Point("ont_status")
@@ -207,7 +224,6 @@ def poll_slot(slot, log):
                             )
                             write_points([vp])
 
-                        # Phase 2.1/2.2: cache WAN fields for fast API Open Router.
                         if want_wan_probe and (wan_ip or wan_status or vlan):
                             wp = (
                                 Point("ont_wan")
@@ -217,12 +233,9 @@ def poll_slot(slot, log):
                                 .tag("sn", ont["sn"])
                                 .tag("description", ont["desc"])
                             )
-                            if wan_ip:
-                                wp = wp.field("ipv4_address", wan_ip)
-                            if wan_status:
-                                wp = wp.field("connection_status", wan_status)
-                            if vlan:
-                                wp = wp.field("network_vlan", str(vlan))
+                            if wan_ip:    wp = wp.field("ipv4_address", wan_ip)
+                            if wan_status: wp = wp.field("connection_status", wan_status)
+                            if vlan:      wp = wp.field("network_vlan", str(vlan))
                             wp = wp.time(now, "s")
                             write_points([wp])
                     except Exception as e:
@@ -258,7 +271,10 @@ def main():
     log = get_logger(slot)
 
     log.info(f"=== Slot {slot} Worker Started ===")
-    _STAGGER = {1: 0, 2: 1800, 4: 3600, 5: 5400}
+    # Stagger proportional to POLL_INTERVAL so workers don't all hit OLT at once.
+    # With POLL_INTERVAL=1800, each slot is offset by 450s (~7.5 min).
+    _stagger_step = max(60, POLL_INTERVAL // 4)
+    _STAGGER = {1: 0, 2: _stagger_step, 4: _stagger_step * 2, 5: _stagger_step * 3}
     _delay = _STAGGER.get(slot, 0)
     if _delay > 0:
         log.info(f"Stagger delay: sleeping {_delay}s before first poll...")

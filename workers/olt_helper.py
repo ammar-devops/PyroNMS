@@ -10,7 +10,9 @@ from netmiko import ConnectHandler
 log = logging.getLogger(__name__)
 
 RE_ONT_STATUS = re.compile(
-    r"\d+/\s*\d+/\s*\d+\s+(\d+)\s+([0-9A-Fa-f]{16})\s+\S+\s+(online|offline|loss|dying-gasp)",
+    r"\d+/\s*\d+/\s*\d+\s+(\d+)\s+([0-9A-Fa-f]{16})\s+\S+\s+"
+    r"(online|offline|loss|dying-gasp|fiber-cut|power-off|deactivate|config-mismatch|initial|failed|"
+    r"active-not|not-provisioned)",
     re.IGNORECASE
 )
 RE_ONT_DESC = re.compile(r"\d+/\s*\d+/\s*\d+\s+(\d+)\s+(.+?)\s*$")
@@ -100,30 +102,34 @@ def get_ont_list(conn, gpon_iface, port_num):
         return []
 
 
+def _parse_optical(output):
+    """Parse optical values from a single 'display ont optical-info' output block."""
+    def ex(pat):
+        m = pat.search(output)
+        if m:
+            v = m.group(1).strip()
+            return None if v in ("-", "NA", "") else to_float(v)
+        return None
+
+    result = {
+        "rx_power": ex(RE_RX_POWER),
+        "tx_power": ex(RE_TX_POWER),
+        "olt_rx":   ex(RE_OLT_RX),
+        "temp":     ex(RE_TEMP),
+    }
+    # Need at least rx_power or tx_power to be a valid reading
+    if all(v is None for v in [result["rx_power"], result["tx_power"]]):
+        return None
+    return result
+
+
 def get_optical(conn, gpon_iface, port_num, ont_id):
-    """Get optical signal info for a single ONT"""
+    """Get optical signal info for a single ONT (legacy single-ONT path, kept for API use)."""
     try:
         cmd(conn, f"interface gpon 0/{gpon_iface}", timeout=15)
         output = cmd(conn, f"display ont optical-info {port_num} {ont_id}", timeout=20)
         cmd(conn, "quit", expect=r"config\)#", timeout=10)
-
-        def ex(pat):
-            m = pat.search(output)
-            if m:
-                v = m.group(1).strip()
-                return None if v in ("-", "NA", "") else to_float(v)
-            return None
-
-        result = {
-            "rx_power": ex(RE_RX_POWER),
-            "tx_power": ex(RE_TX_POWER),
-            "olt_rx":   ex(RE_OLT_RX),
-            "temp":     ex(RE_TEMP),
-        }
-        if all(v is None for v in [result["rx_power"], result["tx_power"]]):
-            return None
-        return result
-
+        return _parse_optical(output)
     except Exception as e:
         log.error(f"get_optical {gpon_iface}/{port_num}/{ont_id}: {e}")
         try:
@@ -131,6 +137,48 @@ def get_optical(conn, gpon_iface, port_num, ont_id):
         except:
             pass
         return None
+
+
+def get_optical_port(conn, gpon_iface, port_num, ont_ids):
+    """
+    Batch optical collection: enter 'interface gpon 0/{gpon_iface}' ONCE,
+    query all ONTs in ont_ids, then exit once.
+
+    This replaces N * (interface + query + quit) with 1 * interface + N * query + 1 * quit.
+    On 23 ONTs that's 69 SSH round-trips → 25 round-trips — ~3x faster, far fewer timeouts.
+
+    Returns dict: {ont_id (int): optical_dict}  — missing keys had no valid reading.
+    """
+    results = {}
+    if not ont_ids:
+        return results
+
+    entered = False
+    try:
+        cmd(conn, f"interface gpon 0/{gpon_iface}", timeout=15)
+        entered = True
+
+        for ont_id in ont_ids:
+            try:
+                output = cmd(conn, f"display ont optical-info {port_num} {ont_id}", timeout=20)
+                optical = _parse_optical(output)
+                if optical:
+                    results[ont_id] = optical
+            except Exception as e:
+                log.error(f"get_optical {gpon_iface}/{port_num}/{ont_id}: {e}")
+                # Continue to next ONT — don't abort entire port
+
+        cmd(conn, "quit", expect=r"config\)#", timeout=10)
+
+    except Exception as e:
+        log.error(f"get_optical_port {gpon_iface}/{port_num}: {e}")
+        if entered:
+            try:
+                cmd(conn, "quit", expect=r"config\)#", timeout=10)
+            except Exception:
+                pass
+
+    return results
 
 
 RE_DOWN_CAUSE = re.compile(r"Last down cause\s*:\s*(\S+)", re.IGNORECASE)

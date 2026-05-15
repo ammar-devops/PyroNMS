@@ -29,8 +29,10 @@ SLOT_PORTS = {
     5: list(range(16)),  # ports 0-15
 }
 
-# Background poll interval (seconds)
-POLL_INTERVAL = 7200
+# Background poll interval (seconds between poll cycles)
+# Reduced from 7200 (2h) to 1800 (30min) — optical data refreshes every ~1h
+# (poll cycle takes ~35-45 min + 30 min sleep = ~70 min total refresh rate)
+POLL_INTERVAL = 1800
 
 # API Settings
 API_HOST = "0.0.0.0"

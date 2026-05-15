@@ -73,6 +73,14 @@
   .om-tab-panel { display: none; }
   .om-tab-panel.active { display: block; }
 
+  /* ── Graphs tab ── */
+  .ont-graph-wrap { display:flex; flex-direction:column; gap:16px; padding-top:4px; }
+  .ont-graph-range { display:flex; gap:6px; justify-content:flex-end; }
+  .grng { padding:4px 12px; border-radius:12px; font-size:11px; font-weight:600; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; transition:all .15s; }
+  .grng.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ont-chart-box { background:var(--bg3,#1e2130); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .ont-chart-box h4 { font-size:11px; color:var(--muted); margin:0 0 12px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+
   /* ── Card grid ── */
   .om-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-bottom: 20px; }
   .om-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
@@ -199,6 +207,7 @@
   <button class="om-tab-btn" data-tab="wan">🌐 WAN Config</button>
   <button class="om-tab-btn" data-tab="wlan">📶 WLAN Config</button>
   <button class="om-tab-btn" data-tab="actions">⚡ Actions</button>
+  <button class="om-tab-btn" data-tab="graphs">📈 Graphs</button>
 </div>
 
 <!-- Body -->
@@ -217,6 +226,29 @@
   <!-- Tab: WLAN Config -->
   <div class="om-tab-panel" id="tab-wlan">
     <div id="wlanContent" class="om-loading"><span class="spin">⟳</span> Loading WLAN config…</div>
+  </div>
+
+  <!-- Tab: Graphs -->
+  <div class="om-tab-panel" id="tab-graphs">
+    <div class="ont-graph-wrap">
+      <div class="ont-graph-range">
+        <button class="grng active" data-r="1h">1H</button>
+        <button class="grng" data-r="6h">6H</button>
+        <button class="grng" data-r="24h">24H</button>
+        <button class="grng" data-r="7d">7D</button>
+      </div>
+      <div class="ont-chart-box">
+        <h4>📶 RX Signal (dBm)</h4>
+        <canvas id="omChartRx" height="120"></canvas>
+      </div>
+      <div class="ont-chart-box">
+        <h4>🌡️ Temperature (°C)</h4>
+        <canvas id="omChartTemp" height="100"></canvas>
+      </div>
+      <div id="omGraphNoData" style="display:none;text-align:center;padding:32px;color:#7a8099;font-size:13px;">
+        No signal data available for this ONT yet.<br>Data is collected every poll cycle via SNMP/SSH.
+      </div>
+    </div>
   </div>
 
   <!-- Tab: Actions -->
@@ -278,6 +310,8 @@ document.querySelectorAll('.om-tab-btn').forEach(btn => {
     _currentTab = tab;
     document.querySelectorAll('.om-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     document.querySelectorAll('.om-tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
+    if (tab === 'graphs' && !_omGraphLoaded) loadOmGraphs(_omGraphRange);
+    if (tab !== 'graphs' && _omGraphTimer) { clearInterval(_omGraphTimer); _omGraphTimer = null; }
   });
 });
 
@@ -924,6 +958,97 @@ document.getElementById('omRefreshBtn').addEventListener('click', () => {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 loadAll();
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+// ── ONT Manager — Graphs Tab ──────────────────────────────────────────────────
+let _omGraphLoaded = false;
+let _omGraphRange  = '1h';
+let _omGraphTimer  = null;
+let _omChartRx     = null;
+let _omChartTemp   = null;
+
+// Wire range buttons
+document.querySelectorAll('.grng').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _omGraphRange  = btn.dataset.r;
+    _omGraphLoaded = false;
+    loadOmGraphs(_omGraphRange);
+  });
+});
+
+async function loadOmGraphs(range) {
+  const sn = new URLSearchParams(location.search).get('sn') || '';
+  if (!sn) return;
+  const noData = document.getElementById('omGraphNoData');
+  const rxC    = document.getElementById('omChartRx');
+  const tmpC   = document.getElementById('omChartTemp');
+  if (noData) noData.style.display = 'none';
+  try {
+    const token = localStorage.getItem('pyronms_token') || '';
+    const r = await fetch(`/ont/graph?sn=${encodeURIComponent(sn)}&range=${range}`,
+      { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+    const data = await r.json();
+    if (!data.ok || !data.labels || !data.labels.length) {
+      if (noData) noData.style.display = '';
+      if (rxC)  rxC.style.display  = 'none';
+      if (tmpC) tmpC.style.display = 'none';
+      return;
+    }
+    if (rxC)  rxC.style.display  = '';
+    if (tmpC) tmpC.style.display = '';
+    renderOmGraphs(data);
+    _omGraphLoaded = true;
+    if (_omGraphTimer) clearInterval(_omGraphTimer);
+    _omGraphTimer = setInterval(() => loadOmGraphs(_omGraphRange), 60000);
+  } catch(e) {
+    console.warn('[OmGraphs]', e);
+  }
+}
+
+function renderOmGraphs(data) {
+  const base = {
+    responsive: true, maintainAspectRatio: true, animation: { duration: 350 },
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { ticks: { color: '#7a8099', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,.04)' } },
+      y: { ticks: { color: '#7a8099', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.07)' } }
+    }
+  };
+  if (_omChartRx)   { _omChartRx.destroy();   _omChartRx   = null; }
+  if (_omChartTemp) { _omChartTemp.destroy(); _omChartTemp = null; }
+
+  const rxCtx = document.getElementById('omChartRx');
+  if (rxCtx) {
+    _omChartRx = new Chart(rxCtx, {
+      type: 'line',
+      data: { labels: data.labels, datasets: [
+        { label: 'RX (dBm)', data: data.rx_power, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.08)',
+          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+        { label: 'Warn -27', data: data.labels.map(()=>-27), borderColor: 'rgba(245,158,11,.5)', borderWidth:1, borderDash:[4,4], pointRadius:0 },
+        { label: 'Critical -32', data: data.labels.map(()=>-32), borderColor: 'rgba(239,68,68,.5)', borderWidth:1, borderDash:[4,4], pointRadius:0 }
+      ]},
+      options: { ...base, scales: { ...base.scales, y: { ...base.scales.y, min:-40, max:-5,
+        ticks: { ...base.scales.y.ticks, callback: v => v+' dBm' } } } }
+    });
+  }
+  const tmpCtx = document.getElementById('omChartTemp');
+  if (tmpCtx) {
+    _omChartTemp = new Chart(tmpCtx, {
+      type: 'line',
+      data: { labels: data.labels, datasets: [
+        { label: 'Temp (°C)', data: data.temp, borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,.08)',
+          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+        { label: 'Warn 75°C', data: data.labels.map(()=>75), borderColor: 'rgba(239,68,68,.5)', borderWidth:1, borderDash:[4,4], pointRadius:0 }
+      ]},
+      options: { ...base, scales: { ...base.scales, y: { ...base.scales.y, min:0, max:90,
+        ticks: { ...base.scales.y.ticks, callback: v => v+'°C' } } } }
+    });
+  }
+}
 </script>
 </body>
 </html>

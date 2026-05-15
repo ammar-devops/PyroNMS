@@ -2,6 +2,39 @@
 
 ---
 
+## v4.2.0 — 2026-05-15 (SNMP Bulk Optical + UI Cleanup)
+
+### Summary
+Implemented SNMP bulk optical polling (40x faster than SSH). Fixed InfluxDB 422 type conflict.
+Removed misleading per-ONT traffic graph (hardware limitation). Poll interval reduced from 2h to 30min.
+
+### Changes
+
+#### Performance
+- **SNMP bulk optical polling** — replaced per-ONT SSH with batched `snmpget` (40 ONTs × 2 OIDs per call)
+  - Full OLT (~2500 ONTs) now polled in ~30 seconds vs 35–45 minutes via SSH
+  - SSH kept as automatic fallback for any ONT SNMP can't reach
+- **Poll interval** reduced from 7200s (2h) to 1800s (30min)
+- **Worker stagger** made proportional to poll interval (max 22.5min offset vs old 90min for Slot 5)
+
+#### Bug Fixes
+- **InfluxDB 422 fix** — `temp` field was being written as Python `int` by SNMP path, conflicting with existing `float` schema from SSH path. Fixed by casting to `float(raw)` in `snmp_helper.py`
+- **All-None field guard** — added explicit check to skip InfluxDB Points where all optical fields are None (prevents 422 on edge-case ONTs)
+
+#### UI
+- **Removed: PON Port Traffic (SNMP) section** from ONT detail Graphs tab
+  - Reason: Huawei MA5603T does not expose per-ONT bandwidth counters via SNMP
+  - The graph was showing aggregate traffic for all ONTs on the entire PON port — misleading when viewed per-ONT
+  - Signal History (RX dBm + Temperature) and all other ONT detail sections remain unchanged
+
+### Known Limitation — Per-ONT Traffic
+> **Huawei MA5603T does not expose per-ONT bandwidth counters via SNMP.**
+> Only full PON port aggregate traffic is available (shared across all ONTs on the port).
+> Therefore the per-ONT traffic graph has been intentionally removed to avoid misleading users.
+> Alternatives: TR-069 (if ONT CPE reports WAN stats) or SSH `display statistics ont-port` (extremely slow).
+
+---
+
 ## v4.1.0 — 2026-05-15 (Security Patch + Stability Release)
 
 ### Summary

@@ -2,6 +2,28 @@
 
 ---
 
+## Known Hardware Limitations
+
+### Per-ONT Traffic Bandwidth — Not Available
+**Symptom:** The ONT detail panel (Graphs tab) does not show a per-ONT Download/Upload speed graph.
+
+**Reason:** The Huawei MA5603T GPON OLT does not expose per-ONT byte counters via SNMP.
+The MIB table `hwGponOntOpticalInfoTable` (`.51.1.x`) provides only optical metrics (RX power, TX power, temperature).
+Per-ONT traffic counters are not available at the SNMP level on this hardware.
+
+**What is available:**
+- PON port aggregate traffic (sum of all ONTs on the port) — shown on the main dashboard heatmap
+- Per-ONT optical RX signal (dBm) and temperature — shown in the ONT detail Graphs tab
+
+**Why the graph was removed:**
+The previous "PON Port Traffic" widget in the ONT detail panel showed the aggregate traffic of all ONTs sharing the PON port (e.g., 119 ONTs combined). Displaying this as if it were the individual customer's bandwidth was misleading and has been removed.
+
+**Alternatives (not implemented):**
+- TR-069/GenieACS: some CPE ONT models report WAN traffic stats via TR-069. Not universal.
+- SSH `display statistics ont-port`: possible but requires ~300+ SSH commands per slot per poll — not feasible at scale.
+
+---
+
 ## API Issues
 
 ### API keeps restarting (BrokenPipeError)

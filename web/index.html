@@ -6853,70 +6853,18 @@ async function confirmProceed() {
   let _devGrRange      = '1h';
   let _devGrTimer      = null;
   let _devGrLoaded     = false;
-  // ── PON Traffic state ────────────────────────────────────────────────────
-  let _liveTrafficTimer  = null;
-  let _liveTrafficChart  = null;
-  let _liveTrafficRange  = '1h';
-
   function _destroyDevGraphs() {
-    if (_devChartRx)      { _devChartRx.destroy();      _devChartRx      = null; }
-    if (_devChartTemp)    { _devChartTemp.destroy();     _devChartTemp    = null; }
-    if (_liveTrafficChart){ _liveTrafficChart.destroy(); _liveTrafficChart= null; }
-    if (_devGrTimer)      { clearInterval(_devGrTimer);  _devGrTimer      = null; }
-    if (_liveTrafficTimer){ clearTimeout(_liveTrafficTimer);  _liveTrafficTimer = null; }
+    if (_devChartRx)  { _devChartRx.destroy();  _devChartRx  = null; }
+    if (_devChartTemp){ _devChartTemp.destroy(); _devChartTemp= null; }
+    if (_devGrTimer)  { clearInterval(_devGrTimer); _devGrTimer = null; }
     _devGrLoaded = false;
   }
 
   function renderDevGraphsTab() {
     const body = document.getElementById('devBody');
     const sn   = _devCurrent && _devCurrent.sn;
-    _liveTrafficRange = _devGrRange;
-    _liveRtPoints = [];
 
     body.innerHTML = `
-      <!-- ══ PON PORT TRAFFIC (SNMP) ══════════════════════════════════ -->
-      <div class="dev-section-head" style="margin-bottom:10px;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <div class="dev-section-title">📡 PON Port Traffic (SNMP)</div>
-          <span id="snmpTrafficBadge" style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,.12);color:#818cf8;border:1px solid rgba(99,102,241,.25);">⟳ loading…</span>
-        </div>
-        <div class="dev-section-sub" id="snmpTrafficSub" style="margin-top:3px;">PON port · SNMP poller · ~2 min resolution</div>
-      </div>
-
-      <!-- Current Mbps stat tiles -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-        <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↓ Download (RX)</div>
-          <div id="snmpRxVal" style="font-size:32px;font-weight:800;color:#4ade80;line-height:1;">—</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
-        </div>
-        <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↑ Upload (TX)</div>
-          <div id="snmpTxVal" style="font-size:32px;font-weight:800;color:#60a5fa;line-height:1;">—</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
-        </div>
-      </div>
-
-      <!-- ══ TRAFFIC HISTORY (InfluxDB pon_traffic) ══════════════════ -->
-      <div class="dev-section-head" style="margin-bottom:10px;">
-        <div class="dev-section-title">📊 Traffic History</div>
-        <div class="dev-section-sub" id="liveTrafficSub">PON port · SNMP · InfluxDB</div>
-      </div>
-      <div class="ont-graph-range" style="margin-bottom:12px;">
-        <button class="grng ${_devGrRange==='1h'?'active':''}"  data-r="1h"  onclick="switchDevGrRange(this)">1H</button>
-        <button class="grng ${_devGrRange==='6h'?'active':''}"  data-r="6h"  onclick="switchDevGrRange(this)">6H</button>
-        <button class="grng ${_devGrRange==='24h'?'active':''}" data-r="24h" onclick="switchDevGrRange(this)">24H</button>
-        <button class="grng ${_devGrRange==='7d'?'active':''}"  data-r="7d"  onclick="switchDevGrRange(this)">7D</button>
-      </div>
-      <div class="ont-chart-box" style="margin-bottom:20px;">
-        <h4 style="display:flex;align-items:center;justify-content:space-between;">
-          <span>RX / TX Mbps — history</span>
-          <span id="liveTrafficTs" style="font-size:10px;font-weight:400;color:var(--muted);"></span>
-        </h4>
-        <div id="liveTrafficNoData" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:12px;">No data in this range yet.</div>
-        <canvas id="liveTrafficChart" height="110"></canvas>
-      </div>
-
       <!-- ══ SIGNAL HISTORY ══════════════════════════════════════════ -->
       <div class="dev-section-head" style="margin-bottom:10px;">
         <div class="dev-section-title">📶 Signal History</div>
@@ -6935,121 +6883,17 @@ async function confirmProceed() {
       </div>`;
 
     if (sn) {
-      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
       _loadDevGraphs(sn, _devGrRange);
     }
   }
 
-  // switchDevGrRange also reloads history chart
   window.switchDevGrRange = function(btn) {
     document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    _devGrRange = _liveTrafficRange = btn.dataset.r;
+    _devGrRange = btn.dataset.r;
     _devGrLoaded = false;
     const sn = _devCurrent && _devCurrent.sn;
     if (sn) {
-      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
-      _loadDevGraphs(sn, _devGrRange);
-    }
-  };
-
-  async function _loadLiveTrafficSNMP(sn, range) {
-    if (_liveTrafficTimer) { clearTimeout(_liveTrafficTimer); _liveTrafficTimer = null; }
-    const subEl   = document.getElementById('liveTrafficSub');
-    const tsEl    = document.getElementById('liveTrafficTs');
-    const rxEl    = document.getElementById('snmpRxVal');
-    const txEl    = document.getElementById('snmpTxVal');
-    const badge   = document.getElementById('snmpTrafficBadge');
-    const noData  = document.getElementById('liveTrafficNoData');
-
-    const _setBadge = (text, color, bg) => {
-      if (!badge) return;
-      badge.textContent = text;
-      badge.style.color = color;
-      badge.style.borderColor = `${color}55`;
-      badge.style.background  = bg;
-    };
-    _setBadge('⟳ loading…', '#818cf8', 'rgba(99,102,241,.12)');
-
-    try {
-      const r = await fetch(
-        `${API}/ont/traffic?sn=${encodeURIComponent(sn)}&range=${range}`,
-        { headers: authHeaders() }
-      );
-      const d = await r.json();
-      if (!d.ok) throw new Error(d.error || 'api error');
-
-      // Update stat tiles and subtitle
-      if (rxEl)  rxEl.textContent  = d.rx_now != null ? d.rx_now.toFixed(2) : '—';
-      if (txEl)  txEl.textContent  = d.tx_now != null ? d.tx_now.toFixed(2) : '—';
-      const ontNote = d.ont_count ? ` · shared by ${d.ont_count} ONTs` : '';
-      if (subEl) subEl.textContent = `PON port ${d.fsp || ''}${ontNote} · SNMP · updated ${new Date().toLocaleTimeString()}`;
-      if (tsEl)  tsEl.textContent  = new Date().toLocaleTimeString();
-      _setBadge('● SNMP', '#4ade80', 'rgba(34,197,94,.12)');
-
-      const canvas = document.getElementById('liveTrafficChart');
-      if (!canvas) return;
-
-      if (!d.labels || !d.labels.length) {
-        if (noData)  noData.style.display  = '';
-        if (canvas)  canvas.style.display  = 'none';
-      } else {
-        if (noData)  noData.style.display  = 'none';
-        if (canvas)  canvas.style.display  = '';
-        const chartOpts = {
-          responsive: true, maintainAspectRatio: true,
-          animation: { duration: 400 },
-          plugins: {
-            legend: { display: true, position: 'top', labels: { color:'#7a8099', font:{ size:10 }, boxWidth:12, padding:12 } },
-            tooltip: { mode:'index', intersect:false,
-              callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} Mbps` }
-            }
-          },
-          scales: {
-            x: { ticks:{ color:'#7a8099', font:{ size:10 }, maxTicksLimit:10, maxRotation:0 }, grid:{ color:'rgba(255,255,255,.04)' } },
-            y: { min:0, ticks:{ color:'#7a8099', font:{ size:10 }, callback: v => v+' Mbps' }, grid:{ color:'rgba(255,255,255,.07)' } }
-          }
-        };
-        if (_liveTrafficChart) {
-          _liveTrafficChart.data.labels           = d.labels;
-          _liveTrafficChart.data.datasets[0].data = d.rx_mbps;
-          _liveTrafficChart.data.datasets[1].data = d.tx_mbps;
-          _liveTrafficChart.update();
-        } else {
-          _liveTrafficChart = new Chart(canvas, {
-            type: 'line',
-            data: {
-              labels: d.labels,
-              datasets: [
-                { label:'↓ RX Mbps', data:d.rx_mbps, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.10)', borderWidth:2, pointRadius:1, tension:0.35, fill:true },
-                { label:'↑ TX Mbps', data:d.tx_mbps, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.08)', borderWidth:2, pointRadius:1, tension:0.35, fill:true }
-              ]
-            },
-            options: chartOpts
-          });
-        }
-      }
-    } catch(e) {
-      const badge2 = document.getElementById('snmpTrafficBadge');
-      if (badge2) { badge2.textContent = '✕ error'; badge2.style.color = '#f87171'; badge2.style.borderColor = '#f8717155'; badge2.style.background = 'rgba(248,113,113,.08)'; }
-      if (subEl) subEl.textContent = `Error: ${e.message}`;
-      if (tsEl)  tsEl.textContent  = 'error';
-    }
-    // Auto-refresh every 120s (matches SNMP poller write interval)
-    _liveTrafficTimer = setTimeout(() => {
-      if (_devTab === 'graphs' && _devCurrent && _devCurrent.sn === sn)
-        _loadLiveTrafficSNMP(sn, _liveTrafficRange);
-    }, 120000);
-  }
-
-  function switchDevGrRange(btn) {
-    document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    _devGrRange = _liveTrafficRange = btn.dataset.r;
-    _devGrLoaded = false;
-    const sn = _devCurrent && _devCurrent.sn;
-    if (sn) {
-      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
       _loadDevGraphs(sn, _devGrRange);
     }
   }

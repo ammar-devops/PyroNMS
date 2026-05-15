@@ -30,7 +30,7 @@ from config.config import (
     SNMP_OID_TEMPLATES,
 )
 from workers.olt_helper import connect_olt, get_ont_list, get_optical, get_optical_port
-from workers.snmp_helper import snmp_ping, get_ont_metrics_by_index
+from workers.snmp_helper import snmp_ping, get_ont_metrics_by_index, snmp_get_optical_port
 
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -135,71 +135,73 @@ def poll_slot(slot, log):
                     except Exception as e:
                         log.warning(f"down_cause error: {e}")
 
-                # ── Phase 1: Batch optical collection ──────────────────────────────
-                # Enter 'interface gpon 0/{slot}' ONCE for all online ONTs on this
-                # port, instead of entering/quitting per-ONT (3× SSH commands each).
-                # Falls back to SNMP if OID templates are configured.
+                # ── Phase 2: SNMP Bulk optical — fastest possible method ───────────
+                # One snmpget call per chunk of ~40 ONTs (rx_power + temp together).
+                # Port with 115 ONTs → 3 UDP packets → ~1 second.
+                # Full OLT via SSH: 35-45 minutes. Via SNMP bulk: ~30 seconds total.
+                # SSH is kept as fallback for ONTs SNMP can't reach.
                 online_onts = [o for o in onts if o["state"] == "online"]
+                online_ids  = [o["ont_id"] for o in online_onts]
 
-                # SNMP-first: build per-ONT metrics map (only if OIDs configured)
-                snmp_metrics_map = {}
-                if snmp_enabled and snmp_ok and any(SNMP_OID_TEMPLATES.values()):
-                    for ont in online_onts:
-                        try:
-                            idx = _ont_index(slot, port_num, ont["ont_id"])
-                            m = get_ont_metrics_by_index(
-                                OLT_HOST, SNMP_READ_COMMUNITY, idx, SNMP_OID_TEMPLATES
-                            )
-                            if m:
-                                snmp_metrics_map[ont["ont_id"]] = m
-                        except Exception as e:
-                            log.warning(f"snmp metrics error ({pon}/{ont['ont_id']}): {e}")
+                # Primary: SNMP bulk optical (rx_power + temp per ONT, one call per chunk)
+                snmp_optical_map = {}
+                if snmp_enabled and snmp_ok and online_ids:
+                    try:
+                        snmp_optical_map = snmp_get_optical_port(
+                            OLT_HOST, SNMP_READ_COMMUNITY, slot, port_num, online_ids
+                        )
+                        if snmp_optical_map:
+                            log.debug(f"    SNMP optical: {len(snmp_optical_map)}/{len(online_ids)} ONTs")
+                    except Exception as e:
+                        log.warning(f"snmp_optical error {pon}: {e}")
 
-                # Determine which ONTs need SSH optical (those not covered by SNMP)
+                # SSH fallback: only for ONTs with no SNMP optical reading
                 need_ssh = [
                     o for o in online_onts
-                    if "rx_power" not in snmp_metrics_map.get(o["ont_id"], {})
-                    and "temp" not in snmp_metrics_map.get(o["ont_id"], {})
+                    if o["ont_id"] not in snmp_optical_map
                 ]
-
-                # Batch SSH optical: one interface entry for all remaining ONTs
                 ssh_optical_map = {}
                 if need_ssh:
+                    log.debug(f"    SSH optical fallback: {len(need_ssh)} ONTs")
                     ssh_optical_map = get_optical_port(
                         conn, slot, port_num, [o["ont_id"] for o in need_ssh]
                     )
 
+                # Merge: SNMP takes priority; SSH fills the gaps
+                optical_map = {**ssh_optical_map}
+                for ont_id, snmp_data in snmp_optical_map.items():
+                    optical_map[ont_id] = {
+                        "rx_power": snmp_data.get("rx_power"),
+                        "tx_power": None,
+                        "olt_rx":   None,
+                        "temp":     snmp_data.get("temp"),
+                    }
+
                 # Build optical InfluxDB points for every online ONT
                 for ont in online_onts:
-                    snmp_m = snmp_metrics_map.get(ont["ont_id"], {})
-                    if "rx_power" in snmp_m or "temp" in snmp_m:
-                        optical = {
-                            "rx_power": snmp_m.get("rx_power"),
-                            "tx_power": None,
-                            "olt_rx":   None,
-                            "temp":     snmp_m.get("temp"),
-                        }
-                    else:
-                        optical = ssh_optical_map.get(ont["ont_id"])
-
-                    if optical:
-                        op = (
-                            Point("ont_optical")
-                            .tag("olt", OLT_NAME)
-                            .tag("pon", pon)
-                            .tag("ont_id", str(ont["ont_id"]))
-                            .tag("sn", ont["sn"])
-                            .tag("description", ont["desc"])
-                        )
-                        for field, val in optical.items():
-                            if val is not None:
-                                op = op.field(field, val)
-                        op = op.time(now, "s")
-                        points.append(op)
+                    optical = optical_map.get(ont["ont_id"])
+                    if not optical:
+                        continue
+                    # Guard: skip Points that would have no fields (all-None optical)
+                    fields = {k: v for k, v in optical.items() if v is not None}
+                    if not fields:
+                        continue
+                    op = (
+                        Point("ont_optical")
+                        .tag("olt", OLT_NAME)
+                        .tag("pon", pon)
+                        .tag("ont_id", str(ont["ont_id"]))
+                        .tag("sn", ont["sn"])
+                        .tag("description", ont["desc"])
+                    )
+                    for field, val in fields.items():
+                        op = op.field(field, val)
+                    op = op.time(now, "s")
+                    points.append(op)
 
                 # ── Phase 2.2: WAN sampling (throttled by shard) ───────────────────
                 for ont in online_onts:
-                    snmp_m = snmp_metrics_map.get(ont["ont_id"], {})
+                    snmp_m = snmp_optical_map.get(ont["ont_id"], {})
                     try:
                         want_wan_probe = (ont["ont_id"] % WAN_CACHE_SHARDS) == shard
                         wan_ip = wan_status = wan_vlan = ""

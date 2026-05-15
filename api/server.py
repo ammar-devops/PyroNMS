@@ -304,11 +304,12 @@ from(bucket: "{INFLUX_BUCKET}")
 '''
 
     # Latest optical per ONT — only rx_power and temp fields
+    # exists r.sn excludes old series without sn tag (prevents CSV header mismatch)
     flux_optical = f'''
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: -48h)
   |> filter(fn: (r) => r._measurement == "ont_optical" and
-      (r._field == "rx_power" or r._field == "temp"))
+      (r._field == "rx_power" or r._field == "temp") and exists r.sn and r.sn != "")
   |> last()
   |> keep(columns: ["sn", "_field", "_value"])
 '''

@@ -943,45 +943,6 @@
 
         </div>
 
-        <!-- PON Traffic Heatmap -->
-        <div id="pon-heatmap-panel" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="font-size:14px;font-weight:700;color:var(--text);">PON Port Traffic <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px;">live · 30s refresh</span></div>
-            <div style="display:flex;align-items:center;gap:16px;">
-              <div style="font-size:12px;color:var(--muted);">
-                ↓ <span id="pon-total-rx" style="color:#4ade80;font-weight:600;">—</span> Mbps &nbsp;
-                ↑ <span id="pon-total-tx" style="color:#60a5fa;font-weight:600;">—</span> Mbps
-              </div>
-              <div style="font-size:11px;color:var(--muted);" id="pon-heatmap-ts">—</div>
-            </div>
-          </div>
-          <!-- legend -->
-          <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1e293b;border:1px solid #334155;"></span>Idle</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#14532d;"></span>&lt;100 Mbps</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#15803d;"></span>100–300</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ca8a04;"></span>300–600</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ea580c;"></span>600–900</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dc2626;"></span>&gt;900 Mbps</div>
-          </div>
-          <div style="overflow-x:auto;">
-            <table id="pon-heatmap-grid" style="width:100%;border-collapse:collapse;font-size:12px;">
-              <thead>
-                <tr style="border-bottom:1px solid var(--border);">
-                  <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">PON Port</th>
-                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">↓ RX Mbps</th>
-                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">↑ TX Mbps</th>
-                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Total Mbps</th>
-                  <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;width:40%;">Utilization</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">⟳ Loading PON traffic…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
         <!-- Recent Activity Section -->
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
@@ -1218,8 +1179,6 @@ function updateDashboard() {
 
   // Activity feed
   updateActivityFeed();
-  // PON heatmap
-  refreshPonHeatmap();
 }
 
 // Fetch unregistered count from server cache (fast — no SSH)
@@ -1274,126 +1233,6 @@ function updateActivityFeed() {
   });
   if (!html) html = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">✓ No critical alerts</div>';
   feed.innerHTML = html;
-}
-
-// ── PON Traffic Heatmap ───────────────────────────────────────────────────
-let _ponHeatTimer = null;
-const PON_REFRESH_MS = 30000; // 30 s live refresh
-
-function _ponColor(rx, tx) {
-  const t = (rx||0)+(tx||0);
-  if (t <= 0)  return { bg:'#1e293b', border:'#334155', text:'#94a3b8' };
-  if (t < 100) return { bg:'#14532d', border:'#166534', text:'#86efac' };
-  if (t < 300) return { bg:'#15803d', border:'#16a34a', text:'#bbf7d0' };
-  if (t < 600) return { bg:'#713f12', border:'#ca8a04', text:'#fde68a' };
-  if (t < 900) return { bg:'#7c2d12', border:'#ea580c', text:'#fed7aa' };
-  return              { bg:'#7f1d1d', border:'#dc2626', text:'#fca5a5' };
-}
-
-async function refreshPonHeatmap() {
-  clearTimeout(_ponHeatTimer);
-  const grid = document.getElementById('pon-heatmap-grid');
-  if (!grid) return;
-
-  // Show spinner in subtitle while fetching
-  const tsEl = document.getElementById('pon-heatmap-ts');
-  if (tsEl) tsEl.textContent = '⟳ updating…';
-
-  try {
-    const r = await fetch(`${API}/pon/traffic`, { headers: authHeaders() });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'api error');
-
-    const setEl = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
-    setEl('pon-total-rx', d.total_rx_mbps != null ? d.total_rx_mbps.toFixed(0) : '—');
-    setEl('pon-total-tx', d.total_tx_mbps != null ? d.total_tx_mbps.toFixed(0) : '—');
-    if (tsEl) tsEl.textContent = new Date().toLocaleTimeString();
-
-    // Sort by slot then port
-    const ports = (d.ports || []).slice().sort((a,b) => {
-      const [,as,ap] = (a.fsp||'0/0/0').split('/').map(Number);
-      const [,bs,bp] = (b.fsp||'0/0/0').split('/').map(Number);
-      return as !== bs ? as-bs : ap-bp;
-    });
-
-    const maxTotal = Math.max(1, ...ports.map(p => (p.rx_mbps||0)+(p.tx_mbps||0)));
-
-    // Group by slot
-    const slotMap = {};
-    ports.forEach(p => {
-      const slot = (p.fsp||'0/0/0').split('/')[1] || '?';
-      if (!slotMap[slot]) slotMap[slot] = [];
-      slotMap[slot].push(p);
-    });
-
-    let rows = '';
-    let rowIdx = 0;
-    Object.keys(slotMap).sort((a,b)=>Number(a)-Number(b)).forEach(slot => {
-      const slotPorts = slotMap[slot];
-      // Slot subtotals
-      const slotRx = slotPorts.reduce((s,p)=>s+(p.rx_mbps||0),0);
-      const slotTx = slotPorts.reduce((s,p)=>s+(p.tx_mbps||0),0);
-      rows += `<tr>
-        <td colspan="5" style="padding:6px 12px 4px;background:rgba(255,255,255,.05);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
-          <span style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.7px;">Slot ${slot}</span>
-          <span style="font-size:10px;color:var(--muted);margin-left:10px;">${slotPorts.length} ports</span>
-          <span style="font-size:10px;color:#4ade80;margin-left:14px;">↓ ${slotRx.toFixed(1)}</span>
-          <span style="font-size:10px;color:#60a5fa;margin-left:8px;">↑ ${slotTx.toFixed(1)} Mbps</span>
-        </td>
-      </tr>`;
-      slotPorts.forEach(p => {
-        const rx = p.rx_mbps||0, tx = p.tx_mbps||0, total = rx+tx;
-        const c = _ponColor(rx, tx);
-        const barPct = Math.min(100,(total/maxTotal)*100).toFixed(1);
-        const zebra = rowIdx++ % 2 === 0 ? 'background:rgba(255,255,255,.015);' : '';
-        rows += `<tr style="${zebra}border-bottom:1px solid rgba(255,255,255,.04);">
-          <td style="padding:8px 12px 8px 20px;font-weight:600;color:${c.text};white-space:nowrap;">
-            <span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${c.bg};border:1px solid ${c.border};margin-right:8px;vertical-align:middle;"></span>${p.fsp||'—'}
-          </td>
-          <td style="padding:8px 12px;text-align:right;color:#4ade80;font-variant-numeric:tabular-nums;font-size:12px;">${rx.toFixed(1)}</td>
-          <td style="padding:8px 12px;text-align:right;color:#60a5fa;font-variant-numeric:tabular-nums;font-size:12px;">${tx.toFixed(1)}</td>
-          <td style="padding:8px 12px;text-align:right;color:${c.text};font-weight:700;font-variant-numeric:tabular-nums;font-size:12px;">${total.toFixed(1)}</td>
-          <td style="padding:8px 12px;">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div style="flex:1;height:5px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;">
-                <div style="height:100%;width:${barPct}%;background:${c.border};border-radius:3px;transition:width .5s ease;"></div>
-              </div>
-              <span style="font-size:10px;color:var(--muted);min-width:36px;text-align:right;">${barPct}%</span>
-            </div>
-          </td>
-        </tr>`;
-      });
-    });
-
-    // Grand total footer
-    const totalRx = ports.reduce((s,p)=>s+(p.rx_mbps||0),0);
-    const totalTx = ports.reduce((s,p)=>s+(p.tx_mbps||0),0);
-    rows += `<tr style="border-top:2px solid var(--border);background:rgba(255,255,255,.05);">
-      <td style="padding:10px 12px;font-weight:700;color:var(--text);font-size:12px;">Total (${ports.length} ports)</td>
-      <td style="padding:10px 12px;text-align:right;color:#4ade80;font-weight:700;font-size:12px;">${totalRx.toFixed(1)}</td>
-      <td style="padding:10px 12px;text-align:right;color:#60a5fa;font-weight:700;font-size:12px;">${totalTx.toFixed(1)}</td>
-      <td style="padding:10px 12px;text-align:right;color:var(--text);font-weight:700;font-size:12px;">${(totalRx+totalTx).toFixed(1)}</td>
-      <td style="padding:10px 12px;color:var(--muted);font-size:11px;">Mbps</td>
-    </tr>`;
-
-    if (!ports.length) rows = '<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">No PON data yet — poller warming up</td></tr>';
-    const tbody = grid.querySelector('tbody');
-    if (tbody) tbody.innerHTML = rows; else grid.innerHTML = rows;
-
-  } catch(e) {
-    const grid2 = document.getElementById('pon-heatmap-grid');
-    const tb = grid2 && grid2.querySelector('tbody');
-    const errHtml = `<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">Unable to load PON traffic: ${e.message}</td></tr>`;
-    if (tb) tb.innerHTML = errHtml; else if (grid2) grid2.innerHTML = errHtml;
-    if (tsEl) tsEl.textContent = 'error';
-  }
-
-  // Live refresh every 30s while dashboard is active
-  _ponHeatTimer = setTimeout(() => {
-    const dash = document.getElementById('section-dashboard');
-    if (dash && dash.classList.contains('active')) refreshPonHeatmap();
-  }, PON_REFRESH_MS);
 }
 
 // ── Advanced Filter Bar ───────────────────────────────────────────────────

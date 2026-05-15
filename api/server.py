@@ -11,14 +11,15 @@ Endpoints:
 
 import json
 import os
+import re
+import sqlite3
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 sys.path.insert(0, "/opt/ont-monitor/api")
 import olt_helpers as olt
-import re
-import time
-import subprocess
-import sys
 sys.path.insert(0, '/opt/ont-monitor/auth')
 try:
     import auth_db
@@ -83,6 +84,144 @@ def parse_influx_csv(csv_text):
         row = dict(zip(headers, parts))
         rows.append(row)
     return rows
+
+
+# ─── MAC Vendor Cache ─────────────────────────────────────────────────────────
+
+MAC_VENDOR_DB = "/opt/ont-monitor/data/mac_vendor_cache.db"
+
+
+def _mac_db():
+    """Open (and auto-create) the MAC vendor SQLite cache."""
+    os.makedirs(os.path.dirname(MAC_VENDOR_DB), exist_ok=True)
+    con = sqlite3.connect(MAC_VENDOR_DB, check_same_thread=False)
+    con.execute("""CREATE TABLE IF NOT EXISTS sn_mac (
+        sn  TEXT PRIMARY KEY,
+        mac TEXT,
+        ts  INTEGER)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS mac_vendor (
+        oui          TEXT PRIMARY KEY,
+        vendor       TEXT,
+        last_checked INTEGER,
+        source       TEXT DEFAULT 'macvendors.com')""")
+    con.commit()
+    return con
+
+
+def normalize_mac(mac):
+    """Normalize MAC to 'AA:BB:CC:DD:EE:FF' or return None if invalid."""
+    if not mac or str(mac).strip() in ('', '-', 'None'):
+        return None
+    s = re.sub(r'[\s.\-:]', '', str(mac)).upper()
+    if len(s) != 12 or not re.match(r'^[0-9A-F]{12}$', s):
+        return None
+    return ':'.join(s[i:i+2] for i in range(0, 12, 2))
+
+
+def get_mac_vendor(mac):
+    """
+    Return vendor name for a MAC address.
+    Checks SQLite cache first; calls macvendors.com on miss.
+    Returns: vendor string | 'Unknown' | '--' | 'Lookup Pending'
+    """
+    mac = normalize_mac(mac)
+    if not mac:
+        return '--'
+    oui = mac[:8]   # e.g. "AA:BB:CC"
+    try:
+        con = _mac_db()
+        row = con.execute("SELECT vendor FROM mac_vendor WHERE oui=?", (oui,)).fetchone()
+        if row:
+            con.close()
+            return row[0]
+        # Cache miss — query macvendors.com
+        req = urllib.request.Request(
+            f"https://api.macvendors.com/{mac}",
+            headers={"User-Agent": "PyroNMS/4.4"})
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                vendor = r.read().decode().strip()
+                if not vendor or len(vendor) > 120:
+                    vendor = "Unknown"
+        except Exception:
+            con.close()
+            return "Lookup Pending"
+        if "not found" in vendor.lower() or vendor.startswith("{"):
+            vendor = "Unknown"
+        con.execute(
+            "INSERT OR REPLACE INTO mac_vendor(oui,vendor,last_checked,source) VALUES(?,?,?,?)",
+            (oui, vendor, int(time.time()), 'macvendors.com'))
+        con.commit()
+        con.close()
+        return vendor
+    except Exception as ex:
+        print(f"[MAC] vendor lookup error: {ex}")
+        return "Lookup Pending"
+
+
+def _prefetch_mac_vendors():
+    """
+    Background thread: bulk-fetch WAN MACs from GenieACS, populate sn_mac table,
+    then look up vendors for any new OUI prefixes (rate-limited: 1/second).
+    Runs once 10 seconds after server startup.
+    """
+    time.sleep(10)
+    try:
+        proj = ("_id,"
+                "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"
+                ".WANPPPConnection.1.MACAddress,"
+                "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"
+                ".WANIPConnection.1.MACAddress")
+        status, devices = genie_request("GET", f"/devices?projection={proj}")
+        if status != 200 or not isinstance(devices, list):
+            print(f"[MAC] prefetch: GenieACS returned {status}, skipping")
+            return
+        con = _mac_db()
+        new_ouis = []   # (oui, mac) pairs not yet in mac_vendor table
+        now = int(time.time())
+        for dev in devices:
+            raw_id = dev.get("_id", "")
+            if not raw_id:
+                continue
+            igd  = dev.get("InternetGatewayDevice", {})
+            wan1 = igd.get("WANDevice", {}).get("1", {})
+            wcd1 = wan1.get("WANConnectionDevice", {}).get("1", {})
+            ppp_mac = extract_val(wcd1.get("WANPPPConnection", {}).get("1", {}), "MACAddress")
+            ip_mac  = extract_val(wcd1.get("WANIPConnection",  {}).get("1", {}), "MACAddress")
+            raw_mac = ppp_mac if ppp_mac != "-" else ip_mac
+            mac = normalize_mac(raw_mac)
+            if not mac:
+                continue
+            oui = mac[:8]
+            # GenieACS _id format: "OUI-ProductClass-SN" (URL-encoded)
+            decoded = urllib.parse.unquote(raw_id)
+            parts   = decoded.split("-")
+            raw_sn  = parts[-1].upper() if len(parts) > 1 else decoded.upper()
+            # Normalize SN to match /onts format (HWTCFF9464B0, not 48575443FF9464B0)
+            norm_sn = normalize_sn(raw_sn) if len(raw_sn) == 16 else raw_sn
+            # Store both normalized and raw so lookups work regardless of format
+            for store_sn in {norm_sn, raw_sn}:
+                con.execute(
+                    "INSERT OR REPLACE INTO sn_mac(sn,mac,ts) VALUES(?,?,?)",
+                    (store_sn, mac, now))
+            # Track OUIs that need vendor lookup
+            cached = con.execute(
+                "SELECT 1 FROM mac_vendor WHERE oui=?", (oui,)).fetchone()
+            if not cached:
+                new_ouis.append((oui, mac))
+        con.commit()
+        con.close()
+        print(f"[MAC] prefetch: {len(devices)} devices, {len(new_ouis)} new OUIs to look up")
+        # Rate-limited vendor lookups — 1 per second to be polite
+        for oui, mac in new_ouis:
+            try:
+                get_mac_vendor(mac)
+                time.sleep(1)
+            except Exception:
+                pass
+        print("[MAC] prefetch complete")
+    except Exception as ex:
+        print(f"[MAC] prefetch error: {ex}")
 
 
 def influx_write(line_protocol: str):
@@ -320,7 +459,25 @@ from(bucket: "{INFLUX_BUCKET}")
             "wan_status":  wan.get("wan_status", ""),
             "wan_vlan":    wan.get("wan_vlan", ""),
             "device_type": device_type,
+            "vendor":      None,   # enriched below from MAC cache
         })
+
+    # Enrich vendor from cache — cache-only, no live calls (keeps /onts fast)
+    try:
+        _mcon = _mac_db()
+        for ont in onts:
+            _sn = (ont.get("sn") or "").upper()
+            srow = _mcon.execute(
+                "SELECT mac FROM sn_mac WHERE sn=?", (_sn,)).fetchone()
+            if srow and srow[0]:
+                oui  = srow[0][:8]
+                vrow = _mcon.execute(
+                    "SELECT vendor FROM mac_vendor WHERE oui=?", (oui,)).fetchone()
+                ont["vendor"] = vrow[0] if vrow else None
+        _mcon.close()
+    except Exception as _mex:
+        print(f"[MAC] enrichment error: {_mex}")
+
     return onts
 
 
@@ -1744,6 +1901,17 @@ from(bucket: "{INFLUX_BUCKET}")
             health["poller"] = {"service_status": p_status, "active": p_status == "active"}
             return self.send_json(200, {"ok": True, "workers": health, "ts": int(time.time())})
 
+        # ── GET /mac/vendor?mac=<mac> ──────────────────────────────────────────
+        elif parsed.path == "/mac/vendor":
+            user = require_auth(self)
+            if not user: return
+            raw_mac = params.get("mac", [""])[0].strip()
+            vendor  = get_mac_vendor(raw_mac)
+            return self.send_json(200, {
+                "mac":    normalize_mac(raw_mac) or raw_mac,
+                "vendor": vendor
+            })
+
         # ── GET /ont/traffic/live?sn=XXXX ─────────────────────────────────────
         # Forces a TR-069 connection_request → CPE responds in ~8s with fresh
         # byte counters → calculates Mbps delta → writes point to InfluxDB
@@ -2575,6 +2743,8 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", API_PORT), Handler)
     print(f"[API] ONT Monitor API running on port {API_PORT}")
     print(f"[API] GenieACS NBI: {GENIEACS_NBI}")
+    # Start background MAC vendor prefetch (runs 10s after startup)
+    threading.Thread(target=_prefetch_mac_vendors, daemon=True, name="mac-prefetch").start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

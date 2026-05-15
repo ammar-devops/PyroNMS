@@ -1087,6 +1087,7 @@
         <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-sn">Serial Number</th>
         <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('vlan')" id="fth-vlan">VLAN</th>
         <th style="width:70px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('type')" id="fth-type" title="Device type — ONT (router) vs ONU (bridge), from OLT">Type</th>
+        <th style="width:110px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-vendor" title="CPE vendor from WAN MAC address (via macvendors.com)">Vendor</th>
         <th style="width:120px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" title="Open ONT router web UI (resolved via OLT, bypasses GenieACS)">Open Router</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
       </tr>
@@ -1108,6 +1109,7 @@
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
         <th style="width:60px" onclick="sortTable('vlan')" id="th-vlan" style="cursor:pointer">VLAN</th>
         <th style="width:70px" onclick="sortTable('type')" id="th-type" title="Device type">Type</th>
+        <th style="width:110px" id="th-vendor" title="CPE vendor from WAN MAC">Vendor</th>
         <th style="width:120px" title="Open ONT router web UI">Open Router</th>
         <th style="width:90px">Refresh</th>
       </tr>
@@ -3283,6 +3285,7 @@ function renderTable() {
         <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
         <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
         <td style="text-align:center;">${deviceTypePill(o.device_type)}</td>
+        <td style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;" title="${escAttr(o.vendor||'')}">${escHtml(o.vendor||'--')}</td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
           <button class="btn-row-open" onclick="openRouter('${escAttr(o.sn)}','${escAttr(o.pon || '')}','${escAttr(o.ont_id || '')}','${escAttr(o.device_type || '')}',this)" title="Open router web UI (WAN IP via GenieACS TR-069)">
             <span class="open-icon">🛜</span> Open Router
@@ -3307,10 +3310,10 @@ function renderTable() {
     if (isMobileView() && wrap) wrap.scrollLeft = 0;
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
     }
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
   }
 }
 

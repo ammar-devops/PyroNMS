@@ -106,6 +106,36 @@ _genie_prev_readings: dict = {}
 _unreg_cache: dict = {"onts": [], "count": 0, "ts": 0, "scanned": False}
 
 
+def normalize_sn(sn: str) -> str:
+    """
+    Normalize Huawei ONT serial number to canonical vendor form (e.g. HWTC5A819F9D).
+
+    Two formats exist in InfluxDB — written by different pollers for the same device:
+      Full 16-char hex  (poller.py SNMP path):  485754435A819F9D
+      Vendor short form (slot_worker SSH path):  HWTC5A819F9D
+
+    Conversion: first 8 hex chars of the full form are the ASCII vendor prefix.
+      48 57 54 43  →  "HWTC"
+      5A 81 9F 9D  →  suffix "5A819F9D"
+      Result: "HWTC5A819F9D"
+
+    Other vendor examples:
+      43494F5408939108  →  CIOT08939108
+      434D444310CE300E  →  CMDD10CE300E
+
+    Short form and unrecognised SNs pass through unchanged.
+    """
+    sn = (sn or "").strip().upper()
+    if len(sn) == 16 and all(c in "0123456789ABCDEF" for c in sn):
+        try:
+            vendor = bytes.fromhex(sn[:8]).decode("ascii")
+            if vendor.isalpha():                  # only convert if prefix is pure letters
+                return vendor + sn[8:]
+        except Exception:
+            pass
+    return sn
+
+
 def get_all_onts():
     """
     Read latest ONT status + optical from InfluxDB.
@@ -148,9 +178,11 @@ from(bucket: "{INFLUX_BUCKET}")
     wan_rows     = influx_query(flux_wan)
 
     # Index optical by sn — collect all fields
+    # normalize_sn() ensures both full-hex (poller.py) and short vendor (SSH) SNs
+    # map to the same canonical key, preventing duplicate lookups.
     optical = {}
     for r in optical_rows:
-        sn    = r.get("sn", "").strip()
+        sn    = normalize_sn(r.get("sn", "").strip())
         field = r.get("_field", "").strip()
         val   = r.get("_value", "").strip()
         if not sn:
@@ -159,10 +191,12 @@ from(bucket: "{INFLUX_BUCKET}")
             optical[sn] = {}
         optical[sn][field] = val
 
-    # Index status rows by sn — collect online + down_cause
+    # Index status rows by sn — collect online + down_cause + vlan.
+    # normalize_sn() deduplicates: both 485754435A819F9D and HWTC5A819F9D
+    # become HWTC5A819F9D, so the same device is never counted twice.
     status_map = {}
     for r in status_rows:
-        sn    = r.get("sn",          "").strip()
+        sn    = normalize_sn(r.get("sn",          "").strip())
         pon   = r.get("pon",         "").strip()
         name  = r.get("description", "").strip()
         field = r.get("_field",      "online").strip()
@@ -172,18 +206,25 @@ from(bucket: "{INFLUX_BUCKET}")
         ont_id = r.get("ont_id", "").strip()
         if sn not in status_map:
             status_map[sn] = {"pon": pon, "ont_id": ont_id, "name": name, "online": "0", "down_cause": "", "vlan": ""}
-        elif ont_id and not status_map[sn].get("ont_id"):
-            status_map[sn]["ont_id"] = ont_id
+        else:
+            # Merge: prefer non-empty values so the richer source wins
+            if pon   and not status_map[sn]["pon"]:    status_map[sn]["pon"]    = pon
+            if ont_id and not status_map[sn]["ont_id"]: status_map[sn]["ont_id"] = ont_id
+            if name  and not status_map[sn]["name"]:   status_map[sn]["name"]   = name
         if field == "online":
-            status_map[sn]["online"] = val
+            # Prefer "1" (online) over "0" — if either source sees the device online, it is online
+            if val == "1" or status_map[sn]["online"] != "1":
+                status_map[sn]["online"] = val
         elif field == "down_cause":
-            status_map[sn]["down_cause"] = val
+            if val and not status_map[sn]["down_cause"]:
+                status_map[sn]["down_cause"] = val
         elif field == "vlan":
-            status_map[sn]["vlan"] = val
+            if val and not status_map[sn]["vlan"]:
+                status_map[sn]["vlan"] = val
 
     wan_map = {}
     for r in wan_rows:
-        sn = r.get("sn", "").strip()
+        sn = normalize_sn(r.get("sn", "").strip())
         field = r.get("_field", "").strip()
         val = r.get("_value", "").strip()
         if not sn:
@@ -254,11 +295,11 @@ from(bucket: "{INFLUX_BUCKET}")
 
 def get_ont_cached(sn):
     """Fast cached ONT row from Influx-backed table payload."""
-    sn = (sn or "").strip().upper()
+    sn = normalize_sn((sn or "").strip().upper())
     if not sn:
         return None
     for row in get_all_onts():
-        if (row.get("sn", "").strip().upper() == sn):
+        if normalize_sn(row.get("sn", "").strip().upper()) == sn:
             return row
     return None
 

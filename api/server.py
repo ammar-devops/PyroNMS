@@ -146,13 +146,22 @@ def get_all_onts():
                   fields: rx_power (or rx_signal), temperature (or temp)
     Returns list of dicts: {pon, name, sn, status, rx, temp}
     """
-    # Get latest 'state' field per ONT — one row per ONT with all tags
+    # Get latest 'online' and 'vlan' per ONT — 48h window
+    # exists r.sn excludes old poller rows (pre-v4.3.0) that lack the sn tag
     flux_status = f'''
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: -48h)
-  |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "down_cause" or r._field == "vlan"))
+  |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "vlan") and exists r.sn and r.sn != "")
   |> last()
   |> keep(columns: ["sn", "pon", "ont_id", "description", "_field", "_value"])
+'''
+    # down_cause only from slot_worker — use 7-day window to catch long-offline ONTs
+    flux_down_cause = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -168h)
+  |> filter(fn: (r) => r._measurement == "ont_status" and r._field == "down_cause" and exists r.sn and r.sn != "")
+  |> last()
+  |> keep(columns: ["sn", "_field", "_value"])
 '''
 
     # Latest optical per ONT — only rx_power and temp fields
@@ -173,9 +182,10 @@ from(bucket: "{INFLUX_BUCKET}")
   |> keep(columns: ["sn", "_field", "_value"])
 '''
 
-    status_rows  = influx_query(flux_status)
-    optical_rows = influx_query(flux_optical)
-    wan_rows     = influx_query(flux_wan)
+    status_rows     = influx_query(flux_status)
+    down_cause_rows = influx_query(flux_down_cause)
+    optical_rows    = influx_query(flux_optical)
+    wan_rows        = influx_query(flux_wan)
 
     # Index optical by sn — collect all fields
     # normalize_sn() ensures both full-hex (poller.py) and short vendor (SSH) SNs
@@ -205,22 +215,41 @@ from(bucket: "{INFLUX_BUCKET}")
             continue
         ont_id = r.get("ont_id", "").strip()
         if sn not in status_map:
-            status_map[sn] = {"pon": pon, "ont_id": ont_id, "name": name, "online": "0", "down_cause": "", "vlan": ""}
+            # Use None sentinel for online so we can distinguish "not yet set" from "0"
+            status_map[sn] = {"pon": pon, "ont_id": ont_id, "name": name, "online": None, "down_cause": "", "vlan": ""}
         else:
             # Merge: prefer non-empty values so the richer source wins
-            if pon   and not status_map[sn]["pon"]:    status_map[sn]["pon"]    = pon
+            if pon    and not status_map[sn]["pon"]:    status_map[sn]["pon"]    = pon
             if ont_id and not status_map[sn]["ont_id"]: status_map[sn]["ont_id"] = ont_id
-            if name  and not status_map[sn]["name"]:   status_map[sn]["name"]   = name
+            if name   and not status_map[sn]["name"]:   status_map[sn]["name"]   = name
         if field == "online":
-            # Prefer "1" (online) over "0" — if either source sees the device online, it is online
-            if val == "1" or status_map[sn]["online"] != "1":
-                status_map[sn]["online"] = val
-        elif field == "down_cause":
-            if val and not status_map[sn]["down_cause"]:
-                status_map[sn]["down_cause"] = val
+            # Prefer offline ("0") over online ("1"):
+            # poller writes online=1 for ALL registered ONTs (including truly offline ones)
+            # slot_worker writes the correct online=0 for offline ONTs.
+            # Once any source marks a device offline (0), it stays offline.
+            cur = status_map[sn]["online"]
+            if cur is None:
+                status_map[sn]["online"] = val          # first write — accept any
+            elif val == "0":
+                status_map[sn]["online"] = "0"          # offline always wins
+            # else: cur is already "0" or val is "1" — leave as-is
         elif field == "vlan":
             if val and not status_map[sn]["vlan"]:
                 status_map[sn]["vlan"] = val
+
+    # Merge down_cause rows (7-day window, separate query)
+    for r in down_cause_rows:
+        sn  = normalize_sn(r.get("sn", "").strip())
+        val = r.get("_value", "").strip()
+        if not sn or not val:
+            continue
+        if sn in status_map and not status_map[sn]["down_cause"]:
+            status_map[sn]["down_cause"] = val
+
+    # Resolve None sentinel → "0" (treat unknown as offline to be safe)
+    for s in status_map.values():
+        if s["online"] is None:
+            s["online"] = "0"
 
     wan_map = {}
     for r in wan_rows:
@@ -248,9 +277,11 @@ from(bucket: "{INFLUX_BUCKET}")
         cause = s.get("down_cause", "")
         if is_online:
             detail_status = "online"
-        elif "dying" in cause or "gasp" in cause:
+        elif "dying" in cause or "gasp" in cause or "power" in cause:
+            # dying-gasp, power-off → power failure (battery/power event)
             detail_status = "power-failure"
-        elif "los" in cause or "lob" in cause or "loss" in cause:
+        elif "los" in cause or "lob" in cause or "loss" in cause or "lof" in cause or "fiber" in cause:
+            # losi, lobi, lofi, los, loss, fiber-cut → fiber issue
             detail_status = "fiber-issue"
         else:
             detail_status = "offline"

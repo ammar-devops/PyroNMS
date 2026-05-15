@@ -2,6 +2,48 @@
 
 ---
 
+## v4.3.0 — 2026-05-15 (Worker Optimization + OID Fix)
+
+### Summary
+Fixed slot 5 stagger bug (worker never polled after restarts). Reduced cron SSH load 5×.
+Formalized poller.py under systemd supervision. Fixed wrong temperature OID in poller.py.
+Added `/workers/health` API endpoint. Added worker + SNMP documentation.
+
+### Changes
+
+#### Bug Fixes
+- **Slot 5 stagger bug** — `time.sleep(1350)` ran on every systemd restart, causing slot 5 to never poll after any restart. Fixed using `/tmp/slot{N}_stagger_done` flag file: stagger applies only on first boot, subsequent restarts skip it immediately
+- **poller.py temperature OID** — `OID_OPT_TEMP` was `.51.1.6` (OLT-side RX power, ÷100 → ~67°C impossible values). Fixed to `.51.1.1` (direct integer °C, no division). Field names corrected: `rx_power_dbm`→`rx_power`, `temperature_c`→`temp` (matches slot_worker schema)
+- **poller.py tag alignment** — `ont_status` now writes `sn`, `pon`, `description` tags and uses OLT name (not IP) for `olt` tag, making data compatible with API queries
+
+#### Infrastructure
+- **pyronms-poller.service** — poller.py was running as an unsupervised orphan process. Now managed by systemd with `Restart=always`, logging to journald
+- **Cron interval** — `collect_olt_stats.py` was running every minute (60 SSH sessions/hour). Changed to `*/5 * * * *` (12 SSH sessions/hour — **5× reduction**)
+
+#### New Features
+- **`GET /workers/health`** — new authenticated API endpoint returning systemd status of all slot workers and poller service
+
+#### Documentation
+- `docs/workers.md` — complete worker architecture reference
+- `docs/snmp.md` — validated OID map, ifIndex formula, polling architecture notes
+
+### SSH Load Reduction
+
+| Source | Before | After |
+|--------|--------|-------|
+| `collect_olt_stats.py` cron | 60/hour | 12/hour |
+| Slot 5 (stagger bug) | 0 polls/restart | Normal |
+
+### Files Changed
+- `workers/slot_worker.py` — stagger flag file fix, `import os`
+- `api/server.py` — `/workers/health` endpoint
+- `poller/poller.py` — OID fix, field names, tag alignment (new file in repo)
+- VM crontab — `*/5 * * * *`
+- `/etc/systemd/system/pyronms-poller.service` — new (VM only)
+- `docs/workers.md`, `docs/snmp.md` — new
+
+---
+
 ## v4.2.0 — 2026-05-15 (SNMP Bulk Optical + UI Cleanup)
 
 ### Summary

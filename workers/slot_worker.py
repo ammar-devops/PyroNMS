@@ -6,6 +6,7 @@ Phase 1:
 - SSH fallback for compatibility and data continuity
 """
 
+import os
 import sys
 import time
 import logging
@@ -273,14 +274,19 @@ def main():
     log = get_logger(slot)
 
     log.info(f"=== Slot {slot} Worker Started ===")
-    # Stagger proportional to POLL_INTERVAL so workers don't all hit OLT at once.
-    # With POLL_INTERVAL=1800, each slot is offset by 450s (~7.5 min).
-    _stagger_step = max(60, POLL_INTERVAL // 4)
-    _STAGGER = {1: 0, 2: _stagger_step, 4: _stagger_step * 2, 5: _stagger_step * 3}
-    _delay = _STAGGER.get(slot, 0)
-    if _delay > 0:
-        log.info(f"Stagger delay: sleeping {_delay}s before first poll...")
-        time.sleep(_delay)
+    # Stagger only on first boot (not on systemd restarts after crash/update).
+    # /tmp is cleared on reboot so reboots always get the stagger; restarts skip it.
+    _flag = f"/tmp/slot{slot}_stagger_done"
+    if not os.path.exists(_flag):
+        _stagger_step = max(60, POLL_INTERVAL // 4)
+        _STAGGER = {1: 0, 2: _stagger_step, 4: _stagger_step * 2, 5: _stagger_step * 3}
+        _delay = _STAGGER.get(slot, 0)
+        if _delay > 0:
+            log.info(f"Stagger delay: sleeping {_delay}s before first poll...")
+            time.sleep(_delay)
+        open(_flag, 'w').close()
+    else:
+        log.info(f"Stagger skipped (restart detected, flag: {_flag})")
 
     while True:
         try:

@@ -1651,6 +1651,27 @@ from(bucket: "{INFLUX_BUCKET}")
         elif parsed.path == "/health":
             return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})
 
+        # ── GET /workers/health ────────────────────────────────────────────────
+        elif parsed.path == "/workers/health":
+            user = require_auth(self)
+            if not user: return
+            import subprocess
+            health = {}
+            for slot in [1, 2, 4, 5]:
+                r = subprocess.run(
+                    ["systemctl", "is-active", f"ont-worker@{slot}"],
+                    capture_output=True, text=True
+                )
+                status = r.stdout.strip()
+                health[f"slot{slot}"] = {"service_status": status, "active": status == "active"}
+            r2 = subprocess.run(
+                ["systemctl", "is-active", "pyronms-poller"],
+                capture_output=True, text=True
+            )
+            p_status = r2.stdout.strip()
+            health["poller"] = {"service_status": p_status, "active": p_status == "active"}
+            return self.send_json(200, {"ok": True, "workers": health, "ts": int(time.time())})
+
         # ── GET /ont/traffic/live?sn=XXXX ─────────────────────────────────────
         # Forces a TR-069 connection_request → CPE responds in ~8s with fresh
         # byte counters → calculates Mbps delta → writes point to InfluxDB

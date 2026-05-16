@@ -722,12 +722,22 @@ def find_device_id(sn):
 
     # If 16 hex chars (8 bytes), try ASCII-decode of the first 4 bytes
     # to handle 3rd-party ONTs where vendor prefix is sent as ASCII
+    # e.g. OLT gives '58504F4E05845A00' → GenieACS stores 'XPON05845A00'
     if len(sn) == 16 and re.match(r'^[0-9A-Fa-f]{16}$', sn):
         try:
             vendor = bytes.fromhex(sn[:8]).decode('ascii')
             if vendor.isalnum() and vendor.isprintable():
                 candidates.add((vendor + sn[8:]).upper())
         except (ValueError, UnicodeDecodeError):
+            pass
+
+    # If 12-char Huawei format (e.g. 'HWTCFF9464B0'), also try 16-hex form
+    # GenieACS stores the SN as full hex: HWTC→48575443, so HWTCFF9464B0→48575443FF9464B0
+    if len(sn) == 12 and re.match(r'^[A-Za-z]{4}[0-9A-Fa-f]{8}$', sn):
+        try:
+            hex16 = sn[:4].encode('ascii').hex().upper() + sn[4:].upper()
+            candidates.add(hex16)
+        except Exception:
             pass
 
     # Fetch all device IDs
@@ -1901,8 +1911,24 @@ from(bucket: "{INFLUX_BUCKET}")
                 return self.send_json(404, {"error": f"Device {sn} not in GenieACS and no OLTs configured"})
             o = olts[0]
             try:
-                ssh_data = olt.get_ont_full_info(o["ip"], o["username"], o["password"], sn,
-                                                  snmp_community=o.get("snmp_community"))
+                import threading as _thr
+                _ssh_result = [None]
+                _ssh_exc    = [None]
+                def _ssh_worker():
+                    try:
+                        _ssh_result[0] = olt.get_ont_full_info(
+                            o["ip"], o["username"], o["password"], sn,
+                            snmp_community=o.get("snmp_community"))
+                    except Exception as _e:
+                        _ssh_exc[0] = _e
+                _t = _thr.Thread(target=_ssh_worker, daemon=True)
+                _t.start()
+                _t.join(timeout=8)   # 8-second hard limit — fail fast if OLT is busy
+                if _t.is_alive():
+                    return self.send_json(503, {"error": "OLT SSH timeout — too many concurrent sessions, try again shortly"})
+                if _ssh_exc[0]:
+                    raise _ssh_exc[0]
+                ssh_data = _ssh_result[0] or {}
             except Exception as e:
                 return self.send_json(500, {"error": f"OLT SSH error: {e}"})
 

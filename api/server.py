@@ -11,15 +11,19 @@ Endpoints:
 
 import json
 import os
+import re
+import sqlite3
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 sys.path.insert(0, "/opt/ont-monitor/api")
 import olt_helpers as olt
-import re
-import time
-import subprocess
-import sys
 sys.path.insert(0, '/opt/ont-monitor/auth')
+# MikroTik module path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "workers"))
+sys.path.insert(0, "/root/PyroNMS-repo/workers")
 try:
     import auth_db
     auth_db.init_db()
@@ -85,6 +89,225 @@ def parse_influx_csv(csv_text):
     return rows
 
 
+# ─── MAC Vendor Cache ─────────────────────────────────────────────────────────
+
+MAC_VENDOR_DB = "/opt/ont-monitor/data/mac_vendor_cache.db"
+
+
+def _mac_db():
+    """Open (and auto-create) the MAC vendor SQLite cache."""
+    os.makedirs(os.path.dirname(MAC_VENDOR_DB), exist_ok=True)
+    con = sqlite3.connect(MAC_VENDOR_DB, check_same_thread=False)
+    con.execute("""CREATE TABLE IF NOT EXISTS sn_mac (
+        sn  TEXT PRIMARY KEY,
+        mac TEXT,
+        ts  INTEGER)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS mac_vendor (
+        oui          TEXT PRIMARY KEY,
+        vendor       TEXT,
+        last_checked INTEGER,
+        source       TEXT DEFAULT 'macvendors.com')""")
+    con.commit()
+    return con
+
+
+# ── MikroTik connection test helper ──────────────────────────────────────────
+
+def _test_mikrotik_device(device: dict) -> dict:
+    """
+    Run a quick connectivity test for a MikroTik device.
+    Returns {snmp_ok, api_ok, version, hostname, board, error}.
+    Does NOT require pyronms-mikrotik.service to be running.
+    """
+    import subprocess as _sp
+    result = {
+        "snmp_ok": False, "api_ok": False,
+        "version": None, "hostname": None, "board": None, "error": None
+    }
+    host      = device.get("ip", "")
+    community = device.get("snmp_community", "public")
+    username  = device.get("username", "admin")
+    password  = device.get("password", "")
+    api_port  = int(device.get("api_port", 8728))
+
+    # SNMP test — snmpget sysDescr
+    try:
+        r = _sp.run(
+            ["snmpget", "-v2c", f"-c{community}", "-Oqv", "-t3", "-r1",
+             host, "1.3.6.1.2.1.1.1.0"],
+            capture_output=True, text=True, timeout=6
+        )
+        out = r.stdout.strip()
+        result["snmp_ok"] = bool(out) and "RouterOS" in out
+    except Exception as e:
+        result["error"] = f"SNMP: {e}"
+
+    # RouterOS API test — /system/resource/print
+    if device.get("api_enabled") and password:
+        try:
+            import librouteros as _lr
+            api = _lr.connect(host, username, password, port=api_port, timeout=8)
+            res_list = list(api("/system/resource/print"))
+            id_list  = list(api("/system/identity/print"))
+            api.close()
+            if res_list:
+                r = res_list[0]
+                result["api_ok"]  = True
+                result["version"] = r.get("version", "")
+                result["board"]   = r.get("board-name", "")
+            if id_list:
+                result["hostname"] = id_list[0].get("name", "")
+        except Exception as e:
+            result["error"] = (result.get("error") or "") + f" API: {e}"
+
+    return result
+
+
+def normalize_mac(mac):
+    """Normalize MAC to 'AA:BB:CC:DD:EE:FF' or return None if invalid."""
+    if not mac or str(mac).strip() in ('', '-', 'None'):
+        return None
+    s = re.sub(r'[\s.\-:]', '', str(mac)).upper()
+    if len(s) != 12 or not re.match(r'^[0-9A-F]{12}$', s):
+        return None
+    return ':'.join(s[i:i+2] for i in range(0, 12, 2))
+
+
+def get_mac_vendor(mac):
+    """
+    Return vendor name for a MAC address.
+    Checks SQLite cache first; calls macvendors.com on miss.
+    Returns: vendor string | 'Unknown' | '--' | 'Lookup Pending'
+    """
+    mac = normalize_mac(mac)
+    if not mac:
+        return '--'
+    oui = mac[:8]   # e.g. "AA:BB:CC"
+    try:
+        con = _mac_db()
+        row = con.execute("SELECT vendor FROM mac_vendor WHERE oui=?", (oui,)).fetchone()
+        if row:
+            con.close()
+            return row[0]
+        # Cache miss — query macvendors.com
+        req = urllib.request.Request(
+            f"https://api.macvendors.com/{mac}",
+            headers={"User-Agent": "PyroNMS/4.4"})
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                vendor = r.read().decode().strip()
+                if not vendor or len(vendor) > 120:
+                    vendor = "Unknown"
+        except Exception:
+            con.close()
+            return "Lookup Pending"
+        if "not found" in vendor.lower() or vendor.startswith("{"):
+            vendor = "Unknown"
+        con.execute(
+            "INSERT OR REPLACE INTO mac_vendor(oui,vendor,last_checked,source) VALUES(?,?,?,?)",
+            (oui, vendor, int(time.time()), 'macvendors.com'))
+        con.commit()
+        con.close()
+        return vendor
+    except Exception as ex:
+        print(f"[MAC] vendor lookup error: {ex}")
+        return "Lookup Pending"
+
+
+def _prefetch_mac_vendors():
+    """
+    Background thread: bulk-fetch WAN MACs from GenieACS, populate sn_mac table,
+    then look up vendors for any new OUI prefixes (rate-limited: 1/second).
+    Runs once 10 seconds after server startup.
+    """
+    time.sleep(10)
+    try:
+        proj = ("_id,"
+                "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"
+                ".WANPPPConnection.1.MACAddress,"
+                "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"
+                ".WANIPConnection.1.MACAddress")
+        status, devices = genie_request("GET", f"/devices?projection={proj}")
+        if status != 200 or not isinstance(devices, list):
+            print(f"[MAC] prefetch: GenieACS returned {status}, skipping")
+            return
+        con = _mac_db()
+        new_ouis = []   # (oui, mac) pairs not yet in mac_vendor table
+        now = int(time.time())
+        for dev in devices:
+            raw_id = dev.get("_id", "")
+            if not raw_id:
+                continue
+            igd  = dev.get("InternetGatewayDevice", {})
+            wan1 = igd.get("WANDevice", {}).get("1", {})
+            wcd1 = wan1.get("WANConnectionDevice", {}).get("1", {})
+            ppp_mac = extract_val(wcd1.get("WANPPPConnection", {}).get("1", {}), "MACAddress")
+            ip_mac  = extract_val(wcd1.get("WANIPConnection",  {}).get("1", {}), "MACAddress")
+            raw_mac = ppp_mac if ppp_mac != "-" else ip_mac
+            mac = normalize_mac(raw_mac)
+            if not mac:
+                continue
+            oui = mac[:8]
+            # GenieACS _id format: "OUI-ProductClass-SN" (URL-encoded)
+            decoded = urllib.parse.unquote(raw_id)
+            parts   = decoded.split("-")
+            raw_sn  = parts[-1].upper() if len(parts) > 1 else decoded.upper()
+            # Normalize SN to match /onts format (HWTCFF9464B0, not 48575443FF9464B0)
+            norm_sn = normalize_sn(raw_sn) if len(raw_sn) == 16 else raw_sn
+            # Store both normalized and raw so lookups work regardless of format
+            for store_sn in {norm_sn, raw_sn}:
+                con.execute(
+                    "INSERT OR REPLACE INTO sn_mac(sn,mac,ts) VALUES(?,?,?)",
+                    (store_sn, mac, now))
+            # Track OUIs that need vendor lookup
+            cached = con.execute(
+                "SELECT 1 FROM mac_vendor WHERE oui=?", (oui,)).fetchone()
+            if not cached:
+                new_ouis.append((oui, mac))
+        con.commit()
+        con.close()
+        print(f"[MAC] prefetch: {len(devices)} devices, {len(new_ouis)} new OUIs to look up")
+        # Rate-limited vendor lookups — 1 per second to be polite
+        for oui, mac in new_ouis:
+            try:
+                get_mac_vendor(mac)
+                time.sleep(1)
+            except Exception:
+                pass
+        print("[MAC] prefetch complete")
+        # Retry any OUIs that failed (Lookup Pending) — wait 30s then try again
+        time.sleep(30)
+        _retry_pending_vendors()
+    except Exception as ex:
+        print(f"[MAC] prefetch error: {ex}")
+
+
+def _retry_pending_vendors():
+    """Retry OUI lookups that previously timed out (not yet in mac_vendor table)."""
+    try:
+        con = _mac_db()
+        # Find unique OUIs in sn_mac that have no entry in mac_vendor
+        rows = con.execute("""
+            SELECT DISTINCT SUBSTR(mac, 1, 8) as oui, mac
+            FROM sn_mac
+            WHERE mac IS NOT NULL AND mac != ''
+            AND SUBSTR(mac,1,8) NOT IN (SELECT oui FROM mac_vendor)
+        """).fetchall()
+        con.close()
+        if not rows:
+            return
+        print(f"[MAC] retrying {len(rows)} pending OUI lookups...")
+        for oui, mac in rows:
+            try:
+                get_mac_vendor(mac)
+                time.sleep(2)   # slightly slower for retry
+            except Exception:
+                pass
+        print("[MAC] retry complete")
+    except Exception as ex:
+        print(f"[MAC] retry error: {ex}")
+
+
 def influx_write(line_protocol: str):
     """Write a line-protocol string to InfluxDB."""
     url = f"{INFLUX_URL}/api/v2/write?org={urllib.parse.quote(INFLUX_ORG)}&bucket={urllib.parse.quote(INFLUX_BUCKET)}&precision=s"
@@ -106,6 +329,36 @@ _genie_prev_readings: dict = {}
 _unreg_cache: dict = {"onts": [], "count": 0, "ts": 0, "scanned": False}
 
 
+def normalize_sn(sn: str) -> str:
+    """
+    Normalize Huawei ONT serial number to canonical vendor form (e.g. HWTC5A819F9D).
+
+    Two formats exist in InfluxDB — written by different pollers for the same device:
+      Full 16-char hex  (poller.py SNMP path):  485754435A819F9D
+      Vendor short form (slot_worker SSH path):  HWTC5A819F9D
+
+    Conversion: first 8 hex chars of the full form are the ASCII vendor prefix.
+      48 57 54 43  →  "HWTC"
+      5A 81 9F 9D  →  suffix "5A819F9D"
+      Result: "HWTC5A819F9D"
+
+    Other vendor examples:
+      43494F5408939108  →  CIOT08939108
+      434D444310CE300E  →  CMDD10CE300E
+
+    Short form and unrecognised SNs pass through unchanged.
+    """
+    sn = (sn or "").strip().upper()
+    if len(sn) == 16 and all(c in "0123456789ABCDEF" for c in sn):
+        try:
+            vendor = bytes.fromhex(sn[:8]).decode("ascii")
+            if vendor.isalpha():                  # only convert if prefix is pure letters
+                return vendor + sn[8:]
+        except Exception:
+            pass
+    return sn
+
+
 def get_all_onts():
     """
     Read latest ONT status + optical from InfluxDB.
@@ -116,21 +369,31 @@ def get_all_onts():
                   fields: rx_power (or rx_signal), temperature (or temp)
     Returns list of dicts: {pon, name, sn, status, rx, temp}
     """
-    # Get latest 'state' field per ONT — one row per ONT with all tags
+    # Get latest 'online' and 'vlan' per ONT — 48h window
+    # exists r.sn excludes old poller rows (pre-v4.3.0) that lack the sn tag
     flux_status = f'''
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: -48h)
-  |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "down_cause" or r._field == "vlan"))
+  |> filter(fn: (r) => r._measurement == "ont_status" and (r._field == "online" or r._field == "vlan") and exists r.sn and r.sn != "")
   |> last()
   |> keep(columns: ["sn", "pon", "ont_id", "description", "_field", "_value"])
 '''
+    # down_cause only from slot_worker — use 7-day window to catch long-offline ONTs
+    flux_down_cause = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: -168h)
+  |> filter(fn: (r) => r._measurement == "ont_status" and r._field == "down_cause" and exists r.sn and r.sn != "")
+  |> last()
+  |> keep(columns: ["sn", "_field", "_value"])
+'''
 
     # Latest optical per ONT — only rx_power and temp fields
+    # exists r.sn excludes old series without sn tag (prevents CSV header mismatch)
     flux_optical = f'''
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: -48h)
   |> filter(fn: (r) => r._measurement == "ont_optical" and
-      (r._field == "rx_power" or r._field == "temp"))
+      (r._field == "rx_power" or r._field == "temp") and exists r.sn and r.sn != "")
   |> last()
   |> keep(columns: ["sn", "_field", "_value"])
 '''
@@ -143,14 +406,17 @@ from(bucket: "{INFLUX_BUCKET}")
   |> keep(columns: ["sn", "_field", "_value"])
 '''
 
-    status_rows  = influx_query(flux_status)
-    optical_rows = influx_query(flux_optical)
-    wan_rows     = influx_query(flux_wan)
+    status_rows     = influx_query(flux_status)
+    down_cause_rows = influx_query(flux_down_cause)
+    optical_rows    = influx_query(flux_optical)
+    wan_rows        = influx_query(flux_wan)
 
     # Index optical by sn — collect all fields
+    # normalize_sn() ensures both full-hex (poller.py) and short vendor (SSH) SNs
+    # map to the same canonical key, preventing duplicate lookups.
     optical = {}
     for r in optical_rows:
-        sn    = r.get("sn", "").strip()
+        sn    = normalize_sn(r.get("sn", "").strip())
         field = r.get("_field", "").strip()
         val   = r.get("_value", "").strip()
         if not sn:
@@ -159,31 +425,62 @@ from(bucket: "{INFLUX_BUCKET}")
             optical[sn] = {}
         optical[sn][field] = val
 
-    # Index status rows by sn — collect online + down_cause
+    # Index status rows by sn — collect online + down_cause + vlan.
+    # normalize_sn() deduplicates: both 485754435A819F9D and HWTC5A819F9D
+    # become HWTC5A819F9D, so the same device is never counted twice.
     status_map = {}
     for r in status_rows:
-        sn    = r.get("sn",          "").strip()
+        sn    = normalize_sn(r.get("sn",          "").strip())
         pon   = r.get("pon",         "").strip()
-        name  = r.get("description", "").strip()
+        _raw_name = r.get("description", "").strip()
+        # Blank out names that are just raw SN hex strings (e.g. "48575443EE93FF9C")
+        # — these appear when no customer alias is configured on the OLT
+        name  = "" if re.match(r'^[0-9A-Fa-f]{12,16}$', _raw_name) else _raw_name
         field = r.get("_field",      "online").strip()
         val   = r.get("_value",      "").strip()
         if not sn:
             continue
         ont_id = r.get("ont_id", "").strip()
         if sn not in status_map:
-            status_map[sn] = {"pon": pon, "ont_id": ont_id, "name": name, "online": "0", "down_cause": "", "vlan": ""}
-        elif ont_id and not status_map[sn].get("ont_id"):
-            status_map[sn]["ont_id"] = ont_id
+            # Use None sentinel for online so we can distinguish "not yet set" from "0"
+            status_map[sn] = {"pon": pon, "ont_id": ont_id, "name": name, "online": None, "down_cause": "", "vlan": ""}
+        else:
+            # Merge: prefer non-empty values so the richer source wins
+            if pon    and not status_map[sn]["pon"]:    status_map[sn]["pon"]    = pon
+            if ont_id and not status_map[sn]["ont_id"]: status_map[sn]["ont_id"] = ont_id
+            if name   and not status_map[sn]["name"]:   status_map[sn]["name"]   = name
         if field == "online":
-            status_map[sn]["online"] = val
-        elif field == "down_cause":
-            status_map[sn]["down_cause"] = val
+            # Prefer offline ("0") over online ("1"):
+            # poller writes online=1 for ALL registered ONTs (including truly offline ones)
+            # slot_worker writes the correct online=0 for offline ONTs.
+            # Once any source marks a device offline (0), it stays offline.
+            cur = status_map[sn]["online"]
+            if cur is None:
+                status_map[sn]["online"] = val          # first write — accept any
+            elif val == "0":
+                status_map[sn]["online"] = "0"          # offline always wins
+            # else: cur is already "0" or val is "1" — leave as-is
         elif field == "vlan":
-            status_map[sn]["vlan"] = val
+            if val and not status_map[sn]["vlan"]:
+                status_map[sn]["vlan"] = val
+
+    # Merge down_cause rows (7-day window, separate query)
+    for r in down_cause_rows:
+        sn  = normalize_sn(r.get("sn", "").strip())
+        val = r.get("_value", "").strip()
+        if not sn or not val:
+            continue
+        if sn in status_map and not status_map[sn]["down_cause"]:
+            status_map[sn]["down_cause"] = val
+
+    # Resolve None sentinel → "0" (treat unknown as offline to be safe)
+    for s in status_map.values():
+        if s["online"] is None:
+            s["online"] = "0"
 
     wan_map = {}
     for r in wan_rows:
-        sn = r.get("sn", "").strip()
+        sn = normalize_sn(r.get("sn", "").strip())
         field = r.get("_field", "").strip()
         val = r.get("_value", "").strip()
         if not sn:
@@ -207,9 +504,11 @@ from(bucket: "{INFLUX_BUCKET}")
         cause = s.get("down_cause", "")
         if is_online:
             detail_status = "online"
-        elif "dying" in cause or "gasp" in cause:
+        elif "dying" in cause or "gasp" in cause or "power" in cause:
+            # dying-gasp, power-off → power failure (battery/power event)
             detail_status = "power-failure"
-        elif "los" in cause or "lob" in cause or "loss" in cause:
+        elif "los" in cause or "lob" in cause or "loss" in cause or "lof" in cause or "fiber" in cause:
+            # losi, lobi, lofi, los, loss, fiber-cut → fiber issue
             detail_status = "fiber-issue"
         else:
             detail_status = "offline"
@@ -248,17 +547,35 @@ from(bucket: "{INFLUX_BUCKET}")
             "wan_status":  wan.get("wan_status", ""),
             "wan_vlan":    wan.get("wan_vlan", ""),
             "device_type": device_type,
+            "vendor":      None,   # enriched below from MAC cache
         })
+
+    # Enrich vendor from cache — cache-only, no live calls (keeps /onts fast)
+    try:
+        _mcon = _mac_db()
+        for ont in onts:
+            _sn = (ont.get("sn") or "").upper()
+            srow = _mcon.execute(
+                "SELECT mac FROM sn_mac WHERE sn=?", (_sn,)).fetchone()
+            if srow and srow[0]:
+                oui  = srow[0][:8]
+                vrow = _mcon.execute(
+                    "SELECT vendor FROM mac_vendor WHERE oui=?", (oui,)).fetchone()
+                ont["vendor"] = vrow[0] if vrow else None
+        _mcon.close()
+    except Exception as _mex:
+        print(f"[MAC] enrichment error: {_mex}")
+
     return onts
 
 
 def get_ont_cached(sn):
     """Fast cached ONT row from Influx-backed table payload."""
-    sn = (sn or "").strip().upper()
+    sn = normalize_sn((sn or "").strip().upper())
     if not sn:
         return None
     for row in get_all_onts():
-        if (row.get("sn", "").strip().upper() == sn):
+        if normalize_sn(row.get("sn", "").strip().upper()) == sn:
             return row
     return None
 
@@ -1037,7 +1354,124 @@ class Handler(BaseHTTPRequestHandler):
             client.close()
             return self.send_json(200, {'data': data, 'range': range_str})
 
+        # ── GET /olt/uplink ───────────────────────────────────────────────────
+        # range=live  → SNMP in-memory buffer (5-second resolution, last 30 min)
+        # range=6h|12h|24h|3d|7d → InfluxDB historical query with aggregation
+        elif parsed.path == "/olt/uplink":
+            user = require_auth(self)
+            if not user: return
+            range_param = params.get("range", ["live"])[0].strip().lower()
 
+            if range_param == "live":
+                cutoff = time.time() - 30 * 60
+                points = [
+                    p for p in list(_uplink_buffer)
+                    if time.mktime(time.strptime(p["time"], "%Y-%m-%dT%H:%M:%SZ")) >= cutoff
+                ]
+                return self.send_json(200, {
+                    "ok": True, "points": points,
+                    "range": "live", "interval": _UPLINK_POLL_SEC, "source": "snmp",
+                })
+
+            # Historical — map range string to Flux parameters
+            range_map = {
+                "6h":  ("-6h",  "1m"),
+                "12h": ("-12h", "2m"),
+                "24h": ("-24h", "5m"),
+                "3d":  ("-3d",  "15m"),
+                "7d":  ("-7d",  "30m"),
+            }
+            if range_param not in range_map:
+                return self.send_json(400, {"error": "Invalid range"})
+
+            flux_start, window = range_map[range_param]
+            flux = f'''
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {flux_start})
+  |> filter(fn: (r) => r._measurement == "olt_uplink" and
+      (r._field == "rx_mbps" or r._field == "tx_mbps"))
+  |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"])
+'''
+            rows = influx_query(flux)
+            points = []
+            for r in rows:
+                t  = r.get("_time", "")
+                rx = r.get("rx_mbps")
+                tx = r.get("tx_mbps")
+                if t:
+                    try:
+                        points.append({
+                            "time": t,
+                            "rx":   round(float(rx), 2) if rx else 0,
+                            "tx":   round(float(tx), 2) if tx else 0,
+                        })
+                    except (ValueError, TypeError):
+                        pass
+            return self.send_json(200, {
+                "ok": True, "points": points,
+                "range": range_param, "window": window, "source": "influxdb",
+            })
+
+        # ── GET /server/stats ─────────────────────────────────────────────────
+        # Returns live CPU %, RAM %, Disk %, and uptime for the NMS server.
+        # Uses /proc files — no psutil dependency required.
+        elif parsed.path == "/server/stats":
+            user = require_auth(self)
+            if not user: return
+            stats = {}
+            # Uptime
+            try:
+                with open('/proc/uptime') as f:
+                    secs = float(f.read().split()[0])
+                d, rem = divmod(int(secs), 86400)
+                h, rem = divmod(rem, 3600)
+                m = rem // 60
+                stats['uptime'] = f"{d}d {h}h {m}m" if d else f"{h}h {m}m"
+                stats['uptime_secs'] = int(secs)
+            except Exception:
+                stats['uptime'] = '?'
+                stats['uptime_secs'] = 0
+            # CPU — two samples 0.5 s apart
+            try:
+                def _cpu_snap():
+                    with open('/proc/stat') as f:
+                        parts = f.readline().split()
+                    vals = list(map(int, parts[1:8]))
+                    idle = vals[3]
+                    return idle, sum(vals)
+                i1, t1 = _cpu_snap()
+                time.sleep(0.5)
+                i2, t2 = _cpu_snap()
+                stats['cpu_pct'] = round(100 * (1 - (i2 - i1) / max(t2 - t1, 1)), 1)
+            except Exception:
+                stats['cpu_pct'] = None
+            # RAM
+            try:
+                mem = {}
+                with open('/proc/meminfo') as f:
+                    for line in f:
+                        k, v = line.split(':', 1)
+                        mem[k.strip()] = int(v.split()[0])
+                total = mem['MemTotal']
+                avail = mem.get('MemAvailable', mem.get('MemFree', 0))
+                used  = total - avail
+                stats['ram_pct']      = round(100 * used / max(total, 1), 1)
+                stats['ram_used_gb']  = round(used  / 1024 / 1024, 1)
+                stats['ram_total_gb'] = round(total / 1024 / 1024, 1)
+            except Exception:
+                stats['ram_pct'] = None
+            # Disk (root partition)
+            try:
+                import shutil as _shutil
+                du = _shutil.disk_usage('/')
+                stats['disk_pct']      = round(100 * du.used / max(du.total, 1), 1)
+                stats['disk_used_gb']  = round(du.used  / 1024**3, 1)
+                stats['disk_total_gb'] = round(du.total / 1024**3, 1)
+            except Exception:
+                stats['disk_pct'] = None
+            return self.send_json(200, stats)
 
         elif parsed.path == "/olt/cpu":
             # Get OLT CPU history from InfluxDB
@@ -1120,7 +1554,7 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/server/stats":
             user = require_auth(self)
             if not user: return
-            import psutil, time
+            import psutil
             cpu = psutil.cpu_percent(interval=1)
             ram = psutil.virtual_memory()
             disk = psutil.disk_usage('/')
@@ -1478,6 +1912,34 @@ from(bucket: "{INFLUX_BUCKET}")
                     "detail": ssh_data.get("error", "")
                 })
 
+            # Supplement SSH optical data with SNMP-polled InfluxDB values when available.
+            # The SNMP poller reads OID .51.1.4 (ONT Rx power via OMCI) which matches U2000.
+            # SSH "display ont optical-info" can return stale cached values from the OLT.
+            influx_rx   = None
+            influx_temp = None
+            try:
+                fsp_ssh  = ssh_data.get("fsp", "")      # e.g. "0/4/4"
+                oid_ssh  = str(ssh_data.get("ont_id", ""))
+                if fsp_ssh and oid_ssh:
+                    _flux_opt = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-48h)
+  |> filter(fn:(r)=>r._measurement=="ont_optical"
+      and r.fsp=="{fsp_ssh}"
+      and r.ont_id=="{oid_ssh}"
+      and (r._field=="rx_power" or r._field=="temp"))
+  |> last()
+  |> keep(columns:["_field","_value"])
+'''
+                    _opt_rows = influx_query(_flux_opt)
+                    for _row in _opt_rows:
+                        if _row.get("_field") == "rx_power":
+                            influx_rx = float(_row["_value"])
+                        elif _row.get("_field") == "temp":
+                            influx_temp = float(_row["_value"])
+            except Exception:
+                pass
+
             return self.send_json(200, {
                 "_source":   "ssh",
                 "_editable": False,
@@ -1491,9 +1953,11 @@ from(bucket: "{INFLUX_BUCKET}")
                     "sw_version":    ssh_data.get("sw_version", "-"),
                     "uptime":        ssh_data.get("online_duration", "-"),
                     "last_inform":   "-",
-                    "rx_power":      ssh_data.get("rx_power"),
+                    # Prefer SNMP/InfluxDB rx_power (matches U2000 ONU Optical Module Info).
+                    # Fall back to SSH if InfluxDB has no recent data.
+                    "rx_power":      influx_rx   if influx_rx   is not None else ssh_data.get("rx_power"),
                     "tx_power":      ssh_data.get("tx_power"),
-                    "temp":          ssh_data.get("temp"),
+                    "temp":          influx_temp if influx_temp is not None else ssh_data.get("temp"),
                     "distance_m":    ssh_data.get("distance_m"),
                     "run_state":     ssh_data.get("run_state"),
                     "fsp":           ssh_data.get("fsp"),
@@ -1650,6 +2114,38 @@ from(bucket: "{INFLUX_BUCKET}")
 
         elif parsed.path == "/health":
             return self.send_json(200, {"status": "ok", "influx": INFLUX_URL, "genie": GENIEACS_NBI})
+
+        # ── GET /workers/health ────────────────────────────────────────────────
+        elif parsed.path == "/workers/health":
+            user = require_auth(self)
+            if not user: return
+            import subprocess
+            health = {}
+            for slot in [1, 2, 4, 5]:
+                r = subprocess.run(
+                    ["systemctl", "is-active", f"ont-worker@{slot}"],
+                    capture_output=True, text=True
+                )
+                status = r.stdout.strip()
+                health[f"slot{slot}"] = {"service_status": status, "active": status == "active"}
+            r2 = subprocess.run(
+                ["systemctl", "is-active", "pyronms-poller"],
+                capture_output=True, text=True
+            )
+            p_status = r2.stdout.strip()
+            health["poller"] = {"service_status": p_status, "active": p_status == "active"}
+            return self.send_json(200, {"ok": True, "workers": health, "ts": int(time.time())})
+
+        # ── GET /mac/vendor?mac=<mac> ──────────────────────────────────────────
+        elif parsed.path == "/mac/vendor":
+            user = require_auth(self)
+            if not user: return
+            raw_mac = params.get("mac", [""])[0].strip()
+            vendor  = get_mac_vendor(raw_mac)
+            return self.send_json(200, {
+                "mac":    normalize_mac(raw_mac) or raw_mac,
+                "vendor": vendor
+            })
 
         # ── GET /ont/traffic/live?sn=XXXX ─────────────────────────────────────
         # Forces a TR-069 connection_request → CPE responds in ~8s with fresh
@@ -1857,14 +2353,19 @@ from(bucket:"{INFLUX_BUCKET}")
   |> range(start:-15m)
   |> filter(fn:(r)=>r._measurement=="ont_optical"
       and r.fsp=="{frame}/{slot}/{port}"
-      and r.ont_id=="{ont_id}")
+      and r.ont_id=="{ont_id}"
+      and (r._field=="rx_power" or r._field=="temp"))
   |> last()
-  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
-  |> keep(columns:["rx_power_dbm","temperature_c"])
+  |> keep(columns:["_field","_value"])
 '''
                 opt_rows = influx_query(flux_opt)
-                rx_power = opt_rows[0].get("rx_power_dbm") if opt_rows else None
-                temp_c   = opt_rows[0].get("temperature_c") if opt_rows else None
+                rx_power = None
+                temp_c   = None
+                for _r in opt_rows:
+                    if _r.get("_field") == "rx_power":
+                        rx_power = _r.get("_value")
+                    elif _r.get("_field") == "temp":
+                        temp_c = _r.get("_value")
                 # Latest status from InfluxDB
                 flux_st = f'''
 from(bucket:"{INFLUX_BUCKET}")
@@ -1939,6 +2440,208 @@ from(bucket:"{INFLUX_BUCKET}")
                     "online_onts":  total_online,
                     "offline_onts": total_offline,
                 })
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /mikrotik/devices ─────────────────────────────────────────────
+        elif parsed.path == "/mikrotik/devices":
+            user = require_auth(self)
+            if not user: return
+            try:
+                import mikrotik_db as _mtdb
+                devices = _mtdb.get_all_devices(include_disabled=True)
+                return self.send_json(200, {"ok": True, "devices": devices})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /mikrotik/health ──────────────────────────────────────────────
+        elif parsed.path == "/mikrotik/health":
+            user = require_auth(self)
+            if not user: return
+            try:
+                import mikrotik_db as _mtdb
+                devices = _mtdb.get_all_devices(include_disabled=True)
+                health = [{
+                    "id":          d["id"],
+                    "name":        d["name"],
+                    "ip":          d["ip"],
+                    "last_seen":   d["last_seen"],
+                    "last_status": d["last_status"],
+                    "enabled":     d["enabled"],
+                    "routeros_ver": d.get("routeros_ver", ""),
+                } for d in devices]
+                return self.send_json(200, {"ok": True, "health": health})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /mikrotik/resource?device_id=N&range=1h ───────────────────────
+        elif parsed.path == "/mikrotik/resource":
+            user = require_auth(self)
+            if not user: return
+            device_id = params.get("device_id", [""])[0].strip()
+            range_p   = params.get("range", ["1h"])[0].strip()
+            if not device_id:
+                return self.send_json(400, {"error": "device_id required"})
+            _range_map = {"5m":"-5m","15m":"-15m","1h":"-1h","6h":"-6h",
+                          "12h":"-12h","24h":"-24h","3d":"-3d","7d":"-7d"}
+            start  = _range_map.get(range_p, "-1h")
+            _win_map = {"5m":"30s","15m":"1m","1h":"1m","6h":"5m",
+                        "12h":"10m","24h":"15m","3d":"30m","7d":"1h"}
+            window = _win_map.get(range_p, "1m")
+            try:
+                flux = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:{start})
+  |> filter(fn:(r)=>r._measurement=="mikrotik_resource"
+      and r.device_id=="{device_id}"
+      and (r._field=="cpu_load" or r._field=="mem_used_pct"
+           or r._field=="temperature_c" or r._field=="uptime_sec"))
+  |> aggregateWindow(every:{window}, fn:mean, createEmpty:false)
+  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
+  |> sort(columns:["_time"])
+'''
+                rows = influx_query(flux)
+                labels  = [r.get("_time","") for r in rows]
+                cpu     = [r.get("cpu_load") for r in rows]
+                mem     = [r.get("mem_used_pct") for r in rows]
+                temp    = [r.get("temperature_c") for r in rows]
+                uptime  = [r.get("uptime_sec") for r in rows]
+                return self.send_json(200, {"ok": True, "labels": labels,
+                    "cpu": cpu, "mem": mem, "temp": temp, "uptime": uptime})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /mikrotik/interfaces?device_id=N ─────────────────────────────
+        elif parsed.path == "/mikrotik/interfaces":
+            user = require_auth(self)
+            if not user: return
+            device_id = params.get("device_id", [""])[0].strip()
+            if not device_id:
+                return self.send_json(400, {"error": "device_id required"})
+            try:
+                flux = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-3m)
+  |> filter(fn:(r)=>r._measurement=="mikrotik_iface"
+      and r.device_id=="{device_id}"
+      and (r._field=="rx_bps" or r._field=="tx_bps" or r._field=="oper_status"))
+  |> last()
+  |> pivot(rowKey:["interface"],columnKey:["_field"],valueColumn:"_value")
+  |> sort(columns:["interface"])
+'''
+                rows = influx_query(flux)
+                ifaces = [{
+                    "interface":   r.get("interface",""),
+                    "iface_type":  r.get("iface_type",""),
+                    "rx_bps":      r.get("rx_bps",0),
+                    "tx_bps":      r.get("tx_bps",0),
+                    "oper_status": r.get("oper_status",0),
+                } for r in rows]
+                return self.send_json(200, {"ok": True, "interfaces": ifaces})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /mikrotik/iface-traffic?device_id=N&iface=X&range=1h ─────────
+        elif parsed.path == "/mikrotik/iface-traffic":
+            user = require_auth(self)
+            if not user: return
+            device_id = params.get("device_id", [""])[0].strip()
+            iface     = params.get("iface",     [""])[0].strip()
+            range_p   = params.get("range",     ["1h"])[0].strip()
+            if not device_id or not iface:
+                return self.send_json(400, {"error": "device_id and iface required"})
+            _range_map = {"5m":"-5m","15m":"-15m","1h":"-1h","6h":"-6h",
+                          "12h":"-12h","24h":"-24h","3d":"-3d","7d":"-7d"}
+            start  = _range_map.get(range_p, "-1h")
+            _win_map = {"5m":"30s","15m":"1m","1h":"1m","6h":"5m",
+                        "12h":"10m","24h":"15m","3d":"30m","7d":"1h"}
+            window = _win_map.get(range_p, "1m")
+            try:
+                flux = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:{start})
+  |> filter(fn:(r)=>r._measurement=="mikrotik_iface"
+      and r.device_id=="{device_id}"
+      and r.interface=="{iface}"
+      and (r._field=="rx_bps" or r._field=="tx_bps"
+           or r._field=="rx_errors" or r._field=="tx_errors"))
+  |> aggregateWindow(every:{window}, fn:mean, createEmpty:false)
+  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
+  |> sort(columns:["_time"])
+'''
+                rows = influx_query(flux)
+                labels = [r.get("_time","") for r in rows]
+                rx_mbps = [round((r.get("rx_bps") or 0)/1e6, 3) for r in rows]
+                tx_mbps = [round((r.get("tx_bps") or 0)/1e6, 3) for r in rows]
+                rx_err  = [r.get("rx_errors",0) for r in rows]
+                tx_err  = [r.get("tx_errors",0) for r in rows]
+                return self.send_json(200, {"ok": True, "labels": labels,
+                    "rx_mbps": rx_mbps, "tx_mbps": tx_mbps,
+                    "rx_errors": rx_err, "tx_errors": tx_err})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /mikrotik/ppp-sessions?device_id=N ───────────────────────────
+        elif parsed.path == "/mikrotik/ppp-sessions":
+            user = require_auth(self)
+            if not user: return
+            device_id = params.get("device_id", [""])[0].strip()
+            if not device_id:
+                return self.send_json(400, {"error": "device_id required"})
+            try:
+                flux = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:-3m)
+  |> filter(fn:(r)=>r._measurement=="mikrotik_ppp_session"
+      and r.device_id=="{device_id}"
+      and (r._field=="uptime_sec" or r._field=="caller_id" or r._field=="address"))
+  |> last()
+  |> pivot(rowKey:["username"],columnKey:["_field"],valueColumn:"_value")
+  |> sort(columns:["username"])
+'''
+                rows = influx_query(flux)
+                sessions = [{
+                    "username":   r.get("username",""),
+                    "service":    r.get("service",""),
+                    "radius":     r.get("radius","false"),
+                    "uptime_sec": r.get("uptime_sec",0),
+                    "caller_id":  r.get("caller_id",""),
+                    "address":    r.get("address",""),
+                } for r in rows]
+                return self.send_json(200, {"ok": True, "sessions": sessions,
+                                            "count": len(sessions)})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /mikrotik/ppp-history?device_id=N&range=24h ──────────────────
+        elif parsed.path == "/mikrotik/ppp-history":
+            user = require_auth(self)
+            if not user: return
+            device_id = params.get("device_id", [""])[0].strip()
+            range_p   = params.get("range",     ["24h"])[0].strip()
+            if not device_id:
+                return self.send_json(400, {"error": "device_id required"})
+            _range_map = {"1h":"-1h","6h":"-6h","12h":"-12h","24h":"-24h","3d":"-3d","7d":"-7d"}
+            start  = _range_map.get(range_p, "-24h")
+            _win_map = {"1h":"5m","6h":"15m","12h":"30m","24h":"1h","3d":"3h","7d":"6h"}
+            window = _win_map.get(range_p, "1h")
+            try:
+                flux = f'''
+from(bucket:"{INFLUX_BUCKET}")
+  |> range(start:{start})
+  |> filter(fn:(r)=>r._measurement=="mikrotik_ppp"
+      and r.device_id=="{device_id}"
+      and (r._field=="active_ppp_count" or r._field=="radius_ppp_count"))
+  |> aggregateWindow(every:{window}, fn:max, createEmpty:false)
+  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
+  |> sort(columns:["_time"])
+'''
+                rows = influx_query(flux)
+                labels       = [r.get("_time","") for r in rows]
+                active_count = [r.get("active_ppp_count",0) for r in rows]
+                radius_count = [r.get("radius_ppp_count",0) for r in rows]
+                return self.send_json(200, {"ok": True, "labels": labels,
+                    "active_count": active_count, "radius_count": radius_count})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
@@ -2388,6 +3091,75 @@ from(bucket:"{INFLUX_BUCKET}")
                 "verified":       str(verified_value) == str(value) if verified_value else None,
             })
 
+        # ── POST /mikrotik/devices — add new device ───────────────────────────
+        elif parsed.path == "/mikrotik/devices":
+            user = require_auth(self)
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            try:
+                import mikrotik_db as _mtdb
+                new_id = _mtdb.add_device(payload)
+                return self.send_json(200, {"ok": True, "id": new_id})
+            except ValueError as e:
+                return self.send_json(400, {"ok": False, "error": str(e)})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /mikrotik/devices/<id> — update device ───────────────────────
+        elif re.match(r"^/mikrotik/devices/(\d+)$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/mikrotik/devices/(\d+)$", parsed.path)
+            dev_id = int(m.group(1))
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            try:
+                import mikrotik_db as _mtdb
+                ok = _mtdb.update_device(dev_id, payload)
+                if not ok:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                return self.send_json(200, {"ok": True})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /mikrotik/devices/<id>/delete ────────────────────────────────
+        elif re.match(r"^/mikrotik/devices/(\d+)/delete$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/mikrotik/devices/(\d+)/delete$", parsed.path)
+            dev_id = int(m.group(1))
+            try:
+                import mikrotik_db as _mtdb
+                ok = _mtdb.delete_device(dev_id)
+                if not ok:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                return self.send_json(200, {"ok": True})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /mikrotik/devices/<id>/test — connection test ────────────────
+        elif re.match(r"^/mikrotik/devices/(\d+)/test$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/mikrotik/devices/(\d+)/test$", parsed.path)
+            dev_id = int(m.group(1))
+            try:
+                import mikrotik_db as _mtdb
+                dev = _mtdb.get_device(dev_id, include_creds=True)
+                if not dev:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                result = _test_mikrotik_device(dev)
+                return self.send_json(200, {"ok": True, **result})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
         else:
             return self.send_json(404, {"error": "Not found"})
 
@@ -2478,10 +3250,150 @@ def _extract_field(parsed_data, field, band_index=None):
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+# ── OLT Uplink SNMP Poller ────────────────────────────────────────────────────
+# Polls the OLT uplink port(s) via SNMP every 5 seconds using ifHCInOctets /
+# ifHCOutOctets (64-bit byte counters). Stores a rolling 30-minute deque.
+# Auto-discovers uplink ifIndex by walking ifDescr — finds GigabitEthernet /
+# XGigabitEthernet interfaces (excludes GPON ports whose ifIndex > 0xFA000000).
+
+OLT_HOST             = "172.20.101.101"
+OLT_SNMP_COMMUNITY   = "kknread@123"
+_IFDESCR_OID         = "1.3.6.1.2.1.2.2.1.2"          # ifDescr table
+_IFHC_IN_OID         = "1.3.6.1.2.1.31.1.1.1.6"       # ifHCInOctets
+_IFHC_OUT_OID        = "1.3.6.1.2.1.31.1.1.1.10"      # ifHCOutOctets
+_UPLINK_POLL_SEC     = 5                                # poll interval
+_UPLINK_MAXLEN       = int(30 * 60 / _UPLINK_POLL_SEC) # 360 points = 30 min
+
+from collections import deque
+_uplink_buffer  = deque(maxlen=_UPLINK_MAXLEN)          # shared, thread-safe append
+_uplink_ifindex = []                                    # discovered uplink ifIndices
+
+
+def _snmp_get_val(oid, host=OLT_HOST, community=OLT_SNMP_COMMUNITY, timeout=4):
+    """Single snmpget — returns raw value string or None."""
+    try:
+        r = subprocess.run(
+            ["snmpget", "-v2c", "-c", community, "-Oqv", "-t", str(timeout), "-r", "1",
+             host, oid],
+            capture_output=True, text=True, timeout=timeout + 2)
+        out = (r.stdout or "").strip()
+        return out if out and r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _snmp_walk_raw(oid, host=OLT_HOST, community=OLT_SNMP_COMMUNITY, timeout=10):
+    """snmpwalk — yields (full_oid, value) tuples."""
+    try:
+        r = subprocess.run(
+            ["snmpwalk", "-v2c", "-c", community, "-Oqn", "-t", str(timeout), "-r", "1",
+             host, oid],
+            capture_output=True, text=True, timeout=timeout + 2)
+        for line in (r.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                yield parts[0], parts[1]
+    except Exception:
+        pass
+
+
+def _discover_uplink_ifindices():
+    """Walk ifDescr, return list of ifIndex for GE/10GE uplink ports."""
+    indices = []
+    gpon_base = 0xFA000000
+    for full_oid, descr in _snmp_walk_raw(_IFDESCR_OID):
+        # OID ends with .ifIndex
+        try:
+            idx = int(full_oid.rsplit(".", 1)[-1])
+        except ValueError:
+            continue
+        if idx >= gpon_base:
+            continue   # skip GPON PON ports
+        descr_l = descr.strip().lower().strip('"')
+        if "ethernet" in descr_l or "eth" in descr_l or "uplink" in descr_l:
+            indices.append(idx)
+            print(f"[UPLINK] discovered ifIndex={idx}  descr={descr.strip()}")
+    return indices
+
+
+def _uplink_poller():
+    """Background thread: poll OLT uplink counters every 5 seconds."""
+    global _uplink_ifindex
+    # Wait for server to settle, then discover uplink interfaces
+    time.sleep(8)
+    _uplink_ifindex = _discover_uplink_ifindices()
+    if not _uplink_ifindex:
+        print("[UPLINK] no uplink interfaces discovered — retrying in 60s")
+        time.sleep(60)
+        _uplink_ifindex = _discover_uplink_ifindices()
+    if not _uplink_ifindex:
+        print("[UPLINK] SNMP uplink discovery failed — poller disabled")
+        return
+
+    prev = {}   # ifIndex → (in_bytes, out_bytes, ts)
+    print(f"[UPLINK] polling {len(_uplink_ifindex)} uplink port(s) every {_UPLINK_POLL_SEC}s")
+
+    while True:
+        ts = time.time()
+        total_rx_bps = 0.0
+        total_tx_bps = 0.0
+        valid = False
+
+        for idx in _uplink_ifindex:
+            in_raw  = _snmp_get_val(f"{_IFHC_IN_OID}.{idx}")
+            out_raw = _snmp_get_val(f"{_IFHC_OUT_OID}.{idx}")
+            try:
+                in_bytes  = int(in_raw)
+                out_bytes = int(out_raw)
+            except (TypeError, ValueError):
+                continue
+
+            if idx in prev:
+                p_in, p_out, p_ts = prev[idx]
+                dt = ts - p_ts
+                if dt > 0:
+                    rx_bps = max(0, (in_bytes  - p_in)  / dt)
+                    tx_bps = max(0, (out_bytes - p_out) / dt)
+                    # Handle counter wrap (64-bit)
+                    if rx_bps > 1e12: rx_bps = 0
+                    if tx_bps > 1e12: tx_bps = 0
+                    total_rx_bps += rx_bps
+                    total_tx_bps += tx_bps
+                    valid = True
+
+            prev[idx] = (in_bytes, out_bytes, ts)
+
+        if valid:
+            rx_mbps = round(total_rx_bps * 8 / 1_000_000, 2)
+            tx_mbps = round(total_tx_bps * 8 / 1_000_000, 2)
+            _uplink_buffer.append({
+                "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts)),
+                "rx":   rx_mbps,
+                "tx":   tx_mbps,
+            })
+            # Persist to InfluxDB for historical queries (6h / 12h / 24h / 3d / 7d)
+            try:
+                lp = f"olt_uplink rx_mbps={rx_mbps},tx_mbps={tx_mbps} {int(ts)}"
+                influx_write(lp)
+            except Exception:
+                pass
+
+        elapsed = time.time() - ts
+        sleep_t = max(0.1, _UPLINK_POLL_SEC - elapsed)
+        time.sleep(sleep_t)
+
+
 if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", API_PORT), Handler)
     print(f"[API] ONT Monitor API running on port {API_PORT}")
     print(f"[API] GenieACS NBI: {GENIEACS_NBI}")
+    # Start background MAC vendor prefetch (runs 10s after startup)
+    threading.Thread(target=_prefetch_mac_vendors, daemon=True, name="mac-prefetch").start()
+    # Start OLT uplink SNMP poller
+    threading.Thread(target=_uplink_poller, daemon=True, name="uplink-snmp").start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

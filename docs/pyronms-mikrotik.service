@@ -1,0 +1,17 @@
+[Unit]
+Description=PyroNMS MikroTik Poller
+After=network.target influxdb.service
+Wants=influxdb.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/PyroNMS-repo
+ExecStart=/usr/bin/python3 /root/PyroNMS-repo/workers/mikrotik_poller.py
+Restart=on-failure
+RestartSec=15
+StandardOutput=append:/opt/ont-monitor/logs/mikrotik_poller.log
+StandardError=append:/opt/ont-monitor/logs/mikrotik_poller.log
+
+[Install]
+WantedBy=multi-user.target

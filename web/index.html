@@ -63,6 +63,15 @@
   .pon-select { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
   .btn-refresh-all { margin-left: 0; background: var(--green); color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
   .btn-refresh-all:hover { opacity: .85; }
+  @keyframes cd-pulse { 0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(74,222,128,.5)} 50%{opacity:.85;box-shadow:0 0 0 5px rgba(74,222,128,0)} }
+  @keyframes cd-pulse-warn { 0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(251,191,36,.6)} 50%{opacity:.85;box-shadow:0 0 0 5px rgba(251,191,36,0)} }
+  @keyframes cd-dot-blink { 0%,100%{opacity:1} 50%{opacity:.15} }
+  .cd-ring { display:inline-flex;align-items:center;gap:5px;padding:4px 10px 4px 7px;border-radius:20px;border:1.5px solid rgba(74,222,128,.45);background:rgba(74,222,128,.08);animation:cd-pulse 2s ease-in-out infinite;cursor:default;white-space:nowrap;transition:border-color .4s,background .4s; }
+  .cd-ring.warn { border-color:rgba(251,191,36,.55);background:rgba(251,191,36,.1);animation:cd-pulse-warn 1s ease-in-out infinite; }
+  .cd-dot { width:6px;height:6px;border-radius:50%;background:#4ade80;flex-shrink:0;animation:cd-dot-blink 1s ease-in-out infinite; }
+  .cd-ring.warn .cd-dot { background:#fbbf24; }
+  .cd-val { font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:#4ade80;letter-spacing:.3px; }
+  .cd-ring.warn .cd-val { color:#fbbf24; }
 
   /* ── Stat boxes ── */
   .stats { display: flex; gap: 8px; margin-left: 8px; }
@@ -749,6 +758,54 @@
   .confirm-foot .btn-go.danger { background:#ef4444; border-color:#ef4444; }
   .confirm-foot .btn-go:disabled { opacity:.4; cursor:not-allowed; }
   .confirm-typebox { width:100%; padding:8px 10px; border-radius:6px; border:1px solid var(--border); background:var(--bg3); color:var(--text); font-family:monospace; font-size:13px; margin-top:8px; }
+
+  /* ── MikroTik module ──────────────────────────────────────── */
+  .mt-tab {
+    padding:8px 16px;border:none;background:transparent;color:var(--muted);
+    font-size:12px;font-weight:600;cursor:pointer;border-radius:8px 8px 0 0;
+    border-bottom:2px solid transparent;transition:all .15s;
+  }
+  .mt-tab:hover  { color:var(--text);background:var(--bg3); }
+  .mt-tab.active { color:var(--accent);border-bottom-color:var(--accent);background:var(--bg); }
+  .mt-panel      { animation:fadeIn .15s ease; }
+  .mt-card {
+    background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+    padding:16px;display:flex;flex-direction:column;gap:4px;
+  }
+  .mt-card-label { font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600; }
+  .mt-card-val   { font-size:24px;font-weight:700;color:var(--text); }
+  .mt-card-sub   { font-size:11px;color:var(--muted); }
+  .mt-status-online  { color:#22c55e;font-weight:700; }
+  .mt-status-offline { color:#ef4444;font-weight:700; }
+  .mt-status-unknown { color:var(--muted);font-weight:600; }
+  .mt-form-row   { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px; }
+  .mt-form-row.full { grid-template-columns:1fr; }
+  .mt-form-label { font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;margin-bottom:4px; }
+  .mt-form-input {
+    width:100%;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);
+    color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;
+  }
+  .mt-form-input:focus { outline:none;border-color:var(--accent); }
+  .mt-btn-primary {
+    padding:9px 20px;background:var(--accent);color:#fff;border:none;
+    border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;
+  }
+  .mt-btn-danger  {
+    padding:9px 20px;background:#ef4444;color:#fff;border:none;
+    border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;
+  }
+  .mt-btn-secondary {
+    padding:9px 20px;background:var(--bg3);color:var(--text);
+    border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;
+  }
+  .mt-action-btn {
+    padding:4px 10px;border:1px solid var(--border);background:var(--bg3);
+    color:var(--text);border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;
+  }
+  .mt-action-btn:hover { border-color:var(--accent);color:var(--accent); }
+  .mt-tr-row:hover { background:var(--bg3) !important; }
+  .mt-badge-yes { display:inline-block;padding:2px 8px;background:#166534;color:#4ade80;border-radius:4px;font-size:10px;font-weight:700; }
+  .mt-badge-no  { display:inline-block;padding:2px 8px;background:#7f1d1d;color:#f87171;border-radius:4px;font-size:10px;font-weight:700; }
 </style>
 </head>
 <body>
@@ -761,8 +818,15 @@
   <img src="/logo.png" alt="PyroNet Solutions" style="height:32px;object-fit:contain;opacity:.95;filter:brightness(1.1);">
   <div style="line-height:1.2;"><div class="header-title">PyroNet Solutions</div><div style="font-size:10px;color:var(--muted);letter-spacing:.3px;">PyroNMS — Network Management System</div></div>
   <button class="btn-refresh-all" onclick="refreshAll()">⟳ Refresh All</button>
+  <span id="dash-countdown" class="cd-ring" onclick="refreshAll()" title="Click to refresh now" style="cursor:pointer;"><span class="cd-dot"></span><span id="dash-countdown-val" class="cd-val">—</span></span>
   
-  <div style="position:relative;margin-left:auto;" id="profileWrap">
+  <!-- Live clock -->
+  <div style="margin-left:auto;text-align:right;line-height:1.3;padding:0 4px;">
+    <div id="hdr-clock-time" style="font-size:15px;font-weight:700;color:var(--text);letter-spacing:.5px;font-variant-numeric:tabular-nums;">--:--:--</div>
+    <div id="hdr-clock-date" style="font-size:10px;color:var(--muted);letter-spacing:.3px;">--- --, ----</div>
+  </div>
+
+  <div style="position:relative;" id="profileWrap">
     <button onclick="toggleProfile()" style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:5px 12px 5px 6px;cursor:pointer;transition:all .15s;" id="profileBtn">
       <div id="profileAvatar" style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#1a5c2e,#0d2e4a);border:1.5px solid #26d97f55;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--green);flex-shrink:0;">A</div>
       <div style="text-align:left;">
@@ -847,6 +911,11 @@
         <span class="nav-icon">📡</span>
         <span class="nav-label">OLT Monitor</span>
       </div>
+      <div class="nav-section">MikroTik</div>
+      <div class="nav-item" id="nav-mikrotik" onclick="switchSection('mikrotik')">
+        <span class="nav-icon">🔴</span>
+        <span class="nav-label">MikroTik</span>
+      </div>
       <div class="nav-section">System</div>
       <div class="nav-item" id="nav-settings" onclick="switchSection('settings')">
         <span class="nav-icon">⚙</span>
@@ -893,9 +962,50 @@
       <div style="padding:24px;">
         
         <!-- Header -->
-        <div style="margin-bottom:24px;">
-          <div style="font-size:22px;font-weight:700;color:var(--text);">Dashboard</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:4px;">ONT Network Overview</div>
+        <div style="margin-bottom:24px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:14px;">
+          <div>
+            <div style="font-size:22px;font-weight:700;color:var(--text);">Dashboard</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px;">ONT Network Overview</div>
+          </div>
+          <!-- Server Stats -->
+          <div id="srv-stats-panel" style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 18px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-right:4px;white-space:nowrap;">Server</div>
+            <!-- CPU -->
+            <div style="min-width:90px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:10px;color:var(--muted);font-weight:600;">CPU</span>
+                <span id="srv-cpu-val" style="font-size:10px;font-weight:700;color:var(--text);">—</span>
+              </div>
+              <div style="height:4px;border-radius:2px;background:rgba(255,255,255,.08);">
+                <div id="srv-cpu-bar" style="height:4px;border-radius:2px;background:#60a5fa;width:0%;transition:width .4s;"></div>
+              </div>
+            </div>
+            <!-- RAM -->
+            <div style="min-width:90px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:10px;color:var(--muted);font-weight:600;">RAM</span>
+                <span id="srv-ram-val" style="font-size:10px;font-weight:700;color:var(--text);">—</span>
+              </div>
+              <div style="height:4px;border-radius:2px;background:rgba(255,255,255,.08);">
+                <div id="srv-ram-bar" style="height:4px;border-radius:2px;background:#a78bfa;width:0%;transition:width .4s;"></div>
+              </div>
+            </div>
+            <!-- Disk -->
+            <div style="min-width:90px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:10px;color:var(--muted);font-weight:600;">Disk</span>
+                <span id="srv-disk-val" style="font-size:10px;font-weight:700;color:var(--text);">—</span>
+              </div>
+              <div style="height:4px;border-radius:2px;background:rgba(255,255,255,.08);">
+                <div id="srv-disk-bar" style="height:4px;border-radius:2px;background:#34d399;width:0%;transition:width .4s;"></div>
+              </div>
+            </div>
+            <!-- Uptime -->
+            <div style="white-space:nowrap;">
+              <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px;">UPTIME</div>
+              <div id="srv-uptime-val" style="font-size:11px;font-weight:700;color:var(--text);">—</div>
+            </div>
+          </div>
         </div>
 
         <!-- Stats Cards Grid -->
@@ -943,42 +1053,35 @@
 
         </div>
 
-        <!-- PON Traffic Heatmap -->
-        <div id="pon-heatmap-panel" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="font-size:14px;font-weight:700;color:var(--text);">PON Port Traffic <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px;">live · 30s refresh</span></div>
-            <div style="display:flex;align-items:center;gap:16px;">
-              <div style="font-size:12px;color:var(--muted);">
-                ↓ <span id="pon-total-rx" style="color:#4ade80;font-weight:600;">—</span> Mbps &nbsp;
-                ↑ <span id="pon-total-tx" style="color:#60a5fa;font-weight:600;">—</span> Mbps
+        <!-- OLT Uplink Traffic Graph -->
+        <div id="dash-uplink-panel" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;">
+          <!-- Row 1: title + live stats + countdown -->
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+            <div>
+              <span style="font-size:14px;font-weight:700;color:var(--text);">OLT Uplink Traffic</span>
+              <span id="uplink-subtitle" style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px;">SNMP · live · 5s resolution</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+              <div style="font-size:12px;">
+                <span style="color:#4ade80;">↓</span> <span id="uplink-cur-rx" style="color:#4ade80;font-weight:700;">—</span> Mbps &nbsp;
+                <span style="color:#60a5fa;">↑</span> <span id="uplink-cur-tx" style="color:#60a5fa;font-weight:700;">—</span> Mbps
               </div>
-              <div style="font-size:11px;color:var(--muted);" id="pon-heatmap-ts">—</div>
+              <!-- Countdown badge — same pill style as header ONT countdown -->
+              <span id="uplink-countdown" class="cd-ring" title="Time until next graph refresh"><span class="cd-dot"></span><span id="uplink-countdown-val" class="cd-val">—</span></span>
             </div>
           </div>
-          <!-- legend -->
-          <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1e293b;border:1px solid #334155;"></span>Idle</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#14532d;"></span>&lt;100 Mbps</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#15803d;"></span>100–300</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ca8a04;"></span>300–600</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ea580c;"></span>600–900</div>
-            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dc2626;"></span>&gt;900 Mbps</div>
+          <!-- Row 2: range tabs -->
+          <div style="display:flex;gap:5px;margin-bottom:12px;flex-wrap:wrap;">
+            <button id="uplink-tab-live" onclick="uplinkSetRange('live')" style="padding:4px 10px;border-radius:5px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:11px;font-weight:700;cursor:pointer;">Live</button>
+            <button id="uplink-tab-6h"   onclick="uplinkSetRange('6h')"  style="padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;cursor:pointer;">6h</button>
+            <button id="uplink-tab-12h"  onclick="uplinkSetRange('12h')" style="padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;cursor:pointer;">12h</button>
+            <button id="uplink-tab-24h"  onclick="uplinkSetRange('24h')" style="padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;cursor:pointer;">24h</button>
+            <button id="uplink-tab-3d"   onclick="uplinkSetRange('3d')"  style="padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;cursor:pointer;">3d</button>
+            <button id="uplink-tab-7d"   onclick="uplinkSetRange('7d')"  style="padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;cursor:pointer;">7d</button>
           </div>
-          <div style="overflow-x:auto;">
-            <table id="pon-heatmap-grid" style="width:100%;border-collapse:collapse;font-size:12px;">
-              <thead>
-                <tr style="border-bottom:1px solid var(--border);">
-                  <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">PON Port</th>
-                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">↓ RX Mbps</th>
-                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">↑ TX Mbps</th>
-                  <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Total Mbps</th>
-                  <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;width:40%;">Utilization</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">⟳ Loading PON traffic…</td></tr>
-              </tbody>
-            </table>
+          <!-- Chart -->
+          <div style="position:relative;height:320px;">
+            <canvas id="uplinkChart"></canvas>
           </div>
         </div>
 
@@ -1087,6 +1190,7 @@
         <th style="width:120px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-sn">Serial Number</th>
         <th style="width:60px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('vlan')" id="fth-vlan">VLAN</th>
         <th style="width:70px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;cursor:pointer;" onclick="sortTable('type')" id="fth-type" title="Device type — ONT (router) vs ONU (bridge), from OLT">Type</th>
+        <th style="width:110px;padding:10px 8px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" id="fth-vendor" title="CPE vendor from WAN MAC address (via macvendors.com)">Vendor</th>
         <th style="width:120px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;" title="Open ONT router web UI (resolved via OLT, bypasses GenieACS)">Open Router</th>
         <th style="width:90px;padding:10px 8px;text-align:center;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;">Refresh</th>
       </tr>
@@ -1108,12 +1212,29 @@
         <th style="width:175px" onclick="sortTable('sn')"  id="th-sn">Serial Number</th>
         <th style="width:60px" onclick="sortTable('vlan')" id="th-vlan" style="cursor:pointer">VLAN</th>
         <th style="width:70px" onclick="sortTable('type')" id="th-type" title="Device type">Type</th>
+        <th style="width:110px" id="th-vendor" title="CPE vendor from WAN MAC">Vendor</th>
         <th style="width:120px" title="Open ONT router web UI">Open Router</th>
         <th style="width:90px">Refresh</th>
       </tr>
     </thead>
     <tbody id="ontTable"></tbody>
   </table>
+</div>
+
+<!-- Pagination Bar -->
+<div id="ont-pagination" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 16px;border-top:1px solid var(--border);background:var(--bg2);">
+  <span id="pag-info" style="font-size:12px;color:var(--muted);">—</span>
+  <div id="pag-pages" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span style="font-size:12px;color:var(--muted);">Per page:</span>
+    <select id="pag-size" onchange="setPageSize(+this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;">
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+      <option value="500">500</option>
+      <option value="1000">1000</option>
+      <option value="0">All</option>
+    </select>
+  </div>
 </div>
 
 <!-- Modal -->
@@ -1216,8 +1337,237 @@ function updateDashboard() {
 
   // Activity feed
   updateActivityFeed();
-  // PON heatmap
-  refreshPonHeatmap();
+  // OLT uplink graph
+  uplinkRefresh();
+  // Server stats
+  srvStatsRefresh();
+}
+
+// ── Server Stats ──────────────────────────────────────────────────────────
+let _srvStatsTimer = null;
+
+async function srvStatsRefresh() {
+  clearTimeout(_srvStatsTimer);
+  try {
+    const r = await fetch(`${API}/server/stats`, { headers: authHeaders() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+
+    const setBar = (barId, valId, pct, label) => {
+      const bar = document.getElementById(barId);
+      const val = document.getElementById(valId);
+      if (bar) bar.style.width = Math.min(100, pct ?? 0) + '%';
+      if (val) val.textContent = label;
+      // Colour bar: green < 60%, yellow < 85%, red >= 85%
+      if (bar) bar.style.background = pct >= 85 ? '#f87171' : pct >= 60 ? '#fbbf24' : bar.dataset.baseColor || '';
+    };
+
+    if (d.cpu_pct != null) {
+      const bar = document.getElementById('srv-cpu-bar');
+      if (bar) bar.dataset.baseColor = '#60a5fa';
+      setBar('srv-cpu-bar', 'srv-cpu-val', d.cpu_pct, `${d.cpu_pct}%`);
+    }
+    if (d.ram_pct != null) {
+      const bar = document.getElementById('srv-ram-bar');
+      if (bar) bar.dataset.baseColor = '#a78bfa';
+      setBar('srv-ram-bar', 'srv-ram-val', d.ram_pct, `${d.ram_used_gb}/${d.ram_total_gb} GB`);
+    }
+    if (d.disk_pct != null) {
+      const bar = document.getElementById('srv-disk-bar');
+      if (bar) bar.dataset.baseColor = '#34d399';
+      setBar('srv-disk-bar', 'srv-disk-val', d.disk_pct, `${d.disk_used_gb}/${d.disk_total_gb} GB`);
+    }
+    const ut = document.getElementById('srv-uptime-val');
+    if (ut && d.uptime) ut.textContent = d.uptime;
+  } catch(e) {
+    console.warn('[srvStats]', e.message);
+  }
+  // Re-schedule only if dashboard is active
+  _srvStatsTimer = setTimeout(() => {
+    const dash = document.getElementById('section-dashboard');
+    if (dash && dash.classList.contains('active')) srvStatsRefresh();
+  }, 10000);
+}
+
+// ── OLT Uplink Traffic Chart ──────────────────────────────────────────────
+let _uplinkChart    = null;
+let _uplinkTimer    = null;
+let _uplinkRange    = 'live';
+let _uplinkNextAt   = 0;        // kept for compat (unused — counter drives refresh now)
+let _uplinkCdTimer  = null;
+let _uplinkSecs     = 0;        // integer countdown: decrements every second, fires at 0
+
+// Refresh interval per range
+const _UPLINK_INTERVALS = {
+  live:  5000,   // 5 s — matches SNMP poll cadence
+  '6h':  30000,  // 30 s
+  '12h': 60000,  // 1 min
+  '24h': 60000,  // 1 min
+  '3d':  120000, // 2 min
+  '7d':  300000, // 5 min
+};
+
+const UPLINK_REFRESH_MS = 5000; // kept for compat — real interval uses _UPLINK_INTERVALS
+
+function uplinkInitChart() {
+  const canvas = document.getElementById('uplinkChart');
+  if (!canvas || _uplinkChart) return;
+  if (typeof Chart === 'undefined') return;
+  const ctx = canvas.getContext('2d');
+  _uplinkChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'RX (↓ Download)', data: [], borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,.08)',
+          borderWidth: 2, pointRadius: 0, fill: true, tension: .4 },
+        { label: 'TX (↑ Upload)',   data: [], borderColor: '#60a5fa', backgroundColor: 'rgba(96,165,250,.06)',
+          borderWidth: 2, pointRadius: 0, fill: true, tension: .4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 400 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#7a8099', font: { size: 11 }, boxWidth: 12, padding: 12 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} Mbps`
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#7a8099', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(42,47,69,.4)' }, border: { display: false } },
+        y: { min: 0, ticks: { color: '#7a8099', font: { size: 10 }, callback: v => v + ' M' }, grid: { color: 'rgba(42,47,69,.4)' }, border: { display: false } }
+      }
+    }
+  });
+}
+
+function uplinkSetRange(range) {
+  _uplinkRange = range;
+  // Update tab styles
+  ['live','6h','12h','24h','3d','7d'].forEach(r => {
+    const btn = document.getElementById(`uplink-tab-${r}`);
+    if (!btn) return;
+    const active = r === range;
+    btn.style.background    = active ? 'var(--accent)' : 'var(--bg3)';
+    btn.style.borderColor   = active ? 'var(--accent)' : 'var(--border)';
+    btn.style.color         = active ? '#fff'          : 'var(--muted)';
+    btn.style.fontWeight    = active ? '700'           : '400';
+  });
+  // Update subtitle
+  const subtitles = {
+    live: 'SNMP · live · 5s resolution',
+    '6h': 'InfluxDB · last 6 hours · 1-min avg',
+    '12h':'InfluxDB · last 12 hours · 2-min avg',
+    '24h':'InfluxDB · last 24 hours · 5-min avg',
+    '3d': 'InfluxDB · last 3 days · 15-min avg',
+    '7d': 'InfluxDB · last 7 days · 30-min avg',
+  };
+  const sub = document.getElementById('uplink-subtitle');
+  if (sub) sub.textContent = subtitles[range] || '';
+  // Reset counter for new range and reload immediately
+  _scheduleUplinkRefresh();
+  clearTimeout(_uplinkTimer);
+  uplinkRefresh();
+}
+
+async function uplinkRefresh() {
+  clearTimeout(_uplinkTimer);
+  uplinkInitChart();
+  if (!_uplinkChart) { _scheduleUplinkRefresh(); return; }
+  try {
+    const r = await fetch(`${API}/olt/uplink?range=${_uplinkRange}`, { headers: authHeaders() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    if (!d.ok || !d.points || !d.points.length) { _scheduleUplinkRefresh(); return; }
+    const pts = d.points;
+    // For live: show HH:MM:SS; for historical: show date+time or just HH:MM
+    const isLive = _uplinkRange === 'live';
+    const isMultiDay = ['3d','7d'].includes(_uplinkRange);
+    const labels = pts.map(p => {
+      const dt = new Date(p.time);
+      if (isLive)      return dt.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      if (isMultiDay)  return dt.toLocaleDateString([], { month:'short', day:'numeric' }) + ' ' +
+                              dt.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+      return dt.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    });
+    _uplinkChart.data.labels = labels;
+    _uplinkChart.data.datasets[0].data = pts.map(p => p.rx);
+    _uplinkChart.data.datasets[1].data = pts.map(p => p.tx);
+    _uplinkChart.update(_uplinkRange === 'live' ? 'none' : 'active');
+    // Live stats — show latest point
+    const last = pts[pts.length - 1];
+    const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    if (isLive) {
+      setEl('uplink-cur-rx', last.rx.toFixed(0));
+      setEl('uplink-cur-tx', last.tx.toFixed(0));
+    } else {
+      // For historical show avg of last few points
+      const tail = pts.slice(-5);
+      const avgRx = tail.reduce((s, p) => s + p.rx, 0) / tail.length;
+      const avgTx = tail.reduce((s, p) => s + p.tx, 0) / tail.length;
+      setEl('uplink-cur-rx', avgRx.toFixed(0));
+      setEl('uplink-cur-tx', avgTx.toFixed(0));
+    }
+  } catch(e) {
+    console.warn('[uplink]', e.message);
+  }
+  _scheduleUplinkRefresh();
+}
+
+function _scheduleUplinkRefresh() {
+  _uplinkSecs = Math.round((_UPLINK_INTERVALS[_uplinkRange] || 5000) / 1000);
+}
+
+// ── Countdown timers ─────────────────────────────────────────────────────────
+let _dashLastRefresh = 0;   // epoch ms when ONT data was last loaded
+const DASH_ONT_INTERVAL_MS = 60_000; // 1 min
+
+function _tickClock() {
+  const now  = new Date();
+  const tEl  = document.getElementById('hdr-clock-time');
+  const dEl2 = document.getElementById('hdr-clock-date');
+  if (tEl) tEl.textContent = now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  if (dEl2) dEl2.textContent = now.toLocaleDateString([], { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+}
+
+function _startCountdownTimers() {
+  _tickClock();
+  clearInterval(_uplinkCdTimer);
+  _uplinkCdTimer = setInterval(() => {
+    _tickClock();
+
+    const now = Date.now();
+
+    // ── Uplink graph countdown + sync trigger ────────────────────────────
+    const uEl  = document.getElementById('uplink-countdown');
+    const uVal = document.getElementById('uplink-countdown-val');
+    // Decrement integer counter; fire and reset at exactly 0
+    if (_uplinkSecs > 0) _uplinkSecs--;
+    const uM = Math.floor(_uplinkSecs / 60);
+    if (uVal) uVal.textContent = uM > 0 ? `${uM}m ${_uplinkSecs % 60}s` : `${_uplinkSecs}s`;
+    if (uEl)  uEl.classList.toggle('warn', _uplinkSecs <= 3);
+    if (_uplinkSecs === 0) {
+      _scheduleUplinkRefresh(); // reset counter immediately — display jumps to new value
+      const dash = document.getElementById('section-dashboard');
+      if (dash && dash.classList.contains('active')) uplinkRefresh();
+    }
+
+    // ── Dashboard ONT countdown ──────────────────────────────────────────
+    const dEl   = document.getElementById('dash-countdown-val');
+    const dRing = document.getElementById('dash-countdown');
+    if (_dashLastRefresh > 0) {
+      const sec = Math.max(0, Math.ceil((_dashLastRefresh + DASH_ONT_INTERVAL_MS - now) / 1000));
+      const m   = Math.floor(sec / 60), s = sec % 60;
+      if (dEl) dEl.textContent = m >= 60
+        ? `${Math.floor(m/60)}h ${m%60}m`
+        : m > 0 ? `${m}m ${s}s` : `${s}s`;
+      if (dRing) dRing.classList.toggle('warn', sec <= 10);
+    }
+  }, 1000);
 }
 
 // Fetch unregistered count from server cache (fast — no SSH)
@@ -1274,126 +1624,6 @@ function updateActivityFeed() {
   feed.innerHTML = html;
 }
 
-// ── PON Traffic Heatmap ───────────────────────────────────────────────────
-let _ponHeatTimer = null;
-const PON_REFRESH_MS = 30000; // 30 s live refresh
-
-function _ponColor(rx, tx) {
-  const t = (rx||0)+(tx||0);
-  if (t <= 0)  return { bg:'#1e293b', border:'#334155', text:'#94a3b8' };
-  if (t < 100) return { bg:'#14532d', border:'#166534', text:'#86efac' };
-  if (t < 300) return { bg:'#15803d', border:'#16a34a', text:'#bbf7d0' };
-  if (t < 600) return { bg:'#713f12', border:'#ca8a04', text:'#fde68a' };
-  if (t < 900) return { bg:'#7c2d12', border:'#ea580c', text:'#fed7aa' };
-  return              { bg:'#7f1d1d', border:'#dc2626', text:'#fca5a5' };
-}
-
-async function refreshPonHeatmap() {
-  clearTimeout(_ponHeatTimer);
-  const grid = document.getElementById('pon-heatmap-grid');
-  if (!grid) return;
-
-  // Show spinner in subtitle while fetching
-  const tsEl = document.getElementById('pon-heatmap-ts');
-  if (tsEl) tsEl.textContent = '⟳ updating…';
-
-  try {
-    const r = await fetch(`${API}/pon/traffic`, { headers: authHeaders() });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'api error');
-
-    const setEl = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
-    setEl('pon-total-rx', d.total_rx_mbps != null ? d.total_rx_mbps.toFixed(0) : '—');
-    setEl('pon-total-tx', d.total_tx_mbps != null ? d.total_tx_mbps.toFixed(0) : '—');
-    if (tsEl) tsEl.textContent = new Date().toLocaleTimeString();
-
-    // Sort by slot then port
-    const ports = (d.ports || []).slice().sort((a,b) => {
-      const [,as,ap] = (a.fsp||'0/0/0').split('/').map(Number);
-      const [,bs,bp] = (b.fsp||'0/0/0').split('/').map(Number);
-      return as !== bs ? as-bs : ap-bp;
-    });
-
-    const maxTotal = Math.max(1, ...ports.map(p => (p.rx_mbps||0)+(p.tx_mbps||0)));
-
-    // Group by slot
-    const slotMap = {};
-    ports.forEach(p => {
-      const slot = (p.fsp||'0/0/0').split('/')[1] || '?';
-      if (!slotMap[slot]) slotMap[slot] = [];
-      slotMap[slot].push(p);
-    });
-
-    let rows = '';
-    let rowIdx = 0;
-    Object.keys(slotMap).sort((a,b)=>Number(a)-Number(b)).forEach(slot => {
-      const slotPorts = slotMap[slot];
-      // Slot subtotals
-      const slotRx = slotPorts.reduce((s,p)=>s+(p.rx_mbps||0),0);
-      const slotTx = slotPorts.reduce((s,p)=>s+(p.tx_mbps||0),0);
-      rows += `<tr>
-        <td colspan="5" style="padding:6px 12px 4px;background:rgba(255,255,255,.05);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
-          <span style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.7px;">Slot ${slot}</span>
-          <span style="font-size:10px;color:var(--muted);margin-left:10px;">${slotPorts.length} ports</span>
-          <span style="font-size:10px;color:#4ade80;margin-left:14px;">↓ ${slotRx.toFixed(1)}</span>
-          <span style="font-size:10px;color:#60a5fa;margin-left:8px;">↑ ${slotTx.toFixed(1)} Mbps</span>
-        </td>
-      </tr>`;
-      slotPorts.forEach(p => {
-        const rx = p.rx_mbps||0, tx = p.tx_mbps||0, total = rx+tx;
-        const c = _ponColor(rx, tx);
-        const barPct = Math.min(100,(total/maxTotal)*100).toFixed(1);
-        const zebra = rowIdx++ % 2 === 0 ? 'background:rgba(255,255,255,.015);' : '';
-        rows += `<tr style="${zebra}border-bottom:1px solid rgba(255,255,255,.04);">
-          <td style="padding:8px 12px 8px 20px;font-weight:600;color:${c.text};white-space:nowrap;">
-            <span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${c.bg};border:1px solid ${c.border};margin-right:8px;vertical-align:middle;"></span>${p.fsp||'—'}
-          </td>
-          <td style="padding:8px 12px;text-align:right;color:#4ade80;font-variant-numeric:tabular-nums;font-size:12px;">${rx.toFixed(1)}</td>
-          <td style="padding:8px 12px;text-align:right;color:#60a5fa;font-variant-numeric:tabular-nums;font-size:12px;">${tx.toFixed(1)}</td>
-          <td style="padding:8px 12px;text-align:right;color:${c.text};font-weight:700;font-variant-numeric:tabular-nums;font-size:12px;">${total.toFixed(1)}</td>
-          <td style="padding:8px 12px;">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div style="flex:1;height:5px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;">
-                <div style="height:100%;width:${barPct}%;background:${c.border};border-radius:3px;transition:width .5s ease;"></div>
-              </div>
-              <span style="font-size:10px;color:var(--muted);min-width:36px;text-align:right;">${barPct}%</span>
-            </div>
-          </td>
-        </tr>`;
-      });
-    });
-
-    // Grand total footer
-    const totalRx = ports.reduce((s,p)=>s+(p.rx_mbps||0),0);
-    const totalTx = ports.reduce((s,p)=>s+(p.tx_mbps||0),0);
-    rows += `<tr style="border-top:2px solid var(--border);background:rgba(255,255,255,.05);">
-      <td style="padding:10px 12px;font-weight:700;color:var(--text);font-size:12px;">Total (${ports.length} ports)</td>
-      <td style="padding:10px 12px;text-align:right;color:#4ade80;font-weight:700;font-size:12px;">${totalRx.toFixed(1)}</td>
-      <td style="padding:10px 12px;text-align:right;color:#60a5fa;font-weight:700;font-size:12px;">${totalTx.toFixed(1)}</td>
-      <td style="padding:10px 12px;text-align:right;color:var(--text);font-weight:700;font-size:12px;">${(totalRx+totalTx).toFixed(1)}</td>
-      <td style="padding:10px 12px;color:var(--muted);font-size:11px;">Mbps</td>
-    </tr>`;
-
-    if (!ports.length) rows = '<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">No PON data yet — poller warming up</td></tr>';
-    const tbody = grid.querySelector('tbody');
-    if (tbody) tbody.innerHTML = rows; else grid.innerHTML = rows;
-
-  } catch(e) {
-    const grid2 = document.getElementById('pon-heatmap-grid');
-    const tb = grid2 && grid2.querySelector('tbody');
-    const errHtml = `<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--muted);">Unable to load PON traffic: ${e.message}</td></tr>`;
-    if (tb) tb.innerHTML = errHtml; else if (grid2) grid2.innerHTML = errHtml;
-    if (tsEl) tsEl.textContent = 'error';
-  }
-
-  // Live refresh every 30s while dashboard is active
-  _ponHeatTimer = setTimeout(() => {
-    const dash = document.getElementById('section-dashboard');
-    if (dash && dash.classList.contains('active')) refreshPonHeatmap();
-  }, PON_REFRESH_MS);
-}
-
 // ── Advanced Filter Bar ───────────────────────────────────────────────────
 let _advFilters = {status:'', signal:'', pon:'', sort:''};
 
@@ -1426,12 +1656,13 @@ function applyAdvFilters() {
   _advFilters.signal = document.getElementById('ff-signal')?.value || '';
   _advFilters.pon    = document.getElementById('ff-pon')?.value    || '';
   _advFilters.sort   = document.getElementById('ff-sort')?.value   || '';
-  
+
   // Map to existing statFilter for status
   if (_advFilters.status === 'online') statFilter = 'active';
   else if (['offline','power-failure','fiber-issue','weak','bad'].includes(_advFilters.status)) statFilter = _advFilters.status;
   else statFilter = 'all';
-  
+
+  _curPage = 1;
   renderTable();
 }
 
@@ -1442,6 +1673,7 @@ function resetAdvFilters() {
   });
   _advFilters = {status:'', signal:'', pon:'', sort:''};
   statFilter = 'all';
+  _curPage = 1;
   document.querySelectorAll('.stat').forEach(s => s.classList.remove('active-filter'));
   renderTable();
 }
@@ -1452,6 +1684,7 @@ function applyOntDropdownFilter(val) {
   document.querySelectorAll('.stat').forEach(s => s.classList.remove('active-filter'));
   const idMap = {active:'stat-online', offline:'stat-offline', weak:'stat-weak', bad:'stat-bad'};
   if (idMap[val]) document.getElementById(idMap[val])?.classList.add('active-filter');
+  _curPage = 1;
   renderTable();
 }
 
@@ -1999,6 +2232,7 @@ function switchSection(name) {
   else { srvStop(); }
   if (name === 'olt') loadOLTList();
   if (name === 'oltconfig') loadOltConfig();
+  if (name === 'mikrotik') { if (!_mtDevices.length) loadMikroTik(); else mtRefreshDashboard(); }
   if (isMobileView()) setSidebarCollapsed(true);
   // Re-apply sticky positions after layout change
   setTimeout(updateStickyPositions, 100);
@@ -2572,6 +2806,7 @@ async function deleteOLT(id) {
 }
 
 async function init() {
+  _tickClock(); // show clock immediately, before auth check
   if (!checkAuth()) return;
   normalizeSidebarProfileMenu();
   if (currentUser) {
@@ -2639,7 +2874,9 @@ async function init() {
 
   loadOLTList();
   await loadONTs();
-  setInterval(loadONTs, 3600_000);
+  _dashLastRefresh = Date.now();
+  setInterval(() => { loadONTs(); _dashLastRefresh = Date.now(); }, 60_000);
+  _startCountdownTimers();
   updateDashboard();
   buildPONFilterOptions();
   renderTable();
@@ -3201,7 +3438,7 @@ function updateStickyPositions() {
   }
 }
 
-function applyFilters() { renderTable(); }
+function applyFilters() { _curPage = 1; renderTable(); }
 
 function getFiltered() {
   const search = document.getElementById('searchBox').value.toLowerCase();
@@ -3264,17 +3501,100 @@ function hideActionOverlay() {
   overlay.classList.remove('open');
 }
 
+// ── Pagination ───────────────────────────────────────────────────────────────
+let _pageSize = 50;
+let _curPage  = 1;
+
+function setPageSize(n) {
+  _pageSize = n;
+  _curPage  = 1;
+  const sel = document.getElementById('pag-size');
+  if (sel) sel.value = String(n);
+  renderTable();
+}
+
+function goToPage(p) {
+  _curPage = p;
+  renderTable();
+  // Scroll table into view
+  const wrap = document.querySelector('#section-ont .table-wrap');
+  if (wrap) wrap.scrollTop = 0;
+}
+
+function _renderPagination(total) {
+  const info  = document.getElementById('pag-info');
+  const pages = document.getElementById('pag-pages');
+  if (!info || !pages) return;
+
+  if (_pageSize === 0 || total === 0) {
+    info.textContent  = total ? `Showing all ${total} ONTs` : 'No ONTs';
+    pages.innerHTML   = '';
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / _pageSize));
+  if (_curPage > totalPages) _curPage = totalPages;
+
+  const start = (_curPage - 1) * _pageSize + 1;
+  const end   = Math.min(_curPage * _pageSize, total);
+  info.textContent = `${start}–${end} of ${total} ONTs`;
+
+  // Build page buttons: first, prev, window of 5, next, last
+  const btnStyle = (active) =>
+    `style="min-width:30px;height:28px;padding:0 7px;border-radius:5px;border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};background:${active ? 'var(--accent)' : 'var(--bg3)'};color:${active ? '#fff' : 'var(--text)'};font-size:12px;font-weight:${active ? 700 : 400};cursor:pointer;"`;
+
+  let html = '';
+  // Prev
+  if (_curPage > 1) html += `<button ${btnStyle(false)} onclick="goToPage(${_curPage-1})">‹</button>`;
+
+  // Page number range
+  let pStart = Math.max(1, _curPage - 2);
+  let pEnd   = Math.min(totalPages, _curPage + 2);
+  if (pEnd - pStart < 4) {
+    if (pStart === 1) pEnd = Math.min(totalPages, 5);
+    else pStart = Math.max(1, pEnd - 4);
+  }
+
+  if (pStart > 1) {
+    html += `<button ${btnStyle(false)} onclick="goToPage(1)">1</button>`;
+    if (pStart > 2) html += `<span style="color:var(--muted);font-size:12px;padding:0 2px;">…</span>`;
+  }
+  for (let p = pStart; p <= pEnd; p++) {
+    html += `<button ${btnStyle(p === _curPage)} onclick="goToPage(${p})">${p}</button>`;
+  }
+  if (pEnd < totalPages) {
+    if (pEnd < totalPages - 1) html += `<span style="color:var(--muted);font-size:12px;padding:0 2px;">…</span>`;
+    html += `<button ${btnStyle(false)} onclick="goToPage(${totalPages})">${totalPages}</button>`;
+  }
+  // Next
+  if (_curPage < totalPages) html += `<button ${btnStyle(false)} onclick="goToPage(${_curPage+1})">›</button>`;
+
+  pages.innerHTML = html;
+}
+
 // ── Table ────────────────────────────────────────────────────────────────────
 function renderTable() {
   const tbody = document.getElementById('ontTable');
   if (!tbody) return;
   try {
-    const rows = getSortedFiltered();
+    const allRows = getSortedFiltered();
+    const total   = allRows.length;
+
+    // Slice for current page
+    let rows;
+    if (_pageSize === 0) {
+      rows = allRows;
+    } else {
+      const start = (_curPage - 1) * _pageSize;
+      rows = allRows.slice(start, start + _pageSize);
+    }
+
     tbody.innerHTML = rows.map((o, i) => {
-      const sig  = signalBadge(o);
-      const temp = o.temp ? `${o.temp} C` : '-';
+      const sig     = signalBadge(o);
+      const temp    = o.temp ? `${o.temp} C` : '-';
+      const rowNum  = _pageSize === 0 ? i + 1 : (_curPage - 1) * _pageSize + i + 1;
       return `<tr class="ont-row" data-sn="${escAttr(o.sn)}" data-name="${escAttr(o.name || '')}">
-        <td class="sel-cell" onclick="event.stopPropagation()"><input type="checkbox" class="ont-select" data-sn="${escAttr(o.sn)}" data-pon="${escAttr(o.pon || '')}" data-ont-id="${escAttr(o.ont_id || '')}" onchange="onOntSelectChange()"></td><td class="row-num">${i+1}</td>
+        <td class="sel-cell" onclick="event.stopPropagation()"><input type="checkbox" class="ont-select" data-sn="${escAttr(o.sn)}" data-pon="${escAttr(o.pon || '')}" data-ont-id="${escAttr(o.ont_id || '')}" onchange="onOntSelectChange()"></td><td class="row-num">${rowNum}</td>
         <td><span class="pon-tag">${o.pon || '-'}</span></td>
         <td>${statusBadge(o)}</td>
         <td class="customer-name">${escHtml(o.name || '-')}</td>
@@ -3283,6 +3603,7 @@ function renderTable() {
         <td class="serial-cell" style="font-size:11px;">${o.sn || '-'}</td>
         <td style="font-size:11px;color:var(--muted);">${o.vlan || '-'}</td>
         <td style="text-align:center;">${deviceTypePill(o.device_type)}</td>
+        <td style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;" title="${escAttr(o.vendor||'')}">${escHtml(o.vendor||'--')}</td>
         <td onclick="event.stopPropagation()" style="text-align:center;">
           <button class="btn-row-open" onclick="openRouter('${escAttr(o.sn)}','${escAttr(o.pon || '')}','${escAttr(o.ont_id || '')}','${escAttr(o.device_type || '')}',this)" title="Open router web UI (WAN IP via GenieACS TR-069)">
             <span class="open-icon">🛜</span> Open Router
@@ -3306,11 +3627,13 @@ function renderTable() {
     const wrap = document.querySelector('#section-ont .table-wrap');
     if (isMobileView() && wrap) wrap.scrollLeft = 0;
 
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
+    if (!allRows.length) {
+      tbody.innerHTML = '<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--muted);">No ONTs match current filters.</td></tr>';
     }
+
+    _renderPagination(total);
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" style="padding:24px;text-align:center;color:#f87171;">Table render error: ${escHtml(e.message || String(e))}</td></tr>`;
   }
 }
 
@@ -3620,6 +3943,7 @@ async function refreshAll() {
   _barStart();
   try {
     await loadONTs();
+    _dashLastRefresh = Date.now(); // reset countdown after manual refresh
     showToast('✓ Data refreshed — ' + allONTs.length + ' ONTs loaded', 'ok');
   } catch(e) {
     showToast('⚠ Refresh failed: ' + e.message, 'err');
@@ -3687,7 +4011,7 @@ function renderModalTab(tab, data) {
   const body = document.getElementById('modalBody');
   body.innerHTML = '';
 
-  if (tab === 'summary') body.appendChild(renderSummary(data.summary, data._device_id));
+  if (tab === 'summary') body.appendChild(renderSummary(data.summary, data._device_id, data.wan));
   if (tab === 'wan')     body.appendChild(renderWAN(data.wan));
   if (tab === 'lan')     body.appendChild(renderLAN(data.lan));
   if (tab === 'wlan')    body.appendChild(renderWLAN(data.wlan));
@@ -3838,10 +4162,15 @@ function updateCachedField(fieldKey, value, bandIndex) {
 
 // ── Tab renderers ─────────────────────────────────────────────────────────────
 
-function renderSummary(s, deviceId) {
+function renderSummary(s, deviceId, wan) {
   const div = document.createElement('div');
   const grid = document.createElement('div');
   grid.className = 'field-grid';
+
+  // Extract WAN MAC — prefer PPP MAC, fall back to IP connection MAC
+  const wanMac = (wan && wan.mac && wan.mac !== '-') ? wan.mac
+               : (wan && wan.connections && wan.connections.length > 0 && wan.connections[0].mac && wan.connections[0].mac !== '-') ? wan.connections[0].mac
+               : null;
 
   [
     ['Serial Number', s.serial_number, null, {}],
@@ -3850,6 +4179,7 @@ function renderSummary(s, deviceId) {
     ['OUI',           s.oui,           null, {}],
     ['HW Version',    s.hw_version,    null, {}],
     ['SW Version',    s.sw_version,    null, {}],
+    ['WAN MAC',       wanMac || '-',   null, {}],
     ['Uptime',        s.uptime,        null, {}],
     ['Last Inform',   s.last_inform,   null, {}],
     ['Periodic Interval', s.periodic_interval, 'tr069.interval', { type:'number' }],
@@ -4135,6 +4465,471 @@ function applyOntSettingsTemplateDefaults() {
 
 init();
 </script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- MikroTik Module JavaScript                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+// ── MikroTik globals ──────────────────────────────────────────────────────
+let _mtDevices     = [];
+let _mtPppSessions = [];   // cached for client-side search
+let _mtChartCpu    = null;
+let _mtChartMem    = null;
+let _mtChartIface  = null;
+let _mtChartPpp    = null;
+
+// ── Tab switching ────────────────────────────────────────────────────────
+function mtTab(name) {
+  document.querySelectorAll('.mt-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.mt-panel').forEach(p => p.style.display = 'none');
+  const btn = document.querySelector(`[onclick="mtTab('${name}')"]`);
+  if (btn) btn.classList.add('active');
+  const panel = document.getElementById(`mt-panel-${name}`);
+  if (panel) panel.style.display = '';
+
+  if (name === 'interfaces') _mtPopulateDevSel('mt-iface-dev');
+  if (name === 'ppp')        { _mtPopulateDevSel('mt-ppp-dev');  if (_mtDevices.length) mtLoadPPP(document.getElementById('mt-ppp-dev').value); }
+  if (name === 'resource')   { _mtPopulateDevSel('mt-res-dev');  if (_mtDevices.length) mtLoadResource(document.getElementById('mt-res-dev').value, '1h'); }
+}
+
+function _mtPopulateDevSel(selId) {
+  const sel = document.getElementById(selId);
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = _mtDevices.map(d =>
+    `<option value="${d.id}" ${d.id == cur ? 'selected' : ''}>${escHtml(d.name)} (${escHtml(d.ip)})</option>`
+  ).join('') || '<option value="">No devices</option>';
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+function _mtStatusBadge(status) {
+  if (status === 'online')  return '<span class="mt-status-online">● Online</span>';
+  if (status === 'offline') return '<span class="mt-status-offline">● Offline</span>';
+  return '<span class="mt-status-unknown">● Unknown</span>';
+}
+
+function _mtFmtUptime(sec) {
+  if (!sec) return '-';
+  sec = parseInt(sec);
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function _mtFmtBps(bps) {
+  if (!bps) return '0';
+  const mbps = bps / 1e6;
+  if (mbps >= 100) return mbps.toFixed(0) + ' M';
+  if (mbps >= 1)   return mbps.toFixed(1) + ' M';
+  return (bps / 1e3).toFixed(0) + ' K';
+}
+
+function _mtAge(ts) {
+  if (!ts) return 'Never';
+  const ago = Math.floor(Date.now()/1000) - ts;
+  if (ago < 120) return `${ago}s ago`;
+  if (ago < 3600) return `${Math.floor(ago/60)}m ago`;
+  if (ago < 86400) return `${Math.floor(ago/3600)}h ago`;
+  return `${Math.floor(ago/86400)}d ago`;
+}
+
+// ── Load section ─────────────────────────────────────────────────────────
+async function loadMikroTik() {
+  await mtLoadDevices();
+  mtTab('dashboard');
+  mtRefreshDashboard();
+}
+
+// ── Load device list ─────────────────────────────────────────────────────
+async function mtLoadDevices() {
+  try {
+    const r = await fetch(`${API}/mikrotik/devices`, { headers: authHeaders() });
+    const d = await r.json();
+    _mtDevices = (d.devices || []);
+  } catch(e) {
+    _mtDevices = [];
+    console.error('mtLoadDevices:', e);
+  }
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────
+async function mtRefreshDashboard() {
+  await mtLoadDevices();
+
+  // Summary cards
+  const online  = _mtDevices.filter(d => d.last_status === 'online').length;
+  const offline = _mtDevices.filter(d => d.last_status === 'offline').length;
+  const cardsEl = document.getElementById('mt-cards');
+  if (cardsEl) {
+    cardsEl.innerHTML = [
+      { label:'Total Devices',  val: _mtDevices.length,  sub:'registered', color:'var(--text)' },
+      { label:'Online',         val: online,              sub:'reachable',  color:'#22c55e' },
+      { label:'Offline',        val: offline,             sub:'unreachable',color:'#ef4444' },
+    ].map(c => `
+      <div class="mt-card">
+        <div class="mt-card-label">${c.label}</div>
+        <div class="mt-card-val" style="color:${c.color}">${c.val}</div>
+        <div class="mt-card-sub">${c.sub}</div>
+      </div>`).join('');
+  }
+
+  // Device table
+  const tbody = document.getElementById('mt-device-tbody');
+  if (!tbody) return;
+  if (!_mtDevices.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">
+      No devices. <a href="#" onclick="mtShowAddDevice();return false;" style="color:var(--accent);">Add your first MikroTik device →</a>
+    </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = _mtDevices.map(d => `
+    <tr class="mt-tr-row" style="border-bottom:1px solid var(--border);">
+      <td style="padding:10px 12px;font-weight:600;color:var(--text);">${escHtml(d.name)}</td>
+      <td style="padding:10px 12px;font-family:monospace;color:var(--muted);">${escHtml(d.ip)}</td>
+      <td style="padding:10px 12px;color:var(--muted);">${escHtml(d.location||'-')}</td>
+      <td style="padding:10px 12px;">${_mtStatusBadge(d.last_status)}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--muted);">${escHtml(d.routeros_ver||'-')}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--muted);">${_mtAge(d.last_seen)}</td>
+      <td style="padding:10px 12px;text-align:center;">${d.snmp_enabled ? '<span class="mt-badge-yes">ON</span>' : '<span class="mt-badge-no">OFF</span>'}</td>
+      <td style="padding:10px 12px;text-align:center;">${d.api_enabled  ? '<span class="mt-badge-yes">ON</span>' : '<span class="mt-badge-no">OFF</span>'}</td>
+      <td style="padding:10px 12px;text-align:center;">
+        <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">
+          <button class="mt-action-btn" onclick="mtTab('resource');document.getElementById('mt-res-dev').value=${d.id};mtLoadResource(${d.id},'1h')">📈</button>
+          <button class="mt-action-btn" onclick="mtTab('ppp');document.getElementById('mt-ppp-dev').value=${d.id};mtLoadPPP(${d.id})">👥</button>
+          <button class="mt-action-btn" onclick="mtShowEditDevice(${d.id})">✏️</button>
+          <button class="mt-action-btn" onclick="mtTestDevice(${d.id},this)">🔌</button>
+          <button class="mt-action-btn" style="color:#ef4444;border-color:#ef4444;" onclick="mtDeleteDevice(${d.id},'${escAttr(d.name)}')">🗑</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+// ── Add / Edit device form ────────────────────────────────────────────────
+function mtShowAddDevice() {
+  mtTab('devices');
+  _mtRenderForm(null);
+}
+
+function mtShowEditDevice(id) {
+  const dev = _mtDevices.find(d => d.id == id);
+  if (!dev) return;
+  mtTab('devices');
+  _mtRenderForm(dev);
+}
+
+function _mtRenderForm(dev) {
+  const wrap = document.getElementById('mt-device-form-wrap');
+  if (!wrap) return;
+  const isEdit = !!dev;
+  wrap.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:640px;">
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px;">${isEdit ? '✏️ Edit Device' : '➕ Add MikroTik Device'}</div>
+      <div class="mt-form-row">
+        <div><div class="mt-form-label">Device Name *</div>
+          <input class="mt-form-input" id="mf-name" placeholder="e.g. HQ-MikroTik" value="${escAttr(dev?.name||'')}"></div>
+        <div><div class="mt-form-label">IP Address *</div>
+          <input class="mt-form-input" id="mf-ip" placeholder="192.168.1.1" value="${escAttr(dev?.ip||'')}"></div>
+      </div>
+      <div class="mt-form-row full">
+        <div><div class="mt-form-label">Location</div>
+          <input class="mt-form-input" id="mf-location" placeholder="e.g. Server Room" value="${escAttr(dev?.location||'')}"></div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:14px 0 8px;">SNMP</div>
+      <div class="mt-form-row">
+        <div><div class="mt-form-label">SNMP Enabled</div>
+          <select class="mt-form-input" id="mf-snmp-en">
+            <option value="1" ${(dev?.snmp_enabled??1)==1?'selected':''}>Yes</option>
+            <option value="0" ${(dev?.snmp_enabled??1)==0?'selected':''}>No</option>
+          </select></div>
+        <div><div class="mt-form-label">Community String</div>
+          <input class="mt-form-input" id="mf-community" placeholder="public" value="${escAttr(dev?.snmp_community||'public')}"></div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:14px 0 8px;">RouterOS API</div>
+      <div class="mt-form-row">
+        <div><div class="mt-form-label">API Enabled</div>
+          <select class="mt-form-input" id="mf-api-en">
+            <option value="1" ${(dev?.api_enabled??1)==1?'selected':''}>Yes</option>
+            <option value="0" ${(dev?.api_enabled??1)==0?'selected':''}>No</option>
+          </select></div>
+        <div><div class="mt-form-label">API Port</div>
+          <input class="mt-form-input" id="mf-api-port" type="number" value="${dev?.api_port||8728}"></div>
+      </div>
+      <div class="mt-form-row">
+        <div><div class="mt-form-label">Username</div>
+          <input class="mt-form-input" id="mf-username" placeholder="admin" value="${escAttr(dev?.username||'admin')}"></div>
+        <div><div class="mt-form-label">Password${isEdit?' (leave blank to keep)':''}</div>
+          <input class="mt-form-input" id="mf-password" type="password" placeholder="${isEdit?'(unchanged)':'API password'}"></div>
+      </div>
+      <div class="mt-form-row">
+        <div><div class="mt-form-label">Radius Role</div>
+          <select class="mt-form-input" id="mf-radius">
+            <option value="0" ${(dev?.radius_role||0)==0?'selected':''}>No</option>
+            <option value="1" ${(dev?.radius_role||0)==1?'selected':''}>Yes</option>
+          </select></div>
+        <div><div class="mt-form-label">Monitoring Enabled</div>
+          <select class="mt-form-input" id="mf-enabled">
+            <option value="1" ${(dev?.enabled??1)==1?'selected':''}>Yes</option>
+            <option value="0" ${(dev?.enabled??1)==0?'selected':''}>No</option>
+          </select></div>
+      </div>
+      <div id="mf-msg" style="min-height:18px;font-size:12px;margin-bottom:8px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button class="mt-btn-primary" onclick="mtSaveDevice(${isEdit?dev.id:'null'})">${isEdit?'Save Changes':'Add Device'}</button>
+        <button class="mt-btn-secondary" onclick="mtTab('dashboard')">Cancel</button>
+        ${isEdit?`<button class="mt-btn-danger" onclick="mtDeleteDevice(${dev.id},'${escAttr(dev.name)}')">Delete</button>`:''}
+      </div>
+    </div>`;
+}
+
+async function mtSaveDevice(id) {
+  const msg = document.getElementById('mf-msg');
+  const payload = {
+    name:           document.getElementById('mf-name').value.trim(),
+    ip:             document.getElementById('mf-ip').value.trim(),
+    location:       document.getElementById('mf-location').value.trim(),
+    snmp_enabled:   parseInt(document.getElementById('mf-snmp-en').value),
+    snmp_community: document.getElementById('mf-community').value.trim(),
+    api_enabled:    parseInt(document.getElementById('mf-api-en').value),
+    api_port:       parseInt(document.getElementById('mf-api-port').value)||8728,
+    username:       document.getElementById('mf-username').value.trim(),
+    radius_role:    parseInt(document.getElementById('mf-radius').value),
+    enabled:        parseInt(document.getElementById('mf-enabled').value),
+  };
+  const pw = document.getElementById('mf-password').value;
+  if (pw) payload.password = pw;
+
+  if (!payload.name || !payload.ip) {
+    msg.style.color='#ef4444'; msg.textContent = 'Name and IP are required.'; return;
+  }
+  msg.style.color='var(--muted)'; msg.textContent = 'Saving…';
+
+  try {
+    const url = id ? `${API}/mikrotik/devices/${id}` : `${API}/mikrotik/devices`;
+    const r = await fetch(url, { method:'POST', headers:{...authHeaders(),'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Save failed');
+    msg.style.color='#22c55e'; msg.textContent = id ? 'Saved.' : `Device added (ID ${d.id}).`;
+    await mtLoadDevices();
+    setTimeout(() => mtTab('dashboard'), 900);
+  } catch(e) {
+    msg.style.color='#ef4444'; msg.textContent = e.message;
+  }
+}
+
+async function mtDeleteDevice(id, name) {
+  if (!confirm(`Delete MikroTik device "${name}"?\nThis will NOT delete historical data from InfluxDB.`)) return;
+  try {
+    const r = await fetch(`${API}/mikrotik/devices/${id}/delete`, { method:'POST', headers:authHeaders() });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    await mtLoadDevices();
+    mtTab('dashboard');
+    mtRefreshDashboard();
+  } catch(e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+async function mtTestDevice(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const r = await fetch(`${API}/mikrotik/devices/${id}/test`, { method:'POST', headers:authHeaders() });
+    const d = await r.json();
+    const snmp = d.snmp_ok ? '✅ SNMP' : '❌ SNMP';
+    const api  = d.api_ok  ? '✅ API'  : '❌ API';
+    const ver  = d.version  ? ` (RouterOS ${d.version})` : '';
+    const host = d.hostname ? ` [${d.hostname}]` : '';
+    alert(`Connection test for device #${id}\n${snmp}   ${api}${ver}${host}${d.error?'\n⚠ '+d.error:''}`);
+  } catch(e) {
+    alert('Test failed: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔌'; }
+  }
+}
+
+// ── Interfaces ───────────────────────────────────────────────────────────
+async function mtLoadInterfaces(deviceId) {
+  if (!deviceId) return;
+  const tbody = document.getElementById('mt-iface-tbody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted);">Loading…</td></tr>';
+
+  const ifaceSel = document.getElementById('mt-iface-sel');
+
+  try {
+    const r = await fetch(`${API}/mikrotik/interfaces?device_id=${deviceId}`, { headers:authHeaders() });
+    const d = await r.json();
+    const ifaces = d.interfaces || [];
+
+    // Populate interface selector
+    if (ifaceSel) {
+      ifaceSel.innerHTML = ifaces.map(i =>
+        `<option value="${escAttr(i.interface)}">${escHtml(i.interface)}</option>`
+      ).join('') || '<option value="">No interfaces</option>';
+    }
+
+    if (tbody) {
+      tbody.innerHTML = ifaces.map(i => `
+        <tr class="mt-tr-row" style="border-bottom:1px solid var(--border);cursor:pointer;"
+            onclick="document.getElementById('mt-iface-sel').value='${escAttr(i.interface)}';mtShowIfaceGraph('${deviceId}','${escAttr(i.interface)}',document.getElementById('mt-iface-range').value)">
+          <td style="padding:9px 12px;font-weight:600;">${escHtml(i.interface)}</td>
+          <td style="padding:9px 12px;color:var(--muted);font-size:11px;">${escHtml(i.iface_type||'-')}</td>
+          <td style="padding:9px 12px;text-align:right;color:#4ade80;">${_mtFmtBps(i.rx_bps)}</td>
+          <td style="padding:9px 12px;text-align:right;color:#60a5fa;">${_mtFmtBps(i.tx_bps)}</td>
+          <td style="padding:9px 12px;text-align:center;">${i.oper_status==1?'<span style="color:#22c55e">●</span>':'<span style="color:#ef4444">●</span>'}</td>
+        </tr>`).join('') || '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted);">No interface data (poller may still be starting)</td></tr>';
+    }
+
+    // Auto-load graph for first interface
+    if (ifaces.length && ifaceSel && ifaceSel.value) {
+      mtShowIfaceGraph(deviceId, ifaceSel.value, document.getElementById('mt-iface-range').value || '1h');
+    }
+  } catch(e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="padding:16px;text-align:center;color:#ef4444;">Error: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function mtShowIfaceGraph(deviceId, iface, range) {
+  if (!deviceId || !iface) return;
+  const title = document.getElementById('mt-iface-graph-title');
+  if (title) title.textContent = `${iface} — Traffic (${range})`;
+  try {
+    const r = await fetch(`${API}/mikrotik/iface-traffic?device_id=${deviceId}&iface=${encodeURIComponent(iface)}&range=${range}`, { headers:authHeaders() });
+    const d = await r.json();
+    if (!d.ok) return;
+    const ctx = document.getElementById('mt-iface-chart');
+    if (!ctx) return;
+    if (_mtChartIface) { _mtChartIface.destroy(); _mtChartIface = null; }
+    _mtChartIface = new Chart(ctx.getContext('2d'), {
+      type:'line',
+      data:{ labels:d.labels, datasets:[
+        { label:'RX Mbps', data:d.rx_mbps, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true },
+        { label:'TX Mbps', data:d.tx_mbps, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.06)', borderWidth:2, pointRadius:0, tension:.3, fill:true },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
+        plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}} },
+        scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:8}},
+                 y:{ticks:{color:'var(--muted)',callback:v=>v+' M'},beginAtZero:true} } }
+    });
+  } catch(e) { console.error('mtShowIfaceGraph:', e); }
+}
+
+// ── PPPoE Sessions ────────────────────────────────────────────────────────
+async function mtLoadPPP(deviceId) {
+  if (!deviceId) return;
+  const tbody = document.getElementById('mt-ppp-tbody');
+  const countEl = document.getElementById('mt-ppp-count');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--muted);">Loading…</td></tr>';
+
+  try {
+    const r = await fetch(`${API}/mikrotik/ppp-sessions?device_id=${deviceId}`, { headers:authHeaders() });
+    const d = await r.json();
+    _mtPppSessions = d.sessions || [];
+    if (countEl) countEl.textContent = `${_mtPppSessions.length} session${_mtPppSessions.length!==1?'s':''}`;
+    _mtRenderPppTable(_mtPppSessions);
+
+    // Load history chart
+    _mtLoadPppHistory(deviceId);
+  } catch(e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="padding:16px;text-align:center;color:#ef4444;">Error: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function mtFilterPPP() {
+  const q = (document.getElementById('mt-ppp-search')?.value || '').toLowerCase();
+  const filtered = q ? _mtPppSessions.filter(s =>
+    (s.username||'').toLowerCase().includes(q) ||
+    (s.address||'').toLowerCase().includes(q) ||
+    (s.caller_id||'').toLowerCase().includes(q)
+  ) : _mtPppSessions;
+  _mtRenderPppTable(filtered);
+}
+
+function _mtRenderPppTable(sessions) {
+  const tbody = document.getElementById('mt-ppp-tbody');
+  if (!tbody) return;
+  if (!sessions.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">No active PPPoE sessions</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sessions.map(s => `
+    <tr class="mt-tr-row" style="border-bottom:1px solid var(--border);">
+      <td style="padding:9px 12px;font-weight:600;">${escHtml(s.username||'-')}</td>
+      <td style="padding:9px 12px;color:var(--muted);">${escHtml(s.service||'-')}</td>
+      <td style="padding:9px 12px;font-family:monospace;">${escHtml(s.address||'-')}</td>
+      <td style="padding:9px 12px;font-family:monospace;font-size:11px;">${escHtml(s.caller_id||'-')}</td>
+      <td style="padding:9px 12px;">${_mtFmtUptime(s.uptime_sec)}</td>
+      <td style="padding:9px 12px;text-align:center;">${s.radius==='true'?'<span class="mt-badge-yes">YES</span>':'<span class="mt-badge-no">NO</span>'}</td>
+    </tr>`).join('');
+}
+
+async function _mtLoadPppHistory(deviceId) {
+  try {
+    const r = await fetch(`${API}/mikrotik/ppp-history?device_id=${deviceId}&range=24h`, { headers:authHeaders() });
+    const d = await r.json();
+    if (!d.ok) return;
+    const ctx = document.getElementById('mt-ppp-chart');
+    if (!ctx) return;
+    if (_mtChartPpp) { _mtChartPpp.destroy(); _mtChartPpp = null; }
+    _mtChartPpp = new Chart(ctx.getContext('2d'), {
+      type:'line',
+      data:{ labels:d.labels, datasets:[
+        { label:'Active PPPoE', data:d.active_count, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true },
+        { label:'Radius',       data:d.radius_count, borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,.06)', borderWidth:2, pointRadius:0, tension:.3, fill:false },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
+        plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}} },
+        scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:8}},
+                 y:{ticks:{color:'var(--muted)'},beginAtZero:true,min:0} } }
+    });
+  } catch(e) { console.error('_mtLoadPppHistory:', e); }
+}
+
+// ── Resource graphs ───────────────────────────────────────────────────────
+async function mtLoadResource(deviceId, range) {
+  if (!deviceId) return;
+  try {
+    const r = await fetch(`${API}/mikrotik/resource?device_id=${deviceId}&range=${range}`, { headers:authHeaders() });
+    const d = await r.json();
+    if (!d.ok) return;
+
+    // CPU chart
+    const cpuCtx = document.getElementById('mt-cpu-chart');
+    if (cpuCtx) {
+      if (_mtChartCpu) { _mtChartCpu.destroy(); _mtChartCpu = null; }
+      _mtChartCpu = new Chart(cpuCtx.getContext('2d'), {
+        type:'line',
+        data:{ labels:d.labels, datasets:[
+          { label:'CPU %', data:d.cpu, borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true }
+        ]},
+        options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
+          plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}} },
+          scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:8}},
+                   y:{ticks:{color:'var(--muted)',callback:v=>v+'%'},min:0,max:100} } }
+      });
+    }
+
+    // RAM chart
+    const memCtx = document.getElementById('mt-mem-chart');
+    if (memCtx) {
+      if (_mtChartMem) { _mtChartMem.destroy(); _mtChartMem = null; }
+      _mtChartMem = new Chart(memCtx.getContext('2d'), {
+        type:'line',
+        data:{ labels:d.labels, datasets:[
+          { label:'RAM %', data:d.mem, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true }
+        ]},
+        options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
+          plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}} },
+          scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:8}},
+                   y:{ticks:{color:'var(--muted)',callback:v=>v+'%'},min:0,max:100} } }
+      });
+    }
+  } catch(e) { console.error('mtLoadResource:', e); }
+}
+</script>
+
 
 <!-- ONT Settings Modal -->
 <div class="modal-overlay" id="ontSettingsOverlay" onclick="closeOntSettings(event)" style="z-index:650;">
@@ -4796,6 +5591,154 @@ init();
         </div>
       </div>
     </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- Section: MikroTik                                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="main-section" id="section-mikrotik" style="flex-direction:column;overflow:hidden;">
+
+      <!-- ── Top bar ── -->
+      <div style="display:flex;align-items:center;gap:12px;padding:16px 24px;border-bottom:1px solid var(--border);flex-shrink:0;">
+        <span style="font-size:20px;">🔴</span>
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text);">MikroTik Monitor</div>
+          <div style="font-size:12px;color:var(--muted);">SNMP + RouterOS API polling</div>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:8px;">
+          <button onclick="mtRefreshDashboard()" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">⟳ Refresh</button>
+          <button onclick="mtShowAddDevice()" style="padding:7px 16px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Device</button>
+        </div>
+      </div>
+
+      <!-- ── Tab bar ── -->
+      <div id="mt-tabs" style="display:flex;gap:2px;padding:10px 24px 0;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);">
+        <button class="mt-tab active" onclick="mtTab('dashboard')">📊 Dashboard</button>
+        <button class="mt-tab" onclick="mtTab('devices')">🖥 Devices</button>
+        <button class="mt-tab" onclick="mtTab('interfaces')">🔌 Interfaces</button>
+        <button class="mt-tab" onclick="mtTab('ppp')">👥 PPPoE Sessions</button>
+        <button class="mt-tab" onclick="mtTab('resource')">📈 Resource</button>
+      </div>
+
+      <!-- ── Tab panels ── -->
+      <div style="flex:1;overflow-y:auto;position:relative;">
+
+        <!-- DASHBOARD panel -->
+        <div id="mt-panel-dashboard" class="mt-panel" style="padding:20px 24px;">
+          <!-- Summary cards -->
+          <div id="mt-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px;"></div>
+          <!-- Device table -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text);">Devices</div>
+            <div style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;font-size:12px;" id="mt-device-table">
+                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;">
+                  <th style="padding:10px 12px;text-align:left;">Name</th>
+                  <th style="padding:10px 12px;text-align:left;">IP</th>
+                  <th style="padding:10px 12px;text-align:left;">Location</th>
+                  <th style="padding:10px 12px;text-align:left;">Status</th>
+                  <th style="padding:10px 12px;text-align:left;">Version</th>
+                  <th style="padding:10px 12px;text-align:left;">Last Poll</th>
+                  <th style="padding:10px 12px;text-align:left;">SNMP</th>
+                  <th style="padding:10px 12px;text-align:left;">API</th>
+                  <th style="padding:10px 12px;text-align:center;">Actions</th>
+                </tr></thead>
+                <tbody id="mt-device-tbody"><tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- DEVICES panel (add/edit form) -->
+        <div id="mt-panel-devices" class="mt-panel" style="display:none;padding:20px 24px;max-width:700px;">
+          <div id="mt-device-form-wrap"></div>
+        </div>
+
+        <!-- INTERFACES panel -->
+        <div id="mt-panel-interfaces" class="mt-panel" style="display:none;padding:20px 24px;">
+          <!-- Device selector + interface selector -->
+          <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+            <select id="mt-iface-dev" onchange="mtLoadInterfaces(this.value)" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:180px;"></select>
+            <select id="mt-iface-sel" onchange="mtShowIfaceGraph(document.getElementById('mt-iface-dev').value,this.value,'1h')" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:180px;"></select>
+            <select id="mt-iface-range" onchange="mtShowIfaceGraph(document.getElementById('mt-iface-dev').value,document.getElementById('mt-iface-sel').value,this.value)" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+              <option value="15m">15 min</option><option value="1h" selected>1 hour</option>
+              <option value="6h">6 hours</option><option value="24h">24 hours</option>
+              <option value="3d">3 days</option><option value="7d">7 days</option>
+            </select>
+          </div>
+          <!-- Interface table -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;">
+            <div style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;">
+                  <th style="padding:10px 12px;text-align:left;">Interface</th>
+                  <th style="padding:10px 12px;text-align:left;">Type</th>
+                  <th style="padding:10px 12px;text-align:right;">RX Mbps</th>
+                  <th style="padding:10px 12px;text-align:right;">TX Mbps</th>
+                  <th style="padding:10px 12px;text-align:center;">Status</th>
+                </tr></thead>
+                <tbody id="mt-iface-tbody"><tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted);">Select a device above</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <!-- Traffic graph -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
+            <div id="mt-iface-graph-title" style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;">Interface Traffic</div>
+            <canvas id="mt-iface-chart" style="height:220px;max-height:220px;"></canvas>
+          </div>
+        </div>
+
+        <!-- PPPoE SESSIONS panel -->
+        <div id="mt-panel-ppp" class="mt-panel" style="display:none;padding:20px 24px;">
+          <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+            <select id="mt-ppp-dev" onchange="mtLoadPPP(this.value)" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:180px;"></select>
+            <input id="mt-ppp-search" type="text" placeholder="Search username / IP…" oninput="mtFilterPPP()" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;flex:1;min-width:160px;">
+            <span id="mt-ppp-count" style="font-size:12px;color:var(--muted);white-space:nowrap;"></span>
+          </div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;">
+            <div style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;">
+                  <th style="padding:10px 12px;text-align:left;">Username</th>
+                  <th style="padding:10px 12px;text-align:left;">Service</th>
+                  <th style="padding:10px 12px;text-align:left;">IP Address</th>
+                  <th style="padding:10px 12px;text-align:left;">Caller ID / MAC</th>
+                  <th style="padding:10px 12px;text-align:left;">Uptime</th>
+                  <th style="padding:10px 12px;text-align:center;">Radius</th>
+                </tr></thead>
+                <tbody id="mt-ppp-tbody"><tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">Select a device above</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <!-- PPP history chart -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;">Active Sessions History</div>
+            <canvas id="mt-ppp-chart" style="height:180px;max-height:180px;"></canvas>
+          </div>
+        </div>
+
+        <!-- RESOURCE panel -->
+        <div id="mt-panel-resource" class="mt-panel" style="display:none;padding:20px 24px;">
+          <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+            <select id="mt-res-dev" onchange="mtLoadResource(this.value,document.getElementById('mt-res-range').value)" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:180px;"></select>
+            <select id="mt-res-range" onchange="mtLoadResource(document.getElementById('mt-res-dev').value,this.value)" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+              <option value="1h" selected>1 hour</option><option value="6h">6 hours</option>
+              <option value="24h">24 hours</option><option value="3d">3 days</option><option value="7d">7 days</option>
+            </select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
+              <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:10px;">CPU LOAD (%)</div>
+              <canvas id="mt-cpu-chart" style="height:200px;max-height:200px;"></canvas>
+            </div>
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
+              <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:10px;">RAM USAGE (%)</div>
+              <canvas id="mt-mem-chart" style="height:200px;max-height:200px;"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end scrollable -->
+    </div><!-- end section-mikrotik -->
 
     <!-- Section: Settings -->
     <div class="main-section" id="section-settings" style="overflow-y:auto;">
@@ -6853,70 +7796,18 @@ async function confirmProceed() {
   let _devGrRange      = '1h';
   let _devGrTimer      = null;
   let _devGrLoaded     = false;
-  // ── PON Traffic state ────────────────────────────────────────────────────
-  let _liveTrafficTimer  = null;
-  let _liveTrafficChart  = null;
-  let _liveTrafficRange  = '1h';
-
   function _destroyDevGraphs() {
-    if (_devChartRx)      { _devChartRx.destroy();      _devChartRx      = null; }
-    if (_devChartTemp)    { _devChartTemp.destroy();     _devChartTemp    = null; }
-    if (_liveTrafficChart){ _liveTrafficChart.destroy(); _liveTrafficChart= null; }
-    if (_devGrTimer)      { clearInterval(_devGrTimer);  _devGrTimer      = null; }
-    if (_liveTrafficTimer){ clearTimeout(_liveTrafficTimer);  _liveTrafficTimer = null; }
+    if (_devChartRx)  { _devChartRx.destroy();  _devChartRx  = null; }
+    if (_devChartTemp){ _devChartTemp.destroy(); _devChartTemp= null; }
+    if (_devGrTimer)  { clearInterval(_devGrTimer); _devGrTimer = null; }
     _devGrLoaded = false;
   }
 
   function renderDevGraphsTab() {
     const body = document.getElementById('devBody');
     const sn   = _devCurrent && _devCurrent.sn;
-    _liveTrafficRange = _devGrRange;
-    _liveRtPoints = [];
 
     body.innerHTML = `
-      <!-- ══ PON PORT TRAFFIC (SNMP) ══════════════════════════════════ -->
-      <div class="dev-section-head" style="margin-bottom:10px;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <div class="dev-section-title">📡 PON Port Traffic (SNMP)</div>
-          <span id="snmpTrafficBadge" style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,.12);color:#818cf8;border:1px solid rgba(99,102,241,.25);">⟳ loading…</span>
-        </div>
-        <div class="dev-section-sub" id="snmpTrafficSub" style="margin-top:3px;">PON port · SNMP poller · ~2 min resolution</div>
-      </div>
-
-      <!-- Current Mbps stat tiles -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-        <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↓ Download (RX)</div>
-          <div id="snmpRxVal" style="font-size:32px;font-weight:800;color:#4ade80;line-height:1;">—</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
-        </div>
-        <div style="background:var(--bg3,#0d1117);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">↑ Upload (TX)</div>
-          <div id="snmpTxVal" style="font-size:32px;font-weight:800;color:#60a5fa;line-height:1;">—</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px;">Mbps</div>
-        </div>
-      </div>
-
-      <!-- ══ TRAFFIC HISTORY (InfluxDB pon_traffic) ══════════════════ -->
-      <div class="dev-section-head" style="margin-bottom:10px;">
-        <div class="dev-section-title">📊 Traffic History</div>
-        <div class="dev-section-sub" id="liveTrafficSub">PON port · SNMP · InfluxDB</div>
-      </div>
-      <div class="ont-graph-range" style="margin-bottom:12px;">
-        <button class="grng ${_devGrRange==='1h'?'active':''}"  data-r="1h"  onclick="switchDevGrRange(this)">1H</button>
-        <button class="grng ${_devGrRange==='6h'?'active':''}"  data-r="6h"  onclick="switchDevGrRange(this)">6H</button>
-        <button class="grng ${_devGrRange==='24h'?'active':''}" data-r="24h" onclick="switchDevGrRange(this)">24H</button>
-        <button class="grng ${_devGrRange==='7d'?'active':''}"  data-r="7d"  onclick="switchDevGrRange(this)">7D</button>
-      </div>
-      <div class="ont-chart-box" style="margin-bottom:20px;">
-        <h4 style="display:flex;align-items:center;justify-content:space-between;">
-          <span>RX / TX Mbps — history</span>
-          <span id="liveTrafficTs" style="font-size:10px;font-weight:400;color:var(--muted);"></span>
-        </h4>
-        <div id="liveTrafficNoData" style="display:none;text-align:center;padding:20px;color:var(--muted);font-size:12px;">No data in this range yet.</div>
-        <canvas id="liveTrafficChart" height="110"></canvas>
-      </div>
-
       <!-- ══ SIGNAL HISTORY ══════════════════════════════════════════ -->
       <div class="dev-section-head" style="margin-bottom:10px;">
         <div class="dev-section-title">📶 Signal History</div>
@@ -6935,121 +7826,17 @@ async function confirmProceed() {
       </div>`;
 
     if (sn) {
-      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
       _loadDevGraphs(sn, _devGrRange);
     }
   }
 
-  // switchDevGrRange also reloads history chart
   window.switchDevGrRange = function(btn) {
     document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    _devGrRange = _liveTrafficRange = btn.dataset.r;
+    _devGrRange = btn.dataset.r;
     _devGrLoaded = false;
     const sn = _devCurrent && _devCurrent.sn;
     if (sn) {
-      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
-      _loadDevGraphs(sn, _devGrRange);
-    }
-  };
-
-  async function _loadLiveTrafficSNMP(sn, range) {
-    if (_liveTrafficTimer) { clearTimeout(_liveTrafficTimer); _liveTrafficTimer = null; }
-    const subEl   = document.getElementById('liveTrafficSub');
-    const tsEl    = document.getElementById('liveTrafficTs');
-    const rxEl    = document.getElementById('snmpRxVal');
-    const txEl    = document.getElementById('snmpTxVal');
-    const badge   = document.getElementById('snmpTrafficBadge');
-    const noData  = document.getElementById('liveTrafficNoData');
-
-    const _setBadge = (text, color, bg) => {
-      if (!badge) return;
-      badge.textContent = text;
-      badge.style.color = color;
-      badge.style.borderColor = `${color}55`;
-      badge.style.background  = bg;
-    };
-    _setBadge('⟳ loading…', '#818cf8', 'rgba(99,102,241,.12)');
-
-    try {
-      const r = await fetch(
-        `${API}/ont/traffic?sn=${encodeURIComponent(sn)}&range=${range}`,
-        { headers: authHeaders() }
-      );
-      const d = await r.json();
-      if (!d.ok) throw new Error(d.error || 'api error');
-
-      // Update stat tiles and subtitle
-      if (rxEl)  rxEl.textContent  = d.rx_now != null ? d.rx_now.toFixed(2) : '—';
-      if (txEl)  txEl.textContent  = d.tx_now != null ? d.tx_now.toFixed(2) : '—';
-      const ontNote = d.ont_count ? ` · shared by ${d.ont_count} ONTs` : '';
-      if (subEl) subEl.textContent = `PON port ${d.fsp || ''}${ontNote} · SNMP · updated ${new Date().toLocaleTimeString()}`;
-      if (tsEl)  tsEl.textContent  = new Date().toLocaleTimeString();
-      _setBadge('● SNMP', '#4ade80', 'rgba(34,197,94,.12)');
-
-      const canvas = document.getElementById('liveTrafficChart');
-      if (!canvas) return;
-
-      if (!d.labels || !d.labels.length) {
-        if (noData)  noData.style.display  = '';
-        if (canvas)  canvas.style.display  = 'none';
-      } else {
-        if (noData)  noData.style.display  = 'none';
-        if (canvas)  canvas.style.display  = '';
-        const chartOpts = {
-          responsive: true, maintainAspectRatio: true,
-          animation: { duration: 400 },
-          plugins: {
-            legend: { display: true, position: 'top', labels: { color:'#7a8099', font:{ size:10 }, boxWidth:12, padding:12 } },
-            tooltip: { mode:'index', intersect:false,
-              callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} Mbps` }
-            }
-          },
-          scales: {
-            x: { ticks:{ color:'#7a8099', font:{ size:10 }, maxTicksLimit:10, maxRotation:0 }, grid:{ color:'rgba(255,255,255,.04)' } },
-            y: { min:0, ticks:{ color:'#7a8099', font:{ size:10 }, callback: v => v+' Mbps' }, grid:{ color:'rgba(255,255,255,.07)' } }
-          }
-        };
-        if (_liveTrafficChart) {
-          _liveTrafficChart.data.labels           = d.labels;
-          _liveTrafficChart.data.datasets[0].data = d.rx_mbps;
-          _liveTrafficChart.data.datasets[1].data = d.tx_mbps;
-          _liveTrafficChart.update();
-        } else {
-          _liveTrafficChart = new Chart(canvas, {
-            type: 'line',
-            data: {
-              labels: d.labels,
-              datasets: [
-                { label:'↓ RX Mbps', data:d.rx_mbps, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.10)', borderWidth:2, pointRadius:1, tension:0.35, fill:true },
-                { label:'↑ TX Mbps', data:d.tx_mbps, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.08)', borderWidth:2, pointRadius:1, tension:0.35, fill:true }
-              ]
-            },
-            options: chartOpts
-          });
-        }
-      }
-    } catch(e) {
-      const badge2 = document.getElementById('snmpTrafficBadge');
-      if (badge2) { badge2.textContent = '✕ error'; badge2.style.color = '#f87171'; badge2.style.borderColor = '#f8717155'; badge2.style.background = 'rgba(248,113,113,.08)'; }
-      if (subEl) subEl.textContent = `Error: ${e.message}`;
-      if (tsEl)  tsEl.textContent  = 'error';
-    }
-    // Auto-refresh every 120s (matches SNMP poller write interval)
-    _liveTrafficTimer = setTimeout(() => {
-      if (_devTab === 'graphs' && _devCurrent && _devCurrent.sn === sn)
-        _loadLiveTrafficSNMP(sn, _liveTrafficRange);
-    }, 120000);
-  }
-
-  function switchDevGrRange(btn) {
-    document.querySelectorAll('.grng').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    _devGrRange = _liveTrafficRange = btn.dataset.r;
-    _devGrLoaded = false;
-    const sn = _devCurrent && _devCurrent.sn;
-    if (sn) {
-      _loadLiveTrafficSNMP(sn, _liveTrafficRange);
       _loadDevGraphs(sn, _devGrRange);
     }
   }

@@ -111,57 +111,6 @@ def _mac_db():
     return con
 
 
-# ── MikroTik connection test helper ──────────────────────────────────────────
-
-def _test_mikrotik_device(device: dict) -> dict:
-    """
-    Run a quick connectivity test for a MikroTik device.
-    Returns {snmp_ok, api_ok, version, hostname, board, error}.
-    Does NOT require pyronms-mikrotik.service to be running.
-    """
-    import subprocess as _sp
-    result = {
-        "snmp_ok": False, "api_ok": False,
-        "version": None, "hostname": None, "board": None, "error": None
-    }
-    host      = device.get("ip", "")
-    community = device.get("snmp_community", "public")
-    username  = device.get("username", "admin")
-    password  = device.get("password", "")
-    api_port  = int(device.get("api_port", 8728))
-
-    # SNMP test — snmpget sysDescr
-    try:
-        r = _sp.run(
-            ["snmpget", "-v2c", f"-c{community}", "-Oqv", "-t3", "-r1",
-             host, "1.3.6.1.2.1.1.1.0"],
-            capture_output=True, text=True, timeout=6
-        )
-        out = r.stdout.strip()
-        result["snmp_ok"] = bool(out) and "RouterOS" in out
-    except Exception as e:
-        result["error"] = f"SNMP: {e}"
-
-    # RouterOS API test — /system/resource/print
-    if device.get("api_enabled") and password:
-        try:
-            import librouteros as _lr
-            api = _lr.connect(host, username, password, port=api_port, timeout=8)
-            res_list = list(api("/system/resource/print"))
-            id_list  = list(api("/system/identity/print"))
-            api.close()
-            if res_list:
-                r = res_list[0]
-                result["api_ok"]  = True
-                result["version"] = r.get("version", "")
-                result["board"]   = r.get("board-name", "")
-            if id_list:
-                result["hostname"] = id_list[0].get("name", "")
-        except Exception as e:
-            result["error"] = (result.get("error") or "") + f" API: {e}"
-
-    return result
-
 
 def normalize_mac(mac):
     """Normalize MAC to 'AA:BB:CC:DD:EE:FF' or return None if invalid."""
@@ -2530,205 +2479,234 @@ from(bucket:"{INFLUX_BUCKET}")
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /mikrotik/devices ─────────────────────────────────────────────
-        elif parsed.path == "/mikrotik/devices":
+        # ── GET /network/devices ──────────────────────────────────────────────
+        elif parsed.path == "/network/devices":
             user = require_auth(self)
             if not user: return
             try:
-                import mikrotik_db as _mtdb
-                devices = _mtdb.get_all_devices(include_disabled=True)
+                import network_db as ndb
+                devices = ndb.get_all_devices(include_disabled=True)
                 return self.send_json(200, {"ok": True, "devices": devices})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /mikrotik/health ──────────────────────────────────────────────
-        elif parsed.path == "/mikrotik/health":
+        # ── GET /network/devices/<id> ─────────────────────────────────────────
+        elif re.match(r"^/network/devices/(\d+)$", parsed.path):
             user = require_auth(self)
             if not user: return
+            m = re.match(r"^/network/devices/(\d+)$", parsed.path)
+            dev_id = int(m.group(1))
             try:
-                import mikrotik_db as _mtdb
-                devices = _mtdb.get_all_devices(include_disabled=True)
-                health = [{
-                    "id":          d["id"],
-                    "name":        d["name"],
-                    "ip":          d["ip"],
-                    "last_seen":   d["last_seen"],
-                    "last_status": d["last_status"],
-                    "enabled":     d["enabled"],
-                    "routeros_ver": d.get("routeros_ver", ""),
-                } for d in devices]
-                return self.send_json(200, {"ok": True, "health": health})
+                import network_db as ndb
+                dev = ndb.get_device(dev_id)
+                if not dev:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                return self.send_json(200, {"ok": True, "device": dev})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /mikrotik/resource?device_id=N&range=1h ───────────────────────
-        elif parsed.path == "/mikrotik/resource":
-            user = require_auth(self)
-            if not user: return
-            device_id = params.get("device_id", [""])[0].strip()
-            range_p   = params.get("range", ["1h"])[0].strip()
-            if not device_id:
-                return self.send_json(400, {"error": "device_id required"})
-            _range_map = {"5m":"-5m","15m":"-15m","1h":"-1h","6h":"-6h",
-                          "12h":"-12h","24h":"-24h","3d":"-3d","7d":"-7d"}
-            start  = _range_map.get(range_p, "-1h")
-            _win_map = {"5m":"30s","15m":"1m","1h":"1m","6h":"5m",
-                        "12h":"10m","24h":"15m","3d":"30m","7d":"1h"}
-            window = _win_map.get(range_p, "1m")
-            try:
-                flux = f'''
-from(bucket:"{INFLUX_BUCKET}")
-  |> range(start:{start})
-  |> filter(fn:(r)=>r._measurement=="mikrotik_resource"
-      and r.device_id=="{device_id}"
-      and (r._field=="cpu_load" or r._field=="mem_used_pct"
-           or r._field=="temperature_c" or r._field=="uptime_sec"))
-  |> aggregateWindow(every:{window}, fn:mean, createEmpty:false)
-  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
-  |> sort(columns:["_time"])
-'''
-                rows = influx_query(flux)
-                labels  = [r.get("_time","") for r in rows]
-                cpu     = [r.get("cpu_load") for r in rows]
-                mem     = [r.get("mem_used_pct") for r in rows]
-                temp    = [r.get("temperature_c") for r in rows]
-                uptime  = [r.get("uptime_sec") for r in rows]
-                return self.send_json(200, {"ok": True, "labels": labels,
-                    "cpu": cpu, "mem": mem, "temp": temp, "uptime": uptime})
-            except Exception as e:
-                return self.send_json(500, {"ok": False, "error": str(e)})
-
-        # ── GET /mikrotik/interfaces?device_id=N ─────────────────────────────
-        elif parsed.path == "/mikrotik/interfaces":
+        # ── GET /network/interfaces?device_id=N ──────────────────────────────
+        elif parsed.path == "/network/interfaces":
             user = require_auth(self)
             if not user: return
             device_id = params.get("device_id", [""])[0].strip()
             if not device_id:
                 return self.send_json(400, {"error": "device_id required"})
             try:
-                flux = f'''
-from(bucket:"{INFLUX_BUCKET}")
-  |> range(start:-3m)
-  |> filter(fn:(r)=>r._measurement=="mikrotik_iface"
-      and r.device_id=="{device_id}"
-      and (r._field=="rx_bps" or r._field=="tx_bps" or r._field=="oper_status"))
-  |> last()
-  |> pivot(rowKey:["interface"],columnKey:["_field"],valueColumn:"_value")
-  |> sort(columns:["interface"])
-'''
-                rows = influx_query(flux)
-                ifaces = [{
-                    "interface":   r.get("interface",""),
-                    "iface_type":  r.get("iface_type",""),
-                    "rx_bps":      r.get("rx_bps",0),
-                    "tx_bps":      r.get("tx_bps",0),
-                    "oper_status": r.get("oper_status",0),
-                } for r in rows]
+                import network_db as ndb
+                ifaces = ndb.get_interfaces(int(device_id))
                 return self.send_json(200, {"ok": True, "interfaces": ifaces})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /mikrotik/iface-traffic?device_id=N&iface=X&range=1h ─────────
-        elif parsed.path == "/mikrotik/iface-traffic":
+        # ── GET /network/graphs?device_id=N&graph_type=T ─────────────────────
+        elif parsed.path == "/network/graphs":
             user = require_auth(self)
             if not user: return
-            device_id = params.get("device_id", [""])[0].strip()
-            iface     = params.get("iface",     [""])[0].strip()
-            range_p   = params.get("range",     ["1h"])[0].strip()
-            if not device_id or not iface:
-                return self.send_json(400, {"error": "device_id and iface required"})
-            _range_map = {"5m":"-5m","15m":"-15m","1h":"-1h","6h":"-6h",
-                          "12h":"-12h","24h":"-24h","3d":"-3d","7d":"-7d"}
-            start  = _range_map.get(range_p, "-1h")
-            _win_map = {"5m":"30s","15m":"1m","1h":"1m","6h":"5m",
-                        "12h":"10m","24h":"15m","3d":"30m","7d":"1h"}
-            window = _win_map.get(range_p, "1m")
+            device_id  = params.get("device_id",  [""])[0].strip()
+            graph_type = params.get("graph_type", [""])[0].strip()
             try:
-                flux = f'''
-from(bucket:"{INFLUX_BUCKET}")
-  |> range(start:{start})
-  |> filter(fn:(r)=>r._measurement=="mikrotik_iface"
-      and r.device_id=="{device_id}"
-      and r.interface=="{iface}"
-      and (r._field=="rx_bps" or r._field=="tx_bps"
-           or r._field=="rx_errors" or r._field=="tx_errors"))
-  |> aggregateWindow(every:{window}, fn:mean, createEmpty:false)
-  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
-  |> sort(columns:["_time"])
-'''
-                rows = influx_query(flux)
-                labels = [r.get("_time","") for r in rows]
-                rx_mbps = [round((r.get("rx_bps") or 0)/1e6, 3) for r in rows]
-                tx_mbps = [round((r.get("tx_bps") or 0)/1e6, 3) for r in rows]
-                rx_err  = [r.get("rx_errors",0) for r in rows]
-                tx_err  = [r.get("tx_errors",0) for r in rows]
-                return self.send_json(200, {"ok": True, "labels": labels,
-                    "rx_mbps": rx_mbps, "tx_mbps": tx_mbps,
-                    "rx_errors": rx_err, "tx_errors": tx_err})
+                import network_db as ndb
+                did = int(device_id) if device_id else None
+                graphs = ndb.get_graphs(device_id=did,
+                                        graph_type=graph_type or None)
+                return self.send_json(200, {"ok": True, "graphs": graphs})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /mikrotik/ppp-sessions?device_id=N ───────────────────────────
-        elif parsed.path == "/mikrotik/ppp-sessions":
+        # ── GET /network/templates ────────────────────────────────────────────
+        elif parsed.path == "/network/templates":
             user = require_auth(self)
             if not user: return
-            device_id = params.get("device_id", [""])[0].strip()
-            if not device_id:
-                return self.send_json(400, {"error": "device_id required"})
+            vendor     = params.get("vendor",     [""])[0].strip()
+            graph_type = params.get("graph_type", [""])[0].strip()
             try:
-                flux = f'''
-from(bucket:"{INFLUX_BUCKET}")
-  |> range(start:-3m)
-  |> filter(fn:(r)=>r._measurement=="mikrotik_ppp_session"
-      and r.device_id=="{device_id}"
-      and (r._field=="uptime_sec" or r._field=="caller_id" or r._field=="address"))
-  |> last()
-  |> pivot(rowKey:["username"],columnKey:["_field"],valueColumn:"_value")
-  |> sort(columns:["username"])
-'''
-                rows = influx_query(flux)
-                sessions = [{
-                    "username":   r.get("username",""),
-                    "service":    r.get("service",""),
-                    "radius":     r.get("radius","false"),
-                    "uptime_sec": r.get("uptime_sec",0),
-                    "caller_id":  r.get("caller_id",""),
-                    "address":    r.get("address",""),
-                } for r in rows]
-                return self.send_json(200, {"ok": True, "sessions": sessions,
-                                            "count": len(sessions)})
+                import network_db as ndb
+                templates = ndb.get_templates(vendor=vendor or None,
+                                              graph_type=graph_type or None)
+                return self.send_json(200, {"ok": True, "templates": templates})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /mikrotik/ppp-history?device_id=N&range=24h ──────────────────
-        elif parsed.path == "/mikrotik/ppp-history":
+        # ── GET /network/tree ─────────────────────────────────────────────────
+        elif parsed.path == "/network/tree":
             user = require_auth(self)
             if not user: return
-            device_id = params.get("device_id", [""])[0].strip()
-            range_p   = params.get("range",     ["24h"])[0].strip()
-            if not device_id:
-                return self.send_json(400, {"error": "device_id required"})
-            _range_map = {"1h":"-1h","6h":"-6h","12h":"-12h","24h":"-24h","3d":"-3d","7d":"-7d"}
-            start  = _range_map.get(range_p, "-24h")
-            _win_map = {"1h":"5m","6h":"15m","12h":"30m","24h":"1h","3d":"3h","7d":"6h"}
-            window = _win_map.get(range_p, "1h")
             try:
-                flux = f'''
-from(bucket:"{INFLUX_BUCKET}")
-  |> range(start:{start})
-  |> filter(fn:(r)=>r._measurement=="mikrotik_ppp"
-      and r.device_id=="{device_id}"
-      and (r._field=="active_ppp_count" or r._field=="radius_ppp_count"))
-  |> aggregateWindow(every:{window}, fn:max, createEmpty:false)
-  |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")
-  |> sort(columns:["_time"])
-'''
-                rows = influx_query(flux)
-                labels       = [r.get("_time","") for r in rows]
-                active_count = [r.get("active_ppp_count",0) for r in rows]
-                radius_count = [r.get("radius_ppp_count",0) for r in rows]
+                import network_db as ndb
+                tree = ndb.get_tree()
+                return self.send_json(200, {"ok": True, "tree": tree})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /network/poller/status ────────────────────────────────────────
+        elif parsed.path == "/network/poller/status":
+            user = require_auth(self)
+            if not user: return
+            try:
+                STATUS_FILE = "/tmp/net_poller_status.json"
+                if os.path.exists(STATUS_FILE):
+                    with open(STATUS_FILE) as _f:
+                        st = json.load(_f)
+                    st["uptime_sec"] = int(time.time()) - st.get("started_at",
+                                                                  int(time.time()))
+                else:
+                    st = {"error": "Poller not running or no status yet"}
+                return self.send_json(200, {"ok": True, "status": st})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /network/graph-data?graph_id=N&range=1h ───────────────────────
+        elif parsed.path == "/network/graph-data":
+            user = require_auth(self)
+            if not user: return
+            graph_id_s = params.get("graph_id", [""])[0].strip()
+            range_p    = params.get("range",    ["1h"])[0].strip()
+            if not graph_id_s:
+                return self.send_json(400, {"error": "graph_id required"})
+            try:
+                import network_db as ndb
+                NET_BUCKET = os.environ.get("NETWORK_INFLUX_BUCKET",
+                                            "network_monitoring")
+                _range_map = {"1h":"-1h","6h":"-6h","24h":"-24h",
+                              "7d":"-7d","30d":"-30d"}
+                _win_map   = {"1h":"1m","6h":"5m","24h":"15m",
+                              "7d":"1h","30d":"6h"}
+                start  = _range_map.get(range_p, "-1h")
+                window = _win_map.get(range_p, "5m")
+                graph  = ndb.get_graph(int(graph_id_s))
+                if not graph:
+                    return self.send_json(404, {"error": "Graph not found"})
+                gtype  = graph.get("graph_type", "")
+                did    = str(graph.get("device_id", ""))
+                labels = []; series = []
+                if gtype == "traffic":
+                    iname = graph.get("interface_name") or ""
+                    flux = (f'from(bucket:"{NET_BUCKET}")'
+                            f' |> range(start:{start})'
+                            f' |> filter(fn:(r)=>r._measurement=="net_iface"'
+                            f' and r.device_id=="{did}"'
+                            f' and r.interface=="{iname}"'
+                            f' and (r._field=="rx_bps" or r._field=="tx_bps"))'
+                            f' |> aggregateWindow(every:{window},fn:mean,createEmpty:false)'
+                            f' |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")'
+                            f' |> sort(columns:["_time"])')
+                    rows = influx_query(flux)
+                    labels = [r.get("_time","") for r in rows]
+                    series = [
+                        {"name": "RX bps",
+                         "data": [float(r.get("rx_bps") or 0) for r in rows]},
+                        {"name": "TX bps",
+                         "data": [float(r.get("tx_bps") or 0) for r in rows]},
+                    ]
+                else:
+                    _fmap = {"cpu": "cpu_pct", "memory": "mem_pct",
+                             "temperature": "temp_c", "uptime": "uptime_sec",
+                             "errors": "rx_errors"}
+                    field = _fmap.get(gtype, gtype)
+                    flux = (f'from(bucket:"{NET_BUCKET}")'
+                            f' |> range(start:{start})'
+                            f' |> filter(fn:(r)=>r._measurement=="net_resource"'
+                            f' and r.device_id=="{did}"'
+                            f' and r._field=="{field}")'
+                            f' |> aggregateWindow(every:{window},fn:mean,createEmpty:false)'
+                            f' |> sort(columns:["_time"])')
+                    rows = influx_query(flux)
+                    labels = [r.get("_time","") for r in rows]
+                    series = [{"name": field,
+                               "data": [float(r.get("_value") or 0) for r in rows]}]
                 return self.send_json(200, {"ok": True, "labels": labels,
-                    "active_count": active_count, "radius_count": radius_count})
+                                           "series": series, "graph": graph})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /network/graph-preview?device_id=N&range=1h ──────────────────
+        elif parsed.path == "/network/graph-preview":
+            user = require_auth(self)
+            if not user: return
+            device_id_s = params.get("device_id", [""])[0].strip()
+            range_p     = params.get("range",     ["1h"])[0].strip()
+            if not device_id_s:
+                return self.send_json(400, {"error": "device_id required"})
+            try:
+                import network_db as ndb
+                NET_BUCKET = os.environ.get("NETWORK_INFLUX_BUCKET",
+                                            "network_monitoring")
+                _range_map = {"1h":"-1h","6h":"-6h","24h":"-24h",
+                              "7d":"-7d","30d":"-30d"}
+                _win_map   = {"1h":"1m","6h":"5m","24h":"15m",
+                              "7d":"1h","30d":"6h"}
+                start  = _range_map.get(range_p, "-1h")
+                window = _win_map.get(range_p, "5m")
+                did    = int(device_id_s)
+                graphs = ndb.get_graphs(device_id=did)
+                result = []
+                _fmap = {"cpu": "cpu_pct", "memory": "mem_pct",
+                         "temperature": "temp_c", "uptime": "uptime_sec"}
+                for graph in graphs:
+                    if not graph.get("enabled"):
+                        continue
+                    gtype = graph.get("graph_type", "")
+                    labels = []; series = []
+                    try:
+                        dids = str(did)
+                        if gtype == "traffic":
+                            iname = graph.get("interface_name") or ""
+                            flux = (f'from(bucket:"{NET_BUCKET}")'
+                                    f' |> range(start:{start})'
+                                    f' |> filter(fn:(r)=>r._measurement=="net_iface"'
+                                    f' and r.device_id=="{dids}"'
+                                    f' and r.interface=="{iname}"'
+                                    f' and (r._field=="rx_bps" or r._field=="tx_bps"))'
+                                    f' |> aggregateWindow(every:{window},fn:mean,createEmpty:false)'
+                                    f' |> pivot(rowKey:["_time"],columnKey:["_field"],valueColumn:"_value")'
+                                    f' |> sort(columns:["_time"])')
+                            rows = influx_query(flux)
+                            labels = [r.get("_time","") for r in rows]
+                            series = [
+                                {"name": "RX",
+                                 "data": [float(r.get("rx_bps") or 0) for r in rows]},
+                                {"name": "TX",
+                                 "data": [float(r.get("tx_bps") or 0) for r in rows]},
+                            ]
+                        else:
+                            field = _fmap.get(gtype, gtype)
+                            flux = (f'from(bucket:"{NET_BUCKET}")'
+                                    f' |> range(start:{start})'
+                                    f' |> filter(fn:(r)=>r._measurement=="net_resource"'
+                                    f' and r.device_id=="{dids}"'
+                                    f' and r._field=="{field}")'
+                                    f' |> aggregateWindow(every:{window},fn:mean,createEmpty:false)'
+                                    f' |> sort(columns:["_time"])')
+                            rows = influx_query(flux)
+                            labels = [r.get("_time","") for r in rows]
+                            series = [{"name": field,
+                                       "data": [float(r.get("_value") or 0) for r in rows]}]
+                    except Exception:
+                        pass
+                    result.append({"graph": graph, "labels": labels,
+                                   "series": series})
+                return self.send_json(200, {"ok": True, "previews": result})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
@@ -3178,8 +3156,8 @@ from(bucket:"{INFLUX_BUCKET}")
                 "verified":       str(verified_value) == str(value) if verified_value else None,
             })
 
-        # ── POST /mikrotik/devices — add new device ───────────────────────────
-        elif parsed.path == "/mikrotik/devices":
+        # ── POST /network/devices — add device ───────────────────────────────
+        elif parsed.path == "/network/devices":
             user = require_auth(self)
             if not user: return
             length = int(self.headers.get("Content-Length", 0))
@@ -3188,19 +3166,108 @@ from(bucket:"{INFLUX_BUCKET}")
             except Exception:
                 return self.send_json(400, {"error": "Invalid JSON"})
             try:
-                import mikrotik_db as _mtdb
-                new_id = _mtdb.add_device(payload)
+                import network_db as ndb
+                new_id = ndb.add_device(payload)
                 return self.send_json(200, {"ok": True, "id": new_id})
             except ValueError as e:
                 return self.send_json(400, {"ok": False, "error": str(e)})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── POST /mikrotik/devices/<id> — update device ───────────────────────
-        elif re.match(r"^/mikrotik/devices/(\d+)$", parsed.path):
+        # ── POST /network/devices/<id>/discover ───────────────────────────────
+        elif re.match(r"^/network/devices/(\d+)/discover$", parsed.path):
             user = require_auth(self)
             if not user: return
-            m = re.match(r"^/mikrotik/devices/(\d+)$", parsed.path)
+            m = re.match(r"^/network/devices/(\d+)/discover$", parsed.path)
+            dev_id = int(m.group(1))
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                payload = {}
+            try:
+                import network_db as ndb
+                import network_snmp as nsnmp
+                dev = ndb.get_device(dev_id, include_creds=True)
+                if not dev:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                # Vendor + sys info
+                sysinfo = nsnmp.test_device(dev)
+                if sysinfo.get("snmp_ok"):
+                    vendor_det = sysinfo.get("vendor_detected") or dev.get("vendor", "generic")
+                    ndb.update_device(dev_id, {"vendor": vendor_det})
+                    ndb.set_device_status(dev_id, "online", sysinfo.get("ms", 0),
+                                          sys_name=sysinfo.get("sys_name"),
+                                          sys_descr=sysinfo.get("sys_descr"),
+                                          sys_object_id=sysinfo.get("sys_object_id"))
+                # Interface walk
+                ifaces = nsnmp.discover_interfaces(dev)
+                ndb.upsert_interfaces(dev_id, ifaces)
+                # Auto-create traffic graphs?
+                graphs_created = 0
+                if payload.get("auto_create_traffic") and ifaces:
+                    templates = ndb.get_templates(graph_type="traffic")
+                    traffic_tpl = next((t for t in templates
+                                        if t.get("builtin") and "IF-MIB" in t["name"]),
+                                       templates[0] if templates else None)
+                    if traffic_tpl:
+                        existing = ndb.get_graphs(device_id=dev_id, graph_type="traffic")
+                        existing_iface_ids = {g.get("interface_id") for g in existing}
+                        for iface_row in ndb.get_interfaces(dev_id):
+                            if (iface_row.get("oper_status") == 1 and
+                                    iface_row["id"] not in existing_iface_ids):
+                                ndb.add_graph(
+                                    device_id=dev_id,
+                                    template_id=traffic_tpl["id"],
+                                    interface_id=iface_row["id"],
+                                    graph_name=f"Traffic — {iface_row.get('if_name','')}")
+                                graphs_created += 1
+                return self.send_json(200, {
+                    "ok": True,
+                    "interfaces": ifaces,
+                    "graphs_created": graphs_created,
+                    "snmp_ok": sysinfo.get("snmp_ok", False),
+                })
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/devices/<id>/test — SNMP test ───────────────────────
+        elif re.match(r"^/network/devices/(\d+)/test$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/devices/(\d+)/test$", parsed.path)
+            dev_id = int(m.group(1))
+            try:
+                import network_db as ndb
+                import network_snmp as nsnmp
+                dev = ndb.get_device(dev_id, include_creds=True)
+                if not dev:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                result = nsnmp.test_device(dev)
+                return self.send_json(200, {"ok": True, **result})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/devices/<id>/delete ────────────────────────────────
+        elif re.match(r"^/network/devices/(\d+)/delete$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/devices/(\d+)/delete$", parsed.path)
+            dev_id = int(m.group(1))
+            try:
+                import network_db as ndb
+                ok = ndb.delete_device(dev_id)
+                if not ok:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                return self.send_json(200, {"ok": True})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/devices/<id> — update device ────────────────────────
+        elif re.match(r"^/network/devices/(\d+)$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/devices/(\d+)$", parsed.path)
             dev_id = int(m.group(1))
             length = int(self.headers.get("Content-Length", 0))
             try:
@@ -3208,42 +3275,167 @@ from(bucket:"{INFLUX_BUCKET}")
             except Exception:
                 return self.send_json(400, {"error": "Invalid JSON"})
             try:
-                import mikrotik_db as _mtdb
-                ok = _mtdb.update_device(dev_id, payload)
+                import network_db as ndb
+                ok = ndb.update_device(dev_id, payload)
                 if not ok:
                     return self.send_json(404, {"ok": False, "error": "Device not found"})
                 return self.send_json(200, {"ok": True})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── POST /mikrotik/devices/<id>/delete ────────────────────────────────
-        elif re.match(r"^/mikrotik/devices/(\d+)/delete$", parsed.path):
+        # ── POST /network/interfaces/<id>/toggle ──────────────────────────────
+        elif re.match(r"^/network/interfaces/(\d+)/toggle$", parsed.path):
             user = require_auth(self)
             if not user: return
-            m = re.match(r"^/mikrotik/devices/(\d+)/delete$", parsed.path)
-            dev_id = int(m.group(1))
+            m = re.match(r"^/network/interfaces/(\d+)/toggle$", parsed.path)
+            iface_id = int(m.group(1))
             try:
-                import mikrotik_db as _mtdb
-                ok = _mtdb.delete_device(dev_id)
+                import network_db as ndb
+                enabled = ndb.toggle_interface(iface_id)
+                if enabled is None:
+                    return self.send_json(404, {"ok": False, "error": "Interface not found"})
+                return self.send_json(200, {"ok": True, "polling_enabled": enabled})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/graphs — create graph ───────────────────────────────
+        elif parsed.path == "/network/graphs":
+            user = require_auth(self)
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            try:
+                import network_db as ndb
+                dev_id   = int(payload.get("device_id", 0))
+                tpl_id   = int(payload.get("template_id", 0))
+                iface_id = payload.get("interface_id")
+                if iface_id is not None:
+                    iface_id = int(iface_id)
+                gname  = payload.get("graph_name") or None
+                new_id = ndb.add_graph(dev_id, tpl_id, iface_id, gname)
+                return self.send_json(200, {"ok": True, "id": new_id})
+            except ValueError as e:
+                return self.send_json(400, {"ok": False, "error": str(e)})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/graphs/<id>/delete ──────────────────────────────────
+        elif re.match(r"^/network/graphs/(\d+)/delete$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/graphs/(\d+)/delete$", parsed.path)
+            gid = int(m.group(1))
+            try:
+                import network_db as ndb
+                ok = ndb.delete_graph(gid)
                 if not ok:
-                    return self.send_json(404, {"ok": False, "error": "Device not found"})
+                    return self.send_json(404, {"ok": False, "error": "Graph not found"})
                 return self.send_json(200, {"ok": True})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── POST /mikrotik/devices/<id>/test — connection test ────────────────
-        elif re.match(r"^/mikrotik/devices/(\d+)/test$", parsed.path):
+        # ── POST /network/templates — create custom template ──────────────────
+        elif parsed.path == "/network/templates":
             user = require_auth(self)
             if not user: return
-            m = re.match(r"^/mikrotik/devices/(\d+)/test$", parsed.path)
-            dev_id = int(m.group(1))
+            length = int(self.headers.get("Content-Length", 0))
             try:
-                import mikrotik_db as _mtdb
-                dev = _mtdb.get_device(dev_id, include_creds=True)
-                if not dev:
-                    return self.send_json(404, {"ok": False, "error": "Device not found"})
-                result = _test_mikrotik_device(dev)
-                return self.send_json(200, {"ok": True, **result})
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            try:
+                import network_db as ndb
+                new_id = ndb.add_template(payload)
+                return self.send_json(200, {"ok": True, "id": new_id})
+            except ValueError as e:
+                return self.send_json(400, {"ok": False, "error": str(e)})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/templates/<id>/delete ───────────────────────────────
+        elif re.match(r"^/network/templates/(\d+)/delete$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/templates/(\d+)/delete$", parsed.path)
+            tid = int(m.group(1))
+            try:
+                import network_db as ndb
+                ok = ndb.delete_template(tid)
+                if not ok:
+                    return self.send_json(404, {"ok": False, "error": "Template not found"})
+                return self.send_json(200, {"ok": True})
+            except ValueError as e:
+                return self.send_json(400, {"ok": False, "error": str(e)})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/tree — add tree node ────────────────────────────────
+        elif parsed.path == "/network/tree":
+            user = require_auth(self)
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            try:
+                import network_db as ndb
+                parent = payload.get("parent_id")
+                if parent is not None:
+                    parent = int(parent)
+                new_id = ndb.add_tree_node(
+                    parent_id  = parent,
+                    name       = payload.get("name", "New Folder"),
+                    node_type  = payload.get("node_type", "folder"),
+                    device_id  = payload.get("device_id"),
+                    graph_id   = payload.get("graph_id"),
+                    sort_order = int(payload.get("sort_order", 0)),
+                )
+                return self.send_json(200, {"ok": True, "id": new_id})
+            except ValueError as e:
+                return self.send_json(400, {"ok": False, "error": str(e)})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/tree/<id>/delete ────────────────────────────────────
+        elif re.match(r"^/network/tree/(\d+)/delete$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/tree/(\d+)/delete$", parsed.path)
+            nid = int(m.group(1))
+            try:
+                import network_db as ndb
+                ok = ndb.delete_tree_node(nid)
+                if not ok:
+                    return self.send_json(404, {"ok": False, "error": "Node not found"})
+                return self.send_json(200, {"ok": True})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/tree/<id> — rename / reparent ───────────────────────
+        elif re.match(r"^/network/tree/(\d+)$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/tree/(\d+)$", parsed.path)
+            nid = int(m.group(1))
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            try:
+                import network_db as ndb
+                kw = {}
+                if "name"       in payload: kw["name"]       = payload["name"]
+                if "parent_id"  in payload: kw["parent_id"]  = payload["parent_id"]
+                if "sort_order" in payload: kw["sort_order"] = int(payload["sort_order"])
+                ok = ndb.update_tree_node(nid, **kw)
+                if not ok:
+                    return self.send_json(404, {"ok": False, "error": "Node not found"})
+                return self.send_json(200, {"ok": True})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 

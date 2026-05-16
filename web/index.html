@@ -918,10 +918,10 @@
         <span class="nav-icon">📡</span>
         <span class="nav-label">OLT Monitor</span>
       </div>
-      <div class="nav-section">MikroTik</div>
-      <div class="nav-item" id="nav-mikrotik" onclick="switchSection('mikrotik')">
-        <span class="nav-icon">🔴</span>
-        <span class="nav-label">MikroTik</span>
+      <div class="nav-section">Network Graphs</div>
+      <div class="nav-item" id="nav-network" onclick="switchSection('network')">
+        <span class="nav-icon">🌐</span>
+        <span class="nav-label">Network Monitor</span>
       </div>
       <div class="nav-section">System</div>
       <div class="nav-item" id="nav-settings" onclick="switchSection('settings')">
@@ -2239,7 +2239,7 @@ function switchSection(name) {
   else { srvStop(); }
   if (name === 'olt') loadOLTList();
   if (name === 'oltconfig') loadOltConfig();
-  if (name === 'mikrotik') { if (!_mtDevices.length) loadMikroTik(); else mtRefreshDashboard(); }
+  if (name === 'network') loadNetwork();
   if (isMobileView()) setSidebarCollapsed(true);
   // Re-apply sticky positions after layout change
   setTimeout(updateStickyPositions, 100);
@@ -4474,637 +4474,832 @@ init();
 </script>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
-<!-- MikroTik Module JavaScript                                              -->
+<!-- Network Graphs Module JavaScript (v5.0.0 — Cacti-style multi-vendor)   -->
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <script>
-// ── MikroTik globals ──────────────────────────────────────────────────────
-let _mtDevices     = [];
-let _mtPppSessions = [];   // cached for client-side search
-let _mtChartCpu    = null;
-let _mtChartMem    = null;
-let _mtChartIface  = null;
-let _mtChartPpp    = null;
+// ══════════════════════════════════════════════════════════════════════════
+// Network Graphs module — Cacti-style multi-vendor SNMP monitoring
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── State ──────────────────────────────────────────────────────────────────
+let _netDevices    = [];
+let _netTemplates  = [];
+let _netGraphs     = [];
+let _netTree       = [];
+let _netPreviews   = [];   // current preview data from server
+let _netPrevPage   = 0;
+const NET_PAGE_SIZE = 12;
+let _netDevPage    = 0;
+const NET_DEV_PAGE = 50;
+let _netCurrentEditId = null;   // device id being edited (null = add)
+let _netDiscoverDevId = null;   // device id being discovered
+let _netDiscoverData  = null;   // last discover result
+let _netGraphModalId  = null;   // graph being shown in detail modal
+let _netGraphModalChart = null;
+let _netAutoRefreshTimer = null;
+
+// ── CSS (injected once) ───────────────────────────────────────────────────
+(function _injectNetCSS() {
+  if (document.getElementById('net-css')) return;
+  const s = document.createElement('style');
+  s.id = 'net-css';
+  s.textContent = `
+    .net-tab { padding:8px 16px;background:none;border:none;border-bottom:3px solid transparent;
+      color:var(--muted);font-size:13px;font-weight:500;cursor:pointer;transition:color .15s; }
+    .net-tab:hover { color:var(--text); }
+    .net-tab.active { color:var(--accent);border-bottom-color:var(--accent);font-weight:700; }
+    .net-panel { padding:20px 24px; }
+    .net-status-online  { display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e; }
+    .net-status-offline { display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444; }
+    .net-status-unknown { display:inline-block;width:9px;height:9px;border-radius:50%;background:#6b7280; }
+    .net-graph-card { background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+      padding:14px;display:flex;flex-direction:column;gap:10px; }
+    .net-graph-card:hover { border-color:var(--accent);transition:border-color .15s; }
+    .net-tree-folder, .net-tree-device, .net-tree-graph {
+      display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;
+      cursor:pointer;font-size:12px;color:var(--text); }
+    .net-tree-folder:hover,.net-tree-device:hover,.net-tree-graph:hover { background:var(--bg3); }
+    .net-tpl-card { background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px; }
+    .net-stat-card { background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+      padding:14px;text-align:center; }
+    .net-tree-children { margin-left:18px;border-left:1px solid var(--border);padding-left:6px; }
+  `;
+  document.head.appendChild(s);
+})();
+
+// ── Entry point ───────────────────────────────────────────────────────────
+async function loadNetwork() {
+  try {
+    await Promise.all([_netFetchDevices(), _netFetchTemplates()]);
+    netTab('preview');
+  } catch(e) { console.error('loadNetwork:', e); }
+  // Auto-refresh every 60s when section is active
+  if (_netAutoRefreshTimer) clearInterval(_netAutoRefreshTimer);
+  _netAutoRefreshTimer = setInterval(() => {
+    if (document.getElementById('section-network')?.style.display !== 'none') {
+      _netRefresh();
+    }
+  }, 60000);
+}
+
+async function _netFetchDevices() {
+  const r = await fetch(`${API}/network/devices`, { headers: authHeaders() });
+  const d = await r.json();
+  _netDevices = d.ok ? d.devices : [];
+}
+
+async function _netFetchTemplates() {
+  const r = await fetch(`${API}/network/templates`, { headers: authHeaders() });
+  const d = await r.json();
+  _netTemplates = d.ok ? d.templates : [];
+}
+
+async function _netRefresh() {
+  await Promise.all([_netFetchDevices(), _netFetchTemplates()]);
+  // Re-render whichever panel is active
+  const tabs = ['preview','tree','devices','templates','poller'];
+  for (const t of tabs) {
+    const p = document.getElementById(`net-panel-${t}`);
+    if (p && p.style.display !== 'none') { _netRenderTab(t); break; }
+  }
+}
 
 // ── Tab switching ────────────────────────────────────────────────────────
-// PPPoE auto-refresh handle
-let _mtPppTimer = null;
-
-function mtTab(name) {
-  document.querySelectorAll('.mt-tab').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.mt-panel').forEach(p => p.style.display = 'none');
-  const btn = document.querySelector(`[onclick="mtTab('${name}')"]`);
+function netTab(name) {
+  document.querySelectorAll('.net-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.net-panel').forEach(p => p.style.display = 'none');
+  const btn = document.getElementById(`net-tab-${name}`);
   if (btn) btn.classList.add('active');
-  const panel = document.getElementById(`mt-panel-${name}`);
-  if (panel) panel.style.display = '';
-
-  // Clear PPP auto-refresh if leaving ppp tab
-  if (name !== 'ppp' && _mtPppTimer) { clearInterval(_mtPppTimer); _mtPppTimer = null; }
-
-  if (name === 'interfaces') {
-    _mtPopulateDevSel('mt-iface-dev');
-    const devId = document.getElementById('mt-iface-dev')?.value;
-    if (devId) mtLoadInterfaces(devId);
-  }
-  if (name === 'ppp') {
-    _mtPopulateDevSel('mt-ppp-dev');
-    const devId = document.getElementById('mt-ppp-dev')?.value;
-    if (devId) {
-      mtLoadPPP(devId);
-      // Auto-refresh every 60s
-      if (_mtPppTimer) clearInterval(_mtPppTimer);
-      _mtPppTimer = setInterval(() => {
-        const id = document.getElementById('mt-ppp-dev')?.value;
-        if (id) mtLoadPPP(id);
-      }, 60000);
-    }
-  }
-  if (name === 'resource') {
-    _mtPopulateDevSel('mt-res-dev');
-    const devId = document.getElementById('mt-res-dev')?.value;
-    if (devId) mtLoadResource(devId, document.getElementById('mt-res-range')?.value || '1h');
-  }
-  if (name === 'devices') {
-    _mtRenderDeviceList();
-  }
+  const panel = document.getElementById(`net-panel-${name}`);
+  if (panel) panel.style.display = name === 'tree' ? 'flex' : '';
+  _netRenderTab(name);
 }
 
-function _mtPopulateDevSel(selId) {
-  const sel = document.getElementById(selId);
+function _netRenderTab(name) {
+  if (name === 'preview')   { _netPopulateDevSel(); _netLoadPreview(); }
+  if (name === 'devices')   _netRenderDevices();
+  if (name === 'templates') _netRenderTemplates();
+  if (name === 'tree')      _netRenderTree();
+  if (name === 'poller')    _netLoadPollerStatus();
+}
+
+// ── Device selector helper ────────────────────────────────────────────────
+function _netPopulateDevSel() {
+  const sel = document.getElementById('net-prev-dev');
   if (!sel) return;
   const cur = sel.value;
-  sel.innerHTML = _mtDevices.map(d =>
-    `<option value="${d.id}" ${d.id == cur ? 'selected' : ''}>${escHtml(d.name)} (${escHtml(d.ip)})</option>`
-  ).join('') || '<option value="">No devices</option>';
+  sel.innerHTML = '<option value="">— All Devices —</option>' +
+    _netDevices.map(d =>
+      `<option value="${d.id}" ${String(d.id) === cur ? 'selected' : ''}>${d.name} (${d.ip})</option>`
+    ).join('');
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
-function _mtStatusBadge(status) {
-  if (status === 'online')  return '<span class="mt-status-online">● Online</span>';
-  if (status === 'offline') return '<span class="mt-status-offline">● Offline</span>';
-  return '<span class="mt-status-unknown">● Unknown</span>';
-}
-
-function _mtFmtUptime(sec) {
-  if (!sec) return '-';
-  sec = parseInt(sec);
-  const d = Math.floor(sec / 86400);
-  const h = Math.floor((sec % 86400) / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-function _mtFmtBps(bps) {
-  if (!bps) return '0';
-  const mbps = bps / 1e6;
-  if (mbps >= 100) return mbps.toFixed(0) + ' M';
-  if (mbps >= 1)   return mbps.toFixed(1) + ' M';
-  return (bps / 1e3).toFixed(0) + ' K';
-}
-
-function _mtAge(ts) {
-  if (!ts) return 'Never';
-  const ago = Math.floor(Date.now()/1000) - ts;
-  if (ago < 120) return `${ago}s ago`;
-  if (ago < 3600) return `${Math.floor(ago/60)}m ago`;
-  if (ago < 86400) return `${Math.floor(ago/3600)}h ago`;
-  return `${Math.floor(ago/86400)}d ago`;
-}
-
-// ── Load section ─────────────────────────────────────────────────────────
-async function loadMikroTik() {
-  await mtLoadDevices();
-  mtTab('dashboard');
-  mtRefreshDashboard();
-}
-
-// ── Load device list ─────────────────────────────────────────────────────
-async function mtLoadDevices() {
-  try {
-    const r = await fetch(`${API}/mikrotik/devices`, { headers: authHeaders() });
-    const d = await r.json();
-    _mtDevices = (d.devices || []);
-  } catch(e) {
-    _mtDevices = [];
-    console.error('mtLoadDevices:', e);
+// ── Graph Preview tab ─────────────────────────────────────────────────────
+async function _netLoadPreview() {
+  const devId = document.getElementById('net-prev-dev')?.value;
+  const range = document.getElementById('net-prev-range')?.value || '1h';
+  const grid  = document.getElementById('net-prev-grid');
+  if (!grid) return;
+  if (!devId) {
+    // Multi-device: load per-device previews in sequence
+    let all = [];
+    for (const d of _netDevices) {
+      try {
+        const r = await fetch(`${API}/network/graph-preview?device_id=${d.id}&range=${range}`, { headers: authHeaders() });
+        const data = await r.json();
+        if (data.ok) all = all.concat(data.previews || []);
+      } catch(e) {}
+    }
+    _netPreviews = all;
+  } else {
+    try {
+      const r = await fetch(`${API}/network/graph-preview?device_id=${devId}&range=${range}`, { headers: authHeaders() });
+      const d = await r.json();
+      _netPreviews = d.ok ? (d.previews || []) : [];
+    } catch(e) { _netPreviews = []; }
   }
+  _netPrevPage = 0;
+  _netRenderPreviewCards();
 }
 
-// ── Dashboard ─────────────────────────────────────────────────────────────
-async function mtRefreshDashboard() {
-  await mtLoadDevices();
+function _netRenderPreviewCards() {
+  const grid   = document.getElementById('net-prev-grid');
+  const pager  = document.getElementById('net-prev-pager');
+  const count  = document.getElementById('net-prev-count');
+  const thumb  = document.getElementById('net-prev-thumb')?.checked;
+  if (!grid) return;
 
-  // Summary cards
-  const online  = _mtDevices.filter(d => d.last_status === 'online').length;
-  const offline = _mtDevices.filter(d => d.last_status === 'offline').length;
-  const cardsEl = document.getElementById('mt-cards');
-  if (cardsEl) {
-    cardsEl.innerHTML = [
-      { label:'Total Devices', val: _mtDevices.length, sub:'registered', color:'var(--text)' },
-      { label:'Online',        val: online,             sub:'reachable',  color:'#22c55e' },
-      { label:'Offline',       val: offline,            sub:'unreachable',color:'#ef4444' },
-    ].map(c => `
-      <div class="mt-card">
-        <div class="mt-card-label">${c.label}</div>
-        <div class="mt-card-val" style="color:${c.color}">${c.val}</div>
-        <div class="mt-card-sub">${c.sub}</div>
-      </div>`).join('');
-  }
+  const total  = _netPreviews.length;
+  const pages  = Math.ceil(total / NET_PAGE_SIZE) || 1;
+  _netPrevPage = Math.min(_netPrevPage, pages - 1);
+  const slice  = _netPreviews.slice(_netPrevPage * NET_PAGE_SIZE,
+                                     (_netPrevPage + 1) * NET_PAGE_SIZE);
+  if (count) count.textContent = `${total} graph${total !== 1 ? 's' : ''}`;
 
-  // Device table
-  const tbody = document.getElementById('mt-device-tbody');
-  if (!tbody) return;
-  if (!_mtDevices.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">
-      No devices. <a href="#" onclick="mtShowAddDevice();return false;" style="color:var(--accent);">Add your first MikroTik device →</a>
-    </td></tr>`;
-    return;
-  }
-  try {
-    tbody.innerHTML = _mtDevices.map(d => {
-      const statusBadge = _mtStatusBadge(d.last_status);
-      const age         = _mtAge(d.last_seen);
-      const ver         = d.routeros_ver || '-';
-      const loc         = d.location || '-';
-      return `<tr class="mt-tr-row" style="border-bottom:1px solid var(--border);">
-        <td style="padding:10px 12px;font-weight:600;">${escHtml(d.name)}</td>
-        <td style="padding:10px 12px;font-family:monospace;color:var(--muted);font-size:12px;">${escHtml(d.ip)}</td>
-        <td style="padding:10px 12px;color:var(--muted);">${escHtml(loc)}</td>
-        <td style="padding:10px 12px;">${statusBadge}</td>
-        <td style="padding:10px 12px;font-size:11px;color:var(--muted);">${escHtml(ver)}</td>
-        <td style="padding:10px 12px;font-size:11px;color:var(--muted);white-space:nowrap;">${age}</td>
-        <td style="padding:10px 12px;text-align:center;">${d.snmp_enabled ? '<span class="mt-badge-yes">ON</span>' : '<span class="mt-badge-no">OFF</span>'}</td>
-        <td style="padding:10px 12px;text-align:center;">${d.api_enabled  ? '<span class="mt-badge-yes">ON</span>' : '<span class="mt-badge-no">OFF</span>'}</td>
-        <td style="padding:10px 12px;text-align:center;">
-          <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">
-            <button class="mt-action-btn" title="Resource graphs" onclick="mtTab('resource');setTimeout(()=>{document.getElementById('mt-res-dev').value='${d.id}';mtLoadResource('${d.id}','1h');},50)">📈</button>
-            <button class="mt-action-btn" title="PPPoE sessions" onclick="mtTab('ppp');setTimeout(()=>{document.getElementById('mt-ppp-dev').value='${d.id}';mtLoadPPP('${d.id}');},50)">👥</button>
-            <button class="mt-action-btn" title="Interfaces" onclick="mtTab('interfaces');setTimeout(()=>{document.getElementById('mt-iface-dev').value='${d.id}';mtLoadInterfaces('${d.id}');},50)">🔌</button>
-            <button class="mt-action-btn" title="Edit" onclick="mtShowEditDevice(${d.id})">✏️</button>
-            <button class="mt-action-btn" title="Test connection" onclick="mtTestDevice(${d.id},this)">🔗</button>
-            <button class="mt-action-btn" style="color:#ef4444;border-color:#ef4444;" title="Delete" onclick="mtDeleteDevice(${d.id},'${escAttr(d.name)}')">🗑</button>
-          </div>
-        </td>
-      </tr>`;
-    }).join('');
-  } catch(err) {
-    console.error('mtRefreshDashboard table render error:', err);
-    tbody.innerHTML = `<tr><td colspan="9" style="padding:16px;text-align:center;color:#ef4444;">Render error: ${err.message}</td></tr>`;
-  }
-}
+  grid.innerHTML = '';
+  // Destroy old charts before re-rendering
+  for (const key in _netCharts) { try { _netCharts[key].destroy(); } catch(e) {} }
+  _netCharts = {};
 
-// ── Devices list tab ──────────────────────────────────────────────────────
-function _mtRenderDeviceList() {
-  const wrap = document.getElementById('mt-devices-list');
-  if (!wrap) return;
-  if (!_mtDevices.length) {
-    wrap.innerHTML = `<div style="padding:32px;text-align:center;color:var(--muted);">
-      No devices registered. <a href="#" onclick="mtShowAddDevice();return false;" style="color:var(--accent);">Add first device →</a></div>`;
-    return;
-  }
-  wrap.innerHTML = _mtDevices.map(d => `
-    <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);">
-      <div style="width:8px;height:8px;border-radius:50%;background:${d.last_status==='online'?'#22c55e':d.last_status==='offline'?'#ef4444':'#94a3b8'};flex-shrink:0;"></div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-weight:600;font-size:13px;">${escHtml(d.name)}</div>
-        <div style="font-size:11px;color:var(--muted);font-family:monospace;">${escHtml(d.ip)} · ${escHtml(d.location||'—')}</div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);">${escHtml(d.routeros_ver||'RouterOS')} · ${_mtAge(d.last_seen)}</div>
-      <div style="display:flex;gap:4px;">
-        <button class="mt-action-btn" onclick="mtShowEditDevice(${d.id})">✏️</button>
-        <button class="mt-action-btn" onclick="mtTestDevice(${d.id},this)">🔗</button>
-        <button class="mt-action-btn" style="color:#ef4444;" onclick="mtDeleteDevice(${d.id},'${escAttr(d.name)}')">🗑</button>
-      </div>
-    </div>`).join('');
-}
+  slice.forEach((pv, idx) => {
+    const g     = pv.graph;
+    const gtype = g.graph_type || '';
+    const dev   = _netDevices.find(d => d.id === g.device_id) || {};
+    const iname = g.interface_name || '';
+    const canId = `net-canvas-${_netPrevPage}-${idx}`;
 
-// ── Add / Edit device form ────────────────────────────────────────────────
-function mtShowAddDevice() {
-  mtTab('devices');
-  _mtRenderForm(null);
-}
+    const card = document.createElement('div');
+    card.className = 'net-graph-card';
+    card.style.cursor = 'pointer';
+    card.onclick = () => netShowGraph(g.id);
 
-function mtShowEditDevice(id) {
-  const dev = _mtDevices.find(d => d.id == id);
-  if (!dev) return;
-  mtTab('devices');
-  _mtRenderForm(dev);
-}
+    const titleRow = `
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${_esc(g.graph_name || gtype)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_esc(dev.name || '')} ${iname ? '— ' + _esc(iname) : ''}</div>
+        </div>
+        <span style="font-size:10px;padding:2px 7px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;color:var(--muted);white-space:nowrap;">${gtype}</span>
+      </div>`;
 
-function _mtRenderForm(dev) {
-  const wrap = document.getElementById('mt-device-form-wrap');
-  if (!wrap) return;
-  // Hide device list while form is open
-  const listWrap = document.getElementById('mt-devices-list-wrap');
-  if (listWrap) listWrap.style.display = 'none';
-  const isEdit = !!dev;
-  wrap.innerHTML = `
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:640px;">
-      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px;">${isEdit ? '✏️ Edit Device' : '➕ Add MikroTik Device'}</div>
-      <div class="mt-form-row">
-        <div><div class="mt-form-label">Device Name *</div>
-          <input class="mt-form-input" id="mf-name" placeholder="e.g. HQ-MikroTik" value="${escAttr(dev?.name||'')}"></div>
-        <div><div class="mt-form-label">IP Address *</div>
-          <input class="mt-form-input" id="mf-ip" placeholder="192.168.1.1" value="${escAttr(dev?.ip||'')}"></div>
-      </div>
-      <div class="mt-form-row full">
-        <div><div class="mt-form-label">Location</div>
-          <input class="mt-form-input" id="mf-location" placeholder="e.g. Server Room" value="${escAttr(dev?.location||'')}"></div>
-      </div>
-      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:14px 0 8px;">SNMP</div>
-      <div class="mt-form-row">
-        <div><div class="mt-form-label">SNMP Enabled</div>
-          <select class="mt-form-input" id="mf-snmp-en">
-            <option value="1" ${(dev?.snmp_enabled??1)==1?'selected':''}>Yes</option>
-            <option value="0" ${(dev?.snmp_enabled??1)==0?'selected':''}>No</option>
-          </select></div>
-        <div><div class="mt-form-label">Community String</div>
-          <input class="mt-form-input" id="mf-community" placeholder="public" value="${escAttr(dev?.snmp_community||'public')}"></div>
-      </div>
-      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:14px 0 8px;">RouterOS API</div>
-      <div class="mt-form-row">
-        <div><div class="mt-form-label">API Enabled</div>
-          <select class="mt-form-input" id="mf-api-en">
-            <option value="1" ${(dev?.api_enabled??1)==1?'selected':''}>Yes</option>
-            <option value="0" ${(dev?.api_enabled??1)==0?'selected':''}>No</option>
-          </select></div>
-        <div><div class="mt-form-label">API Port</div>
-          <input class="mt-form-input" id="mf-api-port" type="number" value="${dev?.api_port||8728}"></div>
-      </div>
-      <div class="mt-form-row">
-        <div><div class="mt-form-label">Username</div>
-          <input class="mt-form-input" id="mf-username" placeholder="admin" value="${escAttr(dev?.username||'admin')}"></div>
-        <div><div class="mt-form-label">Password${isEdit?' (leave blank to keep)':''}</div>
-          <input class="mt-form-input" id="mf-password" type="password" placeholder="${isEdit?'(unchanged)':'API password'}"></div>
-      </div>
-      <div class="mt-form-row">
-        <div><div class="mt-form-label">Radius Role</div>
-          <select class="mt-form-input" id="mf-radius">
-            <option value="0" ${(dev?.radius_role||0)==0?'selected':''}>No</option>
-            <option value="1" ${(dev?.radius_role||0)==1?'selected':''}>Yes</option>
-          </select></div>
-        <div><div class="mt-form-label">Monitoring Enabled</div>
-          <select class="mt-form-input" id="mf-enabled">
-            <option value="1" ${(dev?.enabled??1)==1?'selected':''}>Yes</option>
-            <option value="0" ${(dev?.enabled??1)==0?'selected':''}>No</option>
-          </select></div>
-      </div>
-      <div id="mf-msg" style="min-height:18px;font-size:12px;margin-bottom:8px;"></div>
-      <div style="display:flex;gap:8px;">
-        <button class="mt-btn-primary" onclick="mtSaveDevice(${isEdit?dev.id:'null'})">${isEdit?'Save Changes':'Add Device'}</button>
-        <button class="mt-btn-secondary" onclick="document.getElementById('mt-device-form-wrap').innerHTML='';const lw=document.getElementById('mt-devices-list-wrap');if(lw)lw.style.display='';_mtRenderDeviceList();">Cancel</button>
-        ${isEdit?`<button class="mt-btn-danger" onclick="mtDeleteDevice(${dev.id},'${escAttr(dev.name)}')">Delete</button>`:''}
-      </div>
-    </div>`;
-}
+    const chartHeight = thumb ? '80px' : '160px';
+    const chartHtml = `<canvas id="${canId}" style="height:${chartHeight};max-height:${chartHeight};width:100%;"></canvas>`;
 
-async function mtSaveDevice(id) {
-  const msg = document.getElementById('mf-msg');
-  const payload = {
-    name:           document.getElementById('mf-name').value.trim(),
-    ip:             document.getElementById('mf-ip').value.trim(),
-    location:       document.getElementById('mf-location').value.trim(),
-    snmp_enabled:   parseInt(document.getElementById('mf-snmp-en').value),
-    snmp_community: document.getElementById('mf-community').value.trim(),
-    api_enabled:    parseInt(document.getElementById('mf-api-en').value),
-    api_port:       parseInt(document.getElementById('mf-api-port').value)||8728,
-    username:       document.getElementById('mf-username').value.trim(),
-    radius_role:    parseInt(document.getElementById('mf-radius').value),
-    enabled:        parseInt(document.getElementById('mf-enabled').value),
-  };
-  const pw = document.getElementById('mf-password').value;
-  if (pw) payload.password = pw;
-
-  if (!payload.name || !payload.ip) {
-    msg.style.color='#ef4444'; msg.textContent = 'Name and IP are required.'; return;
-  }
-  msg.style.color='var(--muted)'; msg.textContent = 'Saving…';
-
-  try {
-    const url = id ? `${API}/mikrotik/devices/${id}` : `${API}/mikrotik/devices`;
-    const r = await fetch(url, { method:'POST', headers:{...authHeaders(),'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'Save failed');
-    msg.style.color='#22c55e'; msg.textContent = id ? 'Saved.' : `Device added (ID ${d.id}).`;
-    await mtLoadDevices();
-    setTimeout(() => {
-      document.getElementById('mt-device-form-wrap').innerHTML='';
-      const lw=document.getElementById('mt-devices-list-wrap');if(lw)lw.style.display='';
-      _mtRenderDeviceList();
-    }, 900);
-  } catch(e) {
-    msg.style.color='#ef4444'; msg.textContent = e.message;
-  }
-}
-
-async function mtDeleteDevice(id, name) {
-  if (!confirm(`Delete MikroTik device "${name}"?\nThis will NOT delete historical data from InfluxDB.`)) return;
-  try {
-    const r = await fetch(`${API}/mikrotik/devices/${id}/delete`, { method:'POST', headers:authHeaders() });
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error);
-    await mtLoadDevices();
-    mtTab('dashboard');
-    mtRefreshDashboard();
-  } catch(e) {
-    alert('Delete failed: ' + e.message);
-  }
-}
-
-async function mtTestDevice(id, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  try {
-    const r = await fetch(`${API}/mikrotik/devices/${id}/test`, { method:'POST', headers:authHeaders() });
-    const d = await r.json();
-    const snmp = d.snmp_ok ? '✅ SNMP' : '❌ SNMP';
-    const api  = d.api_ok  ? '✅ API'  : '❌ API';
-    const ver  = d.version  ? ` (RouterOS ${d.version})` : '';
-    const host = d.hostname ? ` [${d.hostname}]` : '';
-    alert(`Connection test for device #${id}\n${snmp}   ${api}${ver}${host}${d.error?'\n⚠ '+d.error:''}`);
-  } catch(e) {
-    alert('Test failed: ' + e.message);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔌'; }
-  }
-}
-
-// ── Interfaces (paginated) ───────────────────────────────────────────────
-let _mtAllIfaces = [];
-let _mtIfacePage = 0;
-const _MT_IFACE_PAGE_SIZE = 50;
-
-async function mtLoadInterfaces(deviceId) {
-  if (!deviceId) return;
-  const tbody = document.getElementById('mt-iface-tbody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted);">Loading…</td></tr>';
-  const ifaceSel = document.getElementById('mt-iface-sel');
-  _mtIfacePage = 0;
-
-  try {
-    const r = await fetch(`${API}/mikrotik/interfaces?device_id=${deviceId}`, { headers:authHeaders() });
-    const d = await r.json();
-    let ifaces = d.interfaces || [];
-
-    // Apply type filter
-    const filterEl = document.getElementById('mt-iface-filter');
-    const filter   = filterEl ? filterEl.value : 'all';
-    if (filter === 'physical') {
-      ifaces = ifaces.filter(i => ['ether','bridge','wlan','sfp','bonding'].includes(i.iface_type));
-    } else if (filter === 'active') {
-      ifaces = ifaces.filter(i => i.oper_status == 1);
-    } else if (filter === 'ppp') {
-      ifaces = ifaces.filter(i => i.iface_type === 'pppoe' || (i.interface||'').startsWith('<pppoe'));
+    // Current value pills
+    let pills = '';
+    if (pv.series && pv.series.length) {
+      pills = '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+      for (const s of pv.series) {
+        const last = s.data && s.data.length ? s.data[s.data.length - 1] : null;
+        if (last !== null && last !== undefined) {
+          const val = gtype === 'traffic' ? _fmtBps(last) :
+                      gtype === 'memory' || gtype === 'cpu' ? last.toFixed(1) + '%' :
+                      gtype === 'temperature' ? last.toFixed(1) + '°C' :
+                      gtype === 'uptime' ? _fmtUptime(last) : String(last);
+          const color = s.name.startsWith('RX') || s.name === 'rx_bps' ? '#22c55e' : '#60a5fa';
+          pills += `<span style="font-size:11px;padding:2px 8px;background:${color}22;color:${color};border-radius:12px;font-weight:600;">${_esc(s.name)}: ${val}</span>`;
+        }
+      }
+      pills += '</div>';
     }
 
-    // Sort by total traffic desc
-    ifaces.sort((a, b) => (parseFloat(b.rx_bps)||0) + (parseFloat(b.tx_bps)||0)
-                        - (parseFloat(a.rx_bps)||0) - (parseFloat(a.tx_bps)||0));
-    _mtAllIfaces = ifaces;
+    card.innerHTML = titleRow + chartHtml + pills;
+    grid.appendChild(card);
 
-    // Populate interface selector (physical only to keep it manageable)
-    if (ifaceSel) {
-      const selectable = ifaces.filter(i => ['ether','bridge','wlan','sfp'].includes(i.iface_type));
-      ifaceSel.innerHTML = selectable.map(i =>
-        `<option value="${escAttr(i.interface)}">${escHtml(i.interface)}</option>`
-      ).join('') || ifaces.slice(0,30).map(i =>
-        `<option value="${escAttr(i.interface)}">${escHtml(i.interface)}</option>`
-      ).join('') || '<option value="">No interfaces</option>';
+    // Draw chart (after DOM insert)
+    if (pv.labels && pv.labels.length) {
+      requestAnimationFrame(() => {
+        const cv = document.getElementById(canId);
+        if (cv) _netDrawChart(canId, pv.labels, pv.series || []);
+      });
     }
-
-    _mtRenderIfacePage(deviceId);
-
-    // Auto-load graph for first physical interface
-    if (ifaceSel && ifaceSel.value) {
-      mtShowIfaceGraph(deviceId, ifaceSel.value, document.getElementById('mt-iface-range')?.value || '1h');
-    }
-  } catch(e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="padding:16px;text-align:center;color:#ef4444;">Error: ${escHtml(e.message)}</td></tr>`;
-  }
-}
-
-function _mtRenderIfacePage(deviceId) {
-  const tbody  = document.getElementById('mt-iface-tbody');
-  const pager  = document.getElementById('mt-iface-pager');
-  if (!tbody) return;
-
-  const total  = _mtAllIfaces.length;
-  const pages  = Math.ceil(total / _MT_IFACE_PAGE_SIZE);
-  const start  = _mtIfacePage * _MT_IFACE_PAGE_SIZE;
-  const slice  = _mtAllIfaces.slice(start, start + _MT_IFACE_PAGE_SIZE);
+  });
 
   if (!slice.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted);">No interfaces match the filter</td></tr>';
-  } else {
-    tbody.innerHTML = slice.map(i => {
-      const esc_iface = escAttr(i.interface || '');
-      const rx = _mtFmtBps(parseFloat(i.rx_bps)||0);
-      const tx = _mtFmtBps(parseFloat(i.tx_bps)||0);
-      const up = i.oper_status == 1;
-      return `<tr class="mt-tr-row" style="border-bottom:1px solid var(--border);cursor:pointer;"
-          onclick="document.getElementById('mt-iface-sel').value='${esc_iface}';mtShowIfaceGraph('${deviceId}','${esc_iface}',document.getElementById('mt-iface-range')?.value||'1h')">
-        <td style="padding:8px 12px;font-weight:500;font-size:12px;">${escHtml(i.interface||'-')}</td>
-        <td style="padding:8px 12px;color:var(--muted);font-size:11px;">${escHtml(i.iface_type||'-')}</td>
-        <td style="padding:8px 12px;text-align:right;color:#4ade80;font-family:monospace;font-size:12px;">${rx}</td>
-        <td style="padding:8px 12px;text-align:right;color:#60a5fa;font-family:monospace;font-size:12px;">${tx}</td>
-        <td style="padding:8px 12px;text-align:center;">${up?'<span style="color:#22c55e;font-weight:700;">● UP</span>':'<span style="color:#6b7280;font-size:11px;">● DOWN</span>'}</td>
-      </tr>`;
-    }).join('');
+    grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);">No graphs found — add a device and run discovery.</div>';
   }
 
+  // Pager
   if (pager) {
-    pager.innerHTML = `
-      <button onclick="_mtIfacePage=Math.max(0,_mtIfacePage-1);_mtRenderIfacePage('${deviceId}')" ${_mtIfacePage===0?'disabled':''}>◀ Prev</button>
-      <span>Page ${_mtIfacePage+1} of ${pages||1} &nbsp;·&nbsp; ${total.toLocaleString()} interfaces</span>
-      <button onclick="_mtIfacePage=Math.min(${pages-1},_mtIfacePage+1);_mtRenderIfacePage('${deviceId}')" ${_mtIfacePage>=pages-1?'disabled':''}>Next ▶</button>`;
+    pager.innerHTML = '';
+    if (pages > 1) {
+      for (let i = 0; i < pages; i++) {
+        const btn = document.createElement('button');
+        btn.textContent = i + 1;
+        btn.style.cssText = `padding:5px 11px;border-radius:6px;border:1px solid var(--border);
+          background:${i === _netPrevPage ? 'var(--accent)' : 'var(--bg3)'};
+          color:${i === _netPrevPage ? '#fff' : 'var(--text)'};cursor:pointer;font-size:12px;`;
+        btn.onclick = () => { _netPrevPage = i; _netRenderPreviewCards(); };
+        pager.appendChild(btn);
+      }
+    }
   }
 }
 
-async function mtShowIfaceGraph(deviceId, iface, range) {
-  if (!deviceId || !iface) return;
-  const title = document.getElementById('mt-iface-graph-title');
-  if (title) title.textContent = `${iface} — Traffic (${range})`;
-  try {
-    const r = await fetch(`${API}/mikrotik/iface-traffic?device_id=${deviceId}&iface=${encodeURIComponent(iface)}&range=${range}`, { headers:authHeaders() });
-    const d = await r.json();
-    if (!d.ok) return;
-    const ctx = document.getElementById('mt-iface-chart');
-    if (!ctx) return;
-    if (_mtChartIface) { _mtChartIface.destroy(); _mtChartIface = null; }
-    _mtChartIface = new Chart(ctx.getContext('2d'), {
-      type:'line',
-      data:{ labels:d.labels, datasets:[
-        { label:'RX Mbps', data:d.rx_mbps, borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true },
-        { label:'TX Mbps', data:d.tx_mbps, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.06)', borderWidth:2, pointRadius:0, tension:.3, fill:true },
-      ]},
-      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
-        plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}} },
-        scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:8}},
-                 y:{ticks:{color:'var(--muted)',callback:v=>v+' M'},beginAtZero:true} } }
-    });
-  } catch(e) { console.error('mtShowIfaceGraph:', e); }
+let _netCharts = {};
+
+function _netDrawChart(canId, labels, series) {
+  const cv = document.getElementById(canId);
+  if (!cv) return;
+  if (_netCharts[canId]) { _netCharts[canId].destroy(); delete _netCharts[canId]; }
+  const COLORS = ['rgba(34,197,94,.8)','rgba(96,165,250,.8)','rgba(251,191,36,.8)','rgba(248,113,113,.8)'];
+  const datasets = (series || []).map((s, i) => ({
+    label: s.name,
+    data: s.data || [],
+    borderColor: COLORS[i % COLORS.length],
+    backgroundColor: COLORS[i % COLORS.length].replace('.8)', '.1)'),
+    borderWidth: 1.5,
+    pointRadius: 0,
+    tension: 0.3,
+    fill: true,
+  }));
+  _netCharts[canId] = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 200 },
+      plugins: { legend: { display: series.length > 1, labels: { color: 'var(--muted)', font: { size: 10 }, boxWidth: 10 } } },
+      scales: {
+        x: { ticks: { color: 'var(--muted)', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.03)' } },
+        y: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.04)' }, beginAtZero: false },
+      },
+    },
+  });
 }
 
-// ── PPPoE Sessions (paginated + auto-refresh) ─────────────────────────────
-let _mtPppPage = 0;
-let _mtPppFiltered = [];
-const _MT_PPP_PAGE_SIZE = 50;
-
-async function mtLoadPPP(deviceId) {
-  if (!deviceId) return;
-  const tbody   = document.getElementById('mt-ppp-tbody');
-  const countEl = document.getElementById('mt-ppp-count');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--muted);">Loading…</td></tr>';
-
-  try {
-    const r = await fetch(`${API}/mikrotik/ppp-sessions?device_id=${deviceId}`, { headers:authHeaders() });
-    const d = await r.json();
-    _mtPppSessions = d.sessions || [];
-    _mtPppPage = 0;
-
-    const q = (document.getElementById('mt-ppp-search')?.value || '').toLowerCase();
-    _mtPppFiltered = q ? _mtPppSessions.filter(s =>
-      (s.username||'').toLowerCase().includes(q) ||
-      (s.address||'').toLowerCase().includes(q) ||
-      (s.caller_id||'').toLowerCase().includes(q)
-    ) : [..._mtPppSessions];
-
-    if (countEl) countEl.textContent = `${_mtPppSessions.length.toLocaleString()} sessions`;
-    _mtRenderPppPage();
-
-    // Load history chart with selected range
-    const range = document.getElementById('mt-ppp-hist-range')?.value || '24h';
-    _mtLoadPppHistory(deviceId, range);
-  } catch(e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="padding:16px;text-align:center;color:#ef4444;">Error: ${escHtml(e.message)}</td></tr>`;
-  }
-}
-
-function mtFilterPPP() {
-  const q = (document.getElementById('mt-ppp-search')?.value || '').toLowerCase();
-  _mtPppFiltered = q ? _mtPppSessions.filter(s =>
-    (s.username||'').toLowerCase().includes(q) ||
-    (s.address||'').toLowerCase().includes(q) ||
-    (s.caller_id||'').toLowerCase().includes(q)
-  ) : [..._mtPppSessions];
-  _mtPppPage = 0;
-  _mtRenderPppPage();
-}
-
-function _mtRenderPppPage() {
-  const tbody = document.getElementById('mt-ppp-tbody');
-  const pager = document.getElementById('mt-ppp-pager');
+// ── Devices tab ───────────────────────────────────────────────────────────
+function _netRenderDevices() {
+  const tbody = document.getElementById('net-dev-tbody');
+  const badge = document.getElementById('net-dev-count-badge');
+  const pager = document.getElementById('net-dev-pager');
   if (!tbody) return;
+  if (badge) badge.textContent = `(${_netDevices.length} total)`;
 
-  const total = _mtPppFiltered.length;
-  const pages = Math.ceil(total / _MT_PPP_PAGE_SIZE) || 1;
-  const start = _mtPppPage * _MT_PPP_PAGE_SIZE;
-  const slice = _mtPppFiltered.slice(start, start + _MT_PPP_PAGE_SIZE);
+  const total = _netDevices.length;
+  const pages = Math.ceil(total / NET_DEV_PAGE) || 1;
+  _netDevPage = Math.min(_netDevPage, pages - 1);
+  const slice = _netDevices.slice(_netDevPage * NET_DEV_PAGE, (_netDevPage + 1) * NET_DEV_PAGE);
 
-  if (!total) {
-    tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">No sessions found</td></tr>';
-  } else {
-    tbody.innerHTML = slice.map((s, idx) => `
-      <tr class="mt-tr-row" style="border-bottom:1px solid var(--border);">
-        <td style="padding:8px 12px;font-weight:600;font-size:12px;">${escHtml(s.username||'-')}</td>
-        <td style="padding:8px 12px;color:var(--muted);font-size:11px;">${escHtml(s.service||'-')}</td>
-        <td style="padding:8px 12px;font-family:monospace;font-size:12px;">${escHtml(s.address||'-')}</td>
-        <td style="padding:8px 12px;font-family:monospace;font-size:11px;color:var(--muted);">${escHtml(s.caller_id||'-')}</td>
-        <td style="padding:8px 12px;font-size:12px;white-space:nowrap;">${_mtFmtUptime(s.uptime_sec)}</td>
-        <td style="padding:8px 12px;text-align:center;">${s.radius==='true'||s.radius===true?'<span class="mt-badge-yes">YES</span>':'<span class="mt-badge-no">NO</span>'}</td>
-      </tr>`).join('');
+  if (!slice.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">No devices yet — click + Add Device</td></tr>';
+    if (pager) pager.innerHTML = '';
+    return;
   }
 
+  // Get interface and graph counts (from last fetch if available)
+  tbody.innerHTML = slice.map(d => {
+    const st  = d.last_status || 'unknown';
+    const dot = `<span class="net-status-${st}" title="${st}"></span>`;
+    const vendor = (d.vendor || 'generic');
+    const vendorEmoji = { mikrotik:'🔴', cisco:'🔵', juniper:'🟠', huawei:'🔷', linux:'🐧', windows:'🪟', fortinet:'🟣', ubiquiti:'⬜' }[vendor] || '⬙';
+    const lastPoll = d.last_poll ? new Date(d.last_poll * 1000).toLocaleTimeString() : '—';
+    return `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:10px 6px;text-align:center;">${dot}</td>
+      <td style="padding:10px 12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_esc(d.name)}">${_esc(d.name)}</td>
+      <td style="padding:10px 12px;color:var(--muted);font-family:monospace;font-size:11px;">${_esc(d.ip)}</td>
+      <td style="padding:10px 12px;color:var(--muted);">${vendorEmoji} ${vendor}</td>
+      <td style="padding:10px 12px;text-align:center;color:var(--muted);">—</td>
+      <td style="padding:10px 12px;text-align:center;color:var(--muted);">—</td>
+      <td style="padding:10px 12px;text-align:center;color:var(--muted);">${d.last_poll_ms || '—'}</td>
+      <td style="padding:10px 12px;color:var(--muted);font-size:11px;">${lastPoll}</td>
+      <td style="padding:10px 12px;text-align:center;">
+        <button onclick="netEditDevice(${d.id})" style="padding:3px 8px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:5px;font-size:11px;cursor:pointer;margin-right:4px;">Edit</button>
+        <button onclick="netDiscover(${d.id})" style="padding:3px 8px;background:var(--accent);color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer;margin-right:4px;">Discover</button>
+        <button onclick="_netDeleteDevice(${d.id},'${_esc(d.name)}')" style="padding:3px 8px;background:#ef444420;border:1px solid #ef444440;color:#ef4444;border-radius:5px;font-size:11px;cursor:pointer;">Del</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Pager
   if (pager) {
-    pager.innerHTML = `
-      <button onclick="_mtPppPage=Math.max(0,_mtPppPage-1);_mtRenderPppPage()" ${_mtPppPage===0?'disabled':''}>◀ Prev</button>
-      <span>Page ${_mtPppPage+1} of ${pages} &nbsp;·&nbsp; ${total.toLocaleString()} sessions</span>
-      <button onclick="_mtPppPage=Math.min(${pages-1},_mtPppPage+1);_mtRenderPppPage()" ${_mtPppPage>=pages-1?'disabled':''}>Next ▶</button>`;
+    pager.innerHTML = '';
+    if (pages > 1) {
+      for (let i = 0; i < pages; i++) {
+        const btn = document.createElement('button');
+        btn.textContent = i + 1;
+        btn.style.cssText = `padding:4px 10px;border-radius:6px;border:1px solid var(--border);
+          background:${i === _netDevPage ? 'var(--accent)' : 'var(--bg3)'};
+          color:${i === _netDevPage ? '#fff' : 'var(--text)'};cursor:pointer;font-size:12px;margin:2px;`;
+        btn.onclick = () => { _netDevPage = i; _netRenderDevices(); };
+        pager.appendChild(btn);
+      }
+    }
   }
 }
 
-async function _mtLoadPppHistory(deviceId, range) {
-  range = range || document.getElementById('mt-ppp-hist-range')?.value || '24h';
-  try {
-    const r = await fetch(`${API}/mikrotik/ppp-history?device_id=${deviceId}&range=${range}`, { headers:authHeaders() });
-    const d = await r.json();
-    if (!d.ok) return;
-    const ctx = document.getElementById('mt-ppp-chart');
-    if (!ctx) return;
-    if (_mtChartPpp) { _mtChartPpp.destroy(); _mtChartPpp = null; }
-
-    // Format labels to HH:MM or DD/MM
-    const labels = (d.labels || []).map(l => {
-      try {
-        const dt = new Date(l);
-        const now = new Date();
-        const diffDays = (now - dt) / 86400000;
-        if (diffDays > 2) return dt.toLocaleDateString([], {month:'short',day:'numeric'});
-        return dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-      } catch(e) { return l; }
-    });
-
-    _mtChartPpp = new Chart(ctx.getContext('2d'), {
-      type:'line',
-      data:{ labels, datasets:[
-        { label:'Active Sessions', data:d.active_count.map(Number), borderColor:'#4ade80',
-          backgroundColor:'rgba(74,222,128,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true },
-        { label:'Radius Auth',     data:d.radius_count.map(Number), borderColor:'#a78bfa',
-          backgroundColor:'rgba(167,139,250,.06)', borderWidth:2, pointRadius:0, tension:.3, fill:false },
-      ]},
-      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
-        interaction:{ mode:'index', intersect:false },
-        plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}},
-          tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: ${Number(ctx.raw).toLocaleString()}` } }
-        },
-        scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:10},grid:{color:'rgba(255,255,255,.04)'}},
-                 y:{ticks:{color:'var(--muted)',callback:v=>v.toLocaleString()},beginAtZero:false,
-                    grid:{color:'rgba(255,255,255,.04)'}} } }
-    });
-  } catch(e) { console.error('_mtLoadPppHistory:', e); }
+// ── Add / Edit device modal ────────────────────────────────────────────────
+function netAddDevice() {
+  _netCurrentEditId = null;
+  document.getElementById('netDevModalTitle').textContent = 'Add Device';
+  ['ndf-name','ndf-ip','ndf-hostname','ndf-location','ndf-tags','ndf-notes'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('ndf-vendor').value = 'generic';
+  document.getElementById('ndf-type').value   = 'router';
+  document.getElementById('ndf-snmpver').value = 'v2c';
+  document.getElementById('ndf-community').value = 'public';
+  document.getElementById('ndf-port').value    = '161';
+  document.getElementById('ndf-timeout').value = '3';
+  document.getElementById('ndf-interval').value = '60';
+  document.getElementById('ndf-enabled').checked = true;
+  document.getElementById('ndf-auto-traffic').checked = true;
+  document.getElementById('ndf-test-result').style.display = 'none';
+  _netToggleSnmpV3();
+  document.getElementById('netDevModalOverlay').style.display = 'flex';
 }
 
-// ── Resource graphs ───────────────────────────────────────────────────────
-async function mtLoadResource(deviceId, range) {
-  if (!deviceId) return;
-  try {
-    const r = await fetch(`${API}/mikrotik/resource?device_id=${deviceId}&range=${range}`, { headers:authHeaders() });
-    const d = await r.json();
-    if (!d.ok) return;
-
-    // CPU chart
-    const cpuCtx = document.getElementById('mt-cpu-chart');
-    if (cpuCtx) {
-      if (_mtChartCpu) { _mtChartCpu.destroy(); _mtChartCpu = null; }
-      _mtChartCpu = new Chart(cpuCtx.getContext('2d'), {
-        type:'line',
-        data:{ labels:d.labels, datasets:[
-          { label:'CPU %', data:d.cpu, borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true }
-        ]},
-        options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
-          plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}} },
-          scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:8}},
-                   y:{ticks:{color:'var(--muted)',callback:v=>v+'%'},min:0,max:100} } }
-      });
-    }
-
-    // RAM chart
-    const memCtx = document.getElementById('mt-mem-chart');
-    if (memCtx) {
-      if (_mtChartMem) { _mtChartMem.destroy(); _mtChartMem = null; }
-      _mtChartMem = new Chart(memCtx.getContext('2d'), {
-        type:'line',
-        data:{ labels:d.labels, datasets:[
-          { label:'RAM %', data:d.mem, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.08)', borderWidth:2, pointRadius:0, tension:.3, fill:true }
-        ]},
-        options:{ responsive:true, maintainAspectRatio:false, animation:{duration:300},
-          plugins:{ legend:{labels:{color:'var(--muted)',font:{size:11}}} },
-          scales:{ x:{ticks:{color:'var(--muted)',maxTicksLimit:8}},
-                   y:{ticks:{color:'var(--muted)',callback:v=>v+'%'},min:0,max:100} } }
-      });
-    }
-  } catch(e) { console.error('mtLoadResource:', e); }
+function netEditDevice(id) {
+  const d = _netDevices.find(x => x.id === id);
+  if (!d) return;
+  _netCurrentEditId = id;
+  document.getElementById('netDevModalTitle').textContent = 'Edit Device';
+  document.getElementById('ndf-name').value     = d.name || '';
+  document.getElementById('ndf-ip').value       = d.ip || '';
+  document.getElementById('ndf-hostname').value = d.hostname || '';
+  document.getElementById('ndf-location').value = d.location || '';
+  document.getElementById('ndf-tags').value     = d.tags || '';
+  document.getElementById('ndf-notes').value    = d.notes || '';
+  document.getElementById('ndf-vendor').value   = d.vendor || 'generic';
+  document.getElementById('ndf-type').value     = d.device_type || 'router';
+  document.getElementById('ndf-snmpver').value  = d.snmp_version || 'v2c';
+  document.getElementById('ndf-community').value = '';  // never echoed
+  document.getElementById('ndf-port').value     = d.snmp_port || '161';
+  document.getElementById('ndf-timeout').value  = d.snmp_timeout || '3';
+  document.getElementById('ndf-interval').value = d.polling_interval || '60';
+  document.getElementById('ndf-enabled').checked = !!d.polling_enabled;
+  document.getElementById('ndf-test-result').style.display = 'none';
+  _netToggleSnmpV3();
+  document.getElementById('netDevModalOverlay').style.display = 'flex';
 }
+
+function closeNetDevModal(e) {
+  if (e && e.target !== document.getElementById('netDevModalOverlay')) return;
+  document.getElementById('netDevModalOverlay').style.display = 'none';
+}
+
+function _netToggleSnmpV3() {
+  const v3 = document.getElementById('ndf-snmpver')?.value === 'v3';
+  document.getElementById('ndf-v3-wrap').style.display = v3 ? '' : 'none';
+  document.getElementById('ndf-community-wrap').style.display = v3 ? 'none' : '';
+}
+
+async function _netTestDevice() {
+  const btn = document.getElementById('ndf-test-btn');
+  const res = document.getElementById('ndf-test-result');
+  if (!res) return;
+  // Save first so we have an ID
+  const saved = await netSaveDevice(true);
+  if (!saved) return;
+  btn.textContent = '⏳ Testing…'; btn.disabled = true;
+  res.style.display = 'none';
+  try {
+    const r = await fetch(`${API}/network/devices/${saved}/test`, { method:'POST', headers: authHeaders() });
+    const d = await r.json();
+    res.style.display = 'block';
+    if (d.ok && d.snmp_ok) {
+      res.style.color = '#22c55e';
+      res.textContent = `✓ SNMP OK — ${d.sys_name || ''} | ${d.vendor_detected} | ${d.ms}ms`;
+    } else {
+      res.style.color = '#ef4444';
+      res.textContent = `✗ Failed — ${d.error || 'SNMP timeout/credentials'}`;
+    }
+  } catch(e) {
+    res.style.display = 'block'; res.style.color = '#ef4444';
+    res.textContent = `Error: ${e.message}`;
+  }
+  btn.textContent = '🔍 Test SNMP'; btn.disabled = false;
+}
+
+async function netSaveDevice(returnId = false) {
+  const payload = {
+    name:             document.getElementById('ndf-name')?.value.trim(),
+    ip:               document.getElementById('ndf-ip')?.value.trim(),
+    hostname:         document.getElementById('ndf-hostname')?.value.trim(),
+    location:         document.getElementById('ndf-location')?.value.trim(),
+    tags:             document.getElementById('ndf-tags')?.value.trim(),
+    notes:            document.getElementById('ndf-notes')?.value.trim(),
+    vendor:           document.getElementById('ndf-vendor')?.value,
+    device_type:      document.getElementById('ndf-type')?.value,
+    snmp_version:     document.getElementById('ndf-snmpver')?.value,
+    snmp_community:   document.getElementById('ndf-community')?.value,
+    snmp_port:        parseInt(document.getElementById('ndf-port')?.value || '161'),
+    snmp_timeout:     parseInt(document.getElementById('ndf-timeout')?.value || '3'),
+    polling_interval: parseInt(document.getElementById('ndf-interval')?.value || '60'),
+    polling_enabled:  document.getElementById('ndf-enabled')?.checked ? 1 : 0,
+  };
+  if (!payload.name) { alert('Device name is required'); return null; }
+  if (!payload.ip)   { alert('IP address is required');  return null; }
+  if (document.getElementById('ndf-snmpver')?.value === 'v3') {
+    payload.snmp_v3_user      = document.getElementById('ndf-v3user')?.value;
+    payload.snmp_v3_auth_proto = document.getElementById('ndf-v3auth')?.value;
+    payload.snmp_v3_auth_pass  = document.getElementById('ndf-v3authpass')?.value;
+    payload.snmp_v3_priv_proto = document.getElementById('ndf-v3priv')?.value;
+    payload.snmp_v3_priv_pass  = document.getElementById('ndf-v3privpass')?.value;
+  }
+  try {
+    let url = `${API}/network/devices`;
+    if (_netCurrentEditId) url += `/${_netCurrentEditId}`;
+    const r = await fetch(url, {
+      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error || 'Unknown')); return null; }
+    const savedId = _netCurrentEditId || d.id;
+    if (!returnId) {
+      closeNetDevModal();
+      await _netFetchDevices();
+      _netRenderDevices();
+      // Auto-discover if new device and auto-traffic checked
+      if (!_netCurrentEditId && document.getElementById('ndf-auto-traffic')?.checked) {
+        netDiscover(savedId);
+      }
+    }
+    _netCurrentEditId = _netCurrentEditId || d.id;
+    return savedId;
+  } catch(e) { alert('Save failed: ' + e.message); return null; }
+}
+
+async function _netDeleteDevice(id, name) {
+  if (!confirm(`Delete device "${name}"?\nAll graphs and interfaces for this device will also be removed.`)) return;
+  try {
+    const r = await fetch(`${API}/network/devices/${id}/delete`, { method:'POST', headers: authHeaders() });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error || 'Unknown')); return; }
+    await _netFetchDevices();
+    _netRenderDevices();
+  } catch(e) { alert('Delete failed: ' + e.message); }
+}
+
+// ── Discover ──────────────────────────────────────────────────────────────
+async function netDiscover(deviceId) {
+  _netDiscoverDevId = deviceId;
+  const dev = _netDevices.find(d => d.id === deviceId) || {};
+  document.getElementById('netDiscoverDevName').textContent = dev.name || `Device #${deviceId}`;
+  document.getElementById('netDiscoverStatus').textContent = 'Running SNMP walk… (may take 10–30s)';
+  document.getElementById('netDiscoverIfaceList').innerHTML = '';
+  document.getElementById('netDiscoverApplyBtn').style.display = 'none';
+  document.getElementById('netDiscoverOverlay').style.display = 'flex';
+  try {
+    const r = await fetch(`${API}/network/devices/${deviceId}/discover`, {
+      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_create_traffic: false }), // manual preview
+    });
+    const d = await r.json();
+    _netDiscoverData = d;
+    if (!d.ok) {
+      document.getElementById('netDiscoverStatus').textContent = '✗ ' + (d.error || 'Failed');
+      return;
+    }
+    const ifaces = d.interfaces || [];
+    document.getElementById('netDiscoverStatus').textContent =
+      `Found ${ifaces.length} interface${ifaces.length !== 1 ? 's' : ''}` +
+      (d.snmp_ok ? '' : ' (SNMP timeout — limited data)');
+    if (ifaces.length) {
+      document.getElementById('netDiscoverIfaceList').innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;">
+            <th style="padding:8px 10px;text-align:left;">Index</th>
+            <th style="padding:8px 10px;text-align:left;">Name</th>
+            <th style="padding:8px 10px;text-align:left;">Description</th>
+            <th style="padding:8px 10px;text-align:right;">Speed</th>
+            <th style="padding:8px 10px;text-align:center;">Status</th>
+          </tr></thead>
+          <tbody>
+            ${ifaces.map(i => `<tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:7px 10px;color:var(--muted);">${i.if_index}</td>
+              <td style="padding:7px 10px;font-weight:600;color:var(--text);">${_esc(i.if_name||'')}</td>
+              <td style="padding:7px 10px;color:var(--muted);">${_esc(i.if_descr||'')}</td>
+              <td style="padding:7px 10px;text-align:right;color:var(--muted);">${i.if_speed ? _fmtBps(i.if_speed) : '—'}</td>
+              <td style="padding:7px 10px;text-align:center;">
+                <span class="net-status-${i.oper_status===1?'online':'offline'}" title="${i.oper_status===1?'Up':'Down'}"></span>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+      document.getElementById('netDiscoverApplyBtn').style.display = '';
+    }
+  } catch(e) {
+    document.getElementById('netDiscoverStatus').textContent = '✗ Error: ' + e.message;
+  }
+}
+
+async function _netApplyDiscover() {
+  if (!_netDiscoverDevId) return;
+  const autoCreate = document.getElementById('netDiscoverAutoCreate')?.checked;
+  const btn = document.getElementById('netDiscoverApplyBtn');
+  btn.disabled = true; btn.textContent = '⏳ Applying…';
+  try {
+    const r = await fetch(`${API}/network/devices/${_netDiscoverDevId}/discover`, {
+      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_create_traffic: autoCreate }),
+    });
+    const d = await r.json();
+    document.getElementById('netDiscoverStatus').textContent =
+      d.ok ? `✓ Done — ${(d.interfaces||[]).length} interfaces, ${d.graphs_created||0} graphs created` :
+             '✗ ' + (d.error || 'Failed');
+    await _netFetchDevices();
+  } catch(e) {
+    document.getElementById('netDiscoverStatus').textContent = '✗ Error: ' + e.message;
+  }
+  btn.disabled = false; btn.textContent = 'Apply & Create Graphs';
+}
+
+function closeNetDiscover(e) {
+  if (e && e.target !== document.getElementById('netDiscoverOverlay')) return;
+  document.getElementById('netDiscoverOverlay').style.display = 'none';
+}
+
+// ── Templates tab ─────────────────────────────────────────────────────────
+function _netRenderTemplates() {
+  const list = document.getElementById('net-tpl-list');
+  if (!list) return;
+  if (!_netTemplates.length) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px;">No templates found.</div>';
+    return;
+  }
+  list.innerHTML = _netTemplates.map(t => {
+    const badge = t.builtin
+      ? '<span style="font-size:10px;padding:1px 6px;background:#60a5fa22;color:#60a5fa;border-radius:10px;border:1px solid #60a5fa40;">builtin</span>'
+      : '<span style="font-size:10px;padding:1px 6px;background:#f59e0b22;color:#f59e0b;border-radius:10px;border:1px solid #f59e0b40;">custom</span>';
+    return `<div class="net-tpl-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">${_esc(t.name)}</div>
+        ${badge}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">vendor: ${t.vendor} | type: ${t.graph_type} | unit: ${t.unit||'—'}</div>
+      ${!t.builtin ? `<button onclick="_netDeleteTemplate(${t.id},'${_esc(t.name)}')" style="padding:3px 8px;background:#ef444420;border:1px solid #ef444440;color:#ef4444;border-radius:5px;font-size:11px;cursor:pointer;margin-top:4px;">Delete</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function _netShowAddTemplate() {
+  ['ntf-name','ntf-unit','ntf-oidmap'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('ntf-type').value   = 'traffic';
+  document.getElementById('ntf-vendor').value = 'generic';
+  document.getElementById('netTplModalOverlay').style.display = 'flex';
+}
+
+function closeNetTplModal(e) {
+  if (e && e.target !== document.getElementById('netTplModalOverlay')) return;
+  document.getElementById('netTplModalOverlay').style.display = 'none';
+}
+
+async function _netSaveTemplate() {
+  const oidRaw = document.getElementById('ntf-oidmap')?.value.trim();
+  let oid_map;
+  try { oid_map = JSON.parse(oidRaw); } catch(e) { alert('OID Map must be valid JSON'); return; }
+  const payload = {
+    name:       document.getElementById('ntf-name')?.value.trim(),
+    graph_type: document.getElementById('ntf-type')?.value,
+    vendor:     document.getElementById('ntf-vendor')?.value,
+    unit:       document.getElementById('ntf-unit')?.value.trim(),
+    oid_map,
+  };
+  if (!payload.name) { alert('Name required'); return; }
+  try {
+    const r = await fetch(`${API}/network/templates`, {
+      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
+    closeNetTplModal();
+    await _netFetchTemplates();
+    _netRenderTemplates();
+  } catch(e) { alert('Save failed: ' + e.message); }
+}
+
+async function _netDeleteTemplate(id, name) {
+  if (!confirm(`Delete template "${name}"?`)) return;
+  try {
+    const r = await fetch(`${API}/network/templates/${id}/delete`, { method:'POST', headers: authHeaders() });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
+    await _netFetchTemplates();
+    _netRenderTemplates();
+  } catch(e) { alert('Delete failed: ' + e.message); }
+}
+
+// ── Graph Tree tab ────────────────────────────────────────────────────────
+async function _netRenderTree() {
+  try {
+    const r = await fetch(`${API}/network/tree`, { headers: authHeaders() });
+    const d = await r.json();
+    _netTree = d.ok ? d.tree : [];
+    const list = document.getElementById('net-tree-list');
+    if (!list) return;
+    list.innerHTML = _netTree.length
+      ? _netTree.map(n => _netTreeNode(n)).join('')
+      : '<div style="color:var(--muted);font-size:12px;padding:8px;">Empty — click + Folder</div>';
+  } catch(e) {}
+}
+
+function _netTreeNode(node, depth = 0) {
+  const icon = node.node_type === 'folder' ? '📁' : node.node_type === 'device' ? '🖥' : '📊';
+  const cls  = `net-tree-${node.node_type}`;
+  const click = node.node_type === 'device'
+    ? `_netTreeSelectDevice(${node.device_id})`
+    : node.node_type === 'graph'
+    ? `netShowGraph(${node.graph_id})`
+    : `_netTreeToggle(${node.id})`;
+  let html = `<div class="${cls}" onclick="${click}" id="net-tree-node-${node.id}">
+    ${icon} ${_esc(node.name)}
+    <button onclick="event.stopPropagation();_netDeleteTreeNode(${node.id})" style="margin-left:auto;padding:1px 5px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;">✕</button>
+  </div>`;
+  if (node.children && node.children.length) {
+    html += `<div class="net-tree-children" id="net-tree-children-${node.id}">
+      ${node.children.map(c => _netTreeNode(c, depth + 1)).join('')}
+    </div>`;
+  }
+  return html;
+}
+
+function _netTreeToggle(id) {
+  const el = document.getElementById(`net-tree-children-${id}`);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+async function _netTreeSelectDevice(deviceId) {
+  const dev = _netDevices.find(d => d.id === deviceId) || {};
+  const title = document.getElementById('net-tree-title');
+  if (title) title.textContent = dev.name || `Device #${deviceId}`;
+  try {
+    const r = await fetch(`${API}/network/graphs?device_id=${deviceId}`, { headers: authHeaders() });
+    const d = await r.json();
+    const graphs = d.ok ? d.graphs : [];
+    const range = '1h';
+    const container = document.getElementById('net-tree-graphs');
+    if (!container) return;
+    // Load preview for each graph card
+    const prev = await fetch(`${API}/network/graph-preview?device_id=${deviceId}&range=${range}`, { headers: authHeaders() });
+    const pd = await prev.json();
+    _netPreviews = pd.ok ? pd.previews : [];
+    _netPrevPage = 0;
+    // Render in tree-graphs container
+    const tmpGrid = document.getElementById('net-tree-graphs');
+    tmpGrid.innerHTML = '';
+    for (const key in _netCharts) { try { _netCharts[key].destroy(); } catch(e) {} }
+    _netCharts = {};
+    (_netPreviews.length ? _netPreviews : graphs.map(g => ({ graph: g, labels:[], series:[] }))).forEach((pv, idx) => {
+      const g = pv.graph || pv;
+      const canId = `net-tree-canvas-${idx}`;
+      const card = document.createElement('div');
+      card.className = 'net-graph-card';
+      card.style.cursor = 'pointer';
+      card.onclick = () => netShowGraph(g.id);
+      card.innerHTML = `<div style="font-size:13px;font-weight:700;color:var(--text);">${_esc(g.graph_name||g.graph_type||'')}</div>
+        <canvas id="${canId}" style="height:140px;max-height:140px;width:100%;"></canvas>`;
+      tmpGrid.appendChild(card);
+      if (pv.labels && pv.labels.length) {
+        requestAnimationFrame(() => _netDrawChart(canId, pv.labels, pv.series || []));
+      }
+    });
+    if (!_netPreviews.length && !graphs.length) {
+      tmpGrid.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px;">No graphs for this device yet — run discovery first.</div>';
+    }
+  } catch(e) {}
+}
+
+async function _netAddTreeFolder() {
+  const name = prompt('Folder name:');
+  if (!name) return;
+  try {
+    await fetch(`${API}/network/tree`, {
+      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, node_type: 'folder' }),
+    });
+    await _netRenderTree();
+  } catch(e) {}
+}
+
+async function _netDeleteTreeNode(id) {
+  if (!confirm('Delete this tree node?')) return;
+  try {
+    await fetch(`${API}/network/tree/${id}/delete`, { method:'POST', headers: authHeaders() });
+    await _netRenderTree();
+  } catch(e) {}
+}
+
+// ── Graph detail modal ────────────────────────────────────────────────────
+async function netShowGraph(graphId) {
+  _netGraphModalId = graphId;
+  document.getElementById('netGraphModalTitle').textContent = 'Loading…';
+  document.getElementById('netGraphModalMeta').textContent = '';
+  document.getElementById('netGraphModalOverlay').style.display = 'flex';
+  await _netReloadGraphModal();
+}
+
+async function _netReloadGraphModal() {
+  const graphId = _netGraphModalId;
+  if (!graphId) return;
+  const range = document.getElementById('netGraphModalRange')?.value || '1h';
+  try {
+    const r = await fetch(`${API}/network/graph-data?graph_id=${graphId}&range=${range}`, { headers: authHeaders() });
+    const d = await r.json();
+    if (!d.ok) { return; }
+    const g   = d.graph || {};
+    const dev = _netDevices.find(x => x.id === g.device_id) || {};
+    document.getElementById('netGraphModalTitle').textContent =
+      g.graph_name || g.graph_type || 'Graph';
+    document.getElementById('netGraphModalMeta').textContent =
+      `${dev.name || ''} ${g.interface_name ? '— ' + g.interface_name : ''}`;
+    if (_netGraphModalChart) { _netGraphModalChart.destroy(); _netGraphModalChart = null; }
+    _netDrawChart('netGraphModalCanvas', d.labels || [], d.series || []);
+    _netGraphModalChart = _netCharts['netGraphModalCanvas'] || null;
+  } catch(e) {}
+}
+
+function closeNetGraphModal(e) {
+  if (e && e.target !== document.getElementById('netGraphModalOverlay')) return;
+  if (_netGraphModalChart) { _netGraphModalChart.destroy(); _netGraphModalChart = null; }
+  document.getElementById('netGraphModalOverlay').style.display = 'none';
+}
+
+// ── Poller status ─────────────────────────────────────────────────────────
+async function _netLoadPollerStatus() {
+  const body   = document.getElementById('net-poller-body');
+  const failed = document.getElementById('net-poller-failed');
+  const slow   = document.getElementById('net-poller-slow');
+  if (!body) return;
+  body.innerHTML = '<div style="color:var(--muted);font-size:13px;">Loading…</div>';
+  try {
+    const r = await fetch(`${API}/network/poller/status`, { headers: authHeaders() });
+    const d = await r.json();
+    const s = d.status || {};
+    const stats = [
+      { label: 'Max Workers', value: s.max_workers ?? '—' },
+      { label: 'Cycles',      value: s.cycles ?? '—' },
+      { label: 'Last Cycle',  value: s.last_cycle_ms != null ? s.last_cycle_ms + ' ms' : '—' },
+      { label: 'Polled',      value: s.devices_polled ?? '—' },
+      { label: 'Failed',      value: s.devices_failed ?? '—' },
+      { label: 'Uptime',      value: s.uptime_sec != null ? _fmtUptime(s.uptime_sec) : '—' },
+    ];
+    body.innerHTML = stats.map(st => `
+      <div class="net-stat-card">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">${st.label}</div>
+        <div style="font-size:20px;font-weight:700;color:var(--text);">${st.value}</div>
+      </div>`).join('');
+    if (failed && s.failed_devices && s.failed_devices.length) {
+      failed.innerHTML = s.failed_devices.map(f =>
+        `<div style="padding:5px 0;border-bottom:1px solid var(--border);">${_esc(f.name||'')} (${_esc(f.ip||'')}) — ${_esc(f.error||'')}</div>`
+      ).join('');
+    } else if (failed) {
+      failed.textContent = s.error ? s.error : 'None';
+    }
+    if (slow && s.slowest_devices && s.slowest_devices.length) {
+      slow.innerHTML = s.slowest_devices.map(f =>
+        `<div>${_esc(f.name||'')} — ${f.ms}ms</div>`).join('');
+    } else if (slow) {
+      slow.textContent = '—';
+    }
+  } catch(e) {
+    body.innerHTML = `<div style="color:var(--muted);font-size:13px;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function _esc(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _fmtBps(bps) {
+  bps = Number(bps) || 0;
+  if (bps >= 1e9) return (bps/1e9).toFixed(2)+' Gbps';
+  if (bps >= 1e6) return (bps/1e6).toFixed(2)+' Mbps';
+  if (bps >= 1e3) return (bps/1e3).toFixed(1)+' kbps';
+  return bps.toFixed(0)+' bps';
+}
+function _fmtUptime(sec) {
+  sec = parseInt(sec) || 0;
+  const d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600), m = Math.floor((sec%3600)/60);
+  return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// (loadNetwork() is called directly from switchSection)
+
+// (MikroTik module removed — all mt* functions deleted; vendor=mikrotik handled by Network Graphs module)
+function mtTab_REMOVED_STUB() { /* stub kept to avoid ReferenceError if any stale onclick remains */ }
 </script>
 
 
@@ -5770,186 +5965,339 @@ async function mtLoadResource(deviceId, range) {
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════ -->
-    <!-- Section: MikroTik                                                  -->
+    <!-- Section: Network Graphs (Cacti-style multi-vendor monitor)         -->
     <!-- ═══════════════════════════════════════════════════════════════════ -->
-    <div class="main-section" id="section-mikrotik" style="flex-direction:column;overflow:hidden;">
+    <div class="main-section" id="section-network" style="flex-direction:column;overflow:hidden;">
 
       <!-- ── Top bar ── -->
       <div style="display:flex;align-items:center;gap:12px;padding:16px 24px;border-bottom:1px solid var(--border);flex-shrink:0;">
-        <span style="font-size:20px;">🔴</span>
+        <span style="font-size:20px;">🌐</span>
         <div>
-          <div style="font-size:16px;font-weight:700;color:var(--text);">MikroTik Monitor</div>
-          <div style="font-size:12px;color:var(--muted);">SNMP + RouterOS API polling</div>
+          <div style="font-size:16px;font-weight:700;color:var(--text);">Network Monitor</div>
+          <div style="font-size:12px;color:var(--muted);">Cacti-style multi-vendor SNMP graphs</div>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;">
-          <button onclick="mtRefreshDashboard()" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">⟳ Refresh</button>
-          <button onclick="mtShowAddDevice()" style="padding:7px 16px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Device</button>
+          <button onclick="_netRefresh()" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">⟳ Refresh</button>
+          <button onclick="netAddDevice()" style="padding:7px 16px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Device</button>
         </div>
       </div>
 
       <!-- ── Tab bar ── -->
-      <div id="mt-tabs" style="display:flex;gap:2px;padding:10px 24px 0;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);">
-        <button class="mt-tab active" onclick="mtTab('dashboard')">📊 Dashboard</button>
-        <button class="mt-tab" onclick="mtTab('devices')">🖥 Devices</button>
-        <button class="mt-tab" onclick="mtTab('interfaces')">🔌 Interfaces</button>
-        <button class="mt-tab" onclick="mtTab('ppp')">👥 PPPoE Sessions</button>
-        <button class="mt-tab" onclick="mtTab('resource')">📈 Resource</button>
+      <div style="display:flex;gap:2px;padding:10px 24px 0;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);">
+        <button class="net-tab active" id="net-tab-preview"   onclick="netTab('preview')">📊 Graph Preview</button>
+        <button class="net-tab"        id="net-tab-tree"      onclick="netTab('tree')">🌲 Graph Tree</button>
+        <button class="net-tab"        id="net-tab-devices"   onclick="netTab('devices')">🖥 Devices</button>
+        <button class="net-tab"        id="net-tab-templates" onclick="netTab('templates')">📐 Templates</button>
+        <button class="net-tab"        id="net-tab-poller"    onclick="netTab('poller')">⚙ Poller</button>
       </div>
 
       <!-- ── Tab panels ── -->
       <div style="flex:1;overflow-y:auto;position:relative;">
 
-        <!-- DASHBOARD panel -->
-        <div id="mt-panel-dashboard" class="mt-panel" style="padding:20px 24px;">
-          <!-- Summary cards -->
-          <div id="mt-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px;"></div>
+        <!-- ── GRAPH PREVIEW panel ── -->
+        <div id="net-panel-preview" class="net-panel" style="padding:20px 24px;">
+          <!-- Filter bar -->
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+            <select id="net-prev-dev" onchange="_netLoadPreview()" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:200px;">
+              <option value="">— All Devices —</option>
+            </select>
+            <select id="net-prev-range" onchange="_netLoadPreview()" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+              <option value="1h" selected>1 hour</option>
+              <option value="6h">6 hours</option>
+              <option value="24h">24 hours</option>
+              <option value="7d">7 days</option>
+              <option value="30d">30 days</option>
+            </select>
+            <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" id="net-prev-thumb" onchange="_netRenderPreviewCards()" style="cursor:pointer;">
+              Thumbnails only
+            </label>
+            <span id="net-prev-count" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
+          </div>
+          <!-- Graph card grid -->
+          <div id="net-prev-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;"></div>
+          <!-- Pager -->
+          <div id="net-prev-pager" style="display:flex;justify-content:center;gap:8px;margin-top:16px;flex-wrap:wrap;"></div>
+        </div>
+
+        <!-- ── GRAPH TREE panel ── -->
+        <div id="net-panel-tree" class="net-panel" style="display:none;height:100%;flex-direction:row;gap:0;padding:0;">
+          <!-- Left: tree -->
+          <div style="width:280px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-size:13px;font-weight:700;color:var(--text);">Graph Tree</div>
+              <button onclick="_netAddTreeFolder()" style="padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;">+ Folder</button>
+            </div>
+            <div id="net-tree-list" style="font-size:13px;"></div>
+          </div>
+          <!-- Right: graphs for selected node -->
+          <div style="flex:1;overflow-y:auto;padding:20px 24px;">
+            <div id="net-tree-title" style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:16px;">Select a node in the tree</div>
+            <div id="net-tree-graphs" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;"></div>
+          </div>
+        </div>
+
+        <!-- ── DEVICES panel ── -->
+        <div id="net-panel-devices" class="net-panel" style="display:none;padding:20px 24px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <div style="font-size:13px;font-weight:700;color:var(--text);">Registered Devices
+              <span id="net-dev-count-badge" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px;"></span>
+            </div>
+            <button onclick="netAddDevice()" style="padding:7px 16px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Device</button>
+          </div>
           <!-- Device table -->
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
-            <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text);">Devices</div>
             <div style="overflow-x:auto;">
-              <table style="width:100%;border-collapse:collapse;font-size:12px;" id="mt-device-table">
-                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;">
-                  <th style="padding:10px 12px;text-align:left;">Name</th>
+              <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;">
+                <colgroup>
+                  <col style="width:4%"><col style="width:18%"><col style="width:13%">
+                  <col style="width:11%"><col style="width:10%"><col style="width:9%">
+                  <col style="width:9%"><col style="width:13%"><col style="width:13%">
+                </colgroup>
+                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;">
+                  <th style="padding:10px 6px;text-align:center;">●</th>
+                  <th style="padding:10px 12px;text-align:left;">Name / IP</th>
                   <th style="padding:10px 12px;text-align:left;">IP</th>
-                  <th style="padding:10px 12px;text-align:left;">Location</th>
-                  <th style="padding:10px 12px;text-align:left;">Status</th>
-                  <th style="padding:10px 12px;text-align:left;">Version</th>
-                  <th style="padding:10px 12px;text-align:left;">Last Poll</th>
-                  <th style="padding:10px 12px;text-align:left;">SNMP</th>
-                  <th style="padding:10px 12px;text-align:left;">API</th>
+                  <th style="padding:10px 12px;text-align:left;">Vendor</th>
+                  <th style="padding:10px 12px;text-align:center;">Ifaces</th>
+                  <th style="padding:10px 12px;text-align:center;">Graphs</th>
+                  <th style="padding:10px 12px;text-align:center;">Poll ms</th>
+                  <th style="padding:10px 12px;text-align:left;">Last Seen</th>
                   <th style="padding:10px 12px;text-align:center;">Actions</th>
                 </tr></thead>
-                <tbody id="mt-device-tbody"><tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">Loading…</td></tr></tbody>
+                <tbody id="net-dev-tbody"><tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">Loading…</td></tr></tbody>
               </table>
             </div>
+            <div id="net-dev-pager" style="display:flex;justify-content:center;gap:6px;padding:10px;flex-wrap:wrap;"></div>
           </div>
         </div>
 
-        <!-- DEVICES panel (list + add/edit form) -->
-        <div id="mt-panel-devices" class="mt-panel" style="display:none;padding:20px 24px;">
-          <div id="mt-device-form-wrap"></div>
-          <!-- Device list (shown when form is not open) -->
-          <div id="mt-devices-list-wrap" style="max-width:700px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-              <div style="font-size:13px;font-weight:700;color:var(--text);">Registered Devices</div>
-              <button onclick="mtShowAddDevice()" class="mt-btn-primary" style="font-size:12px;padding:6px 14px;">+ Add Device</button>
-            </div>
-            <div id="mt-devices-list" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;"></div>
+        <!-- ── TEMPLATES panel ── -->
+        <div id="net-panel-templates" class="net-panel" style="display:none;padding:20px 24px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <div style="font-size:13px;font-weight:700;color:var(--text);">Graph Templates</div>
+            <button onclick="_netShowAddTemplate()" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Custom Template</button>
           </div>
+          <div id="net-tpl-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;"></div>
         </div>
 
-        <!-- INTERFACES panel -->
-        <div id="mt-panel-interfaces" class="mt-panel" style="display:none;padding:20px 24px;">
-          <!-- Controls row -->
-          <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
-            <select id="mt-iface-dev" onchange="mtLoadInterfaces(this.value)" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:180px;"></select>
-            <select id="mt-iface-filter" onchange="mtLoadInterfaces(document.getElementById('mt-iface-dev').value)" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
-              <option value="all">All Interfaces</option>
-              <option value="physical" selected>Physical Only</option>
-              <option value="active">Active (Up)</option>
-              <option value="ppp">PPPoE Only</option>
-            </select>
-            <select id="mt-iface-sel" onchange="mtShowIfaceGraph(document.getElementById('mt-iface-dev').value,this.value,document.getElementById('mt-iface-range').value)" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:160px;"></select>
-            <select id="mt-iface-range" onchange="mtShowIfaceGraph(document.getElementById('mt-iface-dev').value,document.getElementById('mt-iface-sel').value,this.value)" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
-              <option value="15m">15 min</option><option value="1h" selected>1 hour</option>
-              <option value="6h">6 hours</option><option value="24h">24 hours</option>
-              <option value="3d">3 days</option><option value="7d">7 days</option>
-            </select>
+        <!-- ── POLLER panel ── -->
+        <div id="net-panel-poller" class="net-panel" style="display:none;padding:20px 24px;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">Poller Status</div>
+          <div id="net-poller-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;"></div>
+          <div style="margin-top:20px;">
+            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Failed Devices</div>
+            <div id="net-poller-failed" style="font-size:12px;color:var(--muted);">—</div>
           </div>
-          <!-- Interface table -->
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;">
-            <div style="overflow-x:auto;">
-              <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;">
-                <colgroup>
-                  <col style="width:35%"><col style="width:12%"><col style="width:18%"><col style="width:18%"><col style="width:17%">
-                </colgroup>
-                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;">
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;">Interface</th>
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;">Type</th>
-                  <th style="padding:10px 12px;text-align:right;font-weight:600;">↓ RX</th>
-                  <th style="padding:10px 12px;text-align:right;font-weight:600;">↑ TX</th>
-                  <th style="padding:10px 12px;text-align:center;font-weight:600;">Status</th>
-                </tr></thead>
-                <tbody id="mt-iface-tbody"><tr><td colspan="5" style="padding:20px;text-align:center;color:var(--muted);">Select a device above</td></tr></tbody>
-              </table>
-            </div>
-            <div id="mt-iface-pager" class="mt-pager"></div>
-          </div>
-          <!-- Traffic graph -->
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
-            <div id="mt-iface-graph-title" style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;">Interface Traffic — select an interface above</div>
-            <canvas id="mt-iface-chart" style="height:220px;max-height:220px;"></canvas>
-          </div>
-        </div>
-
-        <!-- PPPoE SESSIONS panel -->
-        <div id="mt-panel-ppp" class="mt-panel" style="display:none;padding:20px 24px;">
-          <!-- Controls -->
-          <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
-            <select id="mt-ppp-dev" onchange="mtLoadPPP(this.value)" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:180px;"></select>
-            <input id="mt-ppp-search" type="text" placeholder="🔍 Search username / IP / MAC…" oninput="mtFilterPPP()" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;flex:1;min-width:160px;">
-            <span id="mt-ppp-count" style="font-size:12px;color:var(--muted);white-space:nowrap;background:var(--bg3);padding:7px 12px;border-radius:8px;border:1px solid var(--border);"></span>
-          </div>
-          <!-- Sessions table -->
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;">
-            <div style="overflow-x:auto;">
-              <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;">
-                <colgroup>
-                  <col style="width:22%"><col style="width:10%"><col style="width:14%"><col style="width:18%"><col style="width:12%"><col style="width:10%">
-                </colgroup>
-                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;">
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;">Username</th>
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;">Service</th>
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;">IP Address</th>
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;">Caller ID / MAC</th>
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;">Uptime</th>
-                  <th style="padding:10px 12px;text-align:center;font-weight:600;">Radius</th>
-                </tr></thead>
-                <tbody id="mt-ppp-tbody"><tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">Select a device above</td></tr></tbody>
-              </table>
-            </div>
-            <div id="mt-ppp-pager" class="mt-pager"></div>
-          </div>
-          <!-- PPP history chart -->
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-              <div style="font-size:13px;font-weight:600;color:var(--text);">📈 Session Count History</div>
-              <select id="mt-ppp-hist-range" onchange="_mtLoadPppHistory(document.getElementById('mt-ppp-dev').value,this.value)"
-                style="padding:5px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;">
-                <option value="1h">Last 1 hour</option>
-                <option value="6h">Last 6 hours</option>
-                <option value="24h" selected>Last 24 hours</option>
-                <option value="3d">Last 3 days</option>
-                <option value="7d">Last 7 days</option>
-              </select>
-            </div>
-            <canvas id="mt-ppp-chart" style="height:200px;max-height:200px;"></canvas>
-          </div>
-        </div>
-
-        <!-- RESOURCE panel -->
-        <div id="mt-panel-resource" class="mt-panel" style="display:none;padding:20px 24px;">
-          <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
-            <select id="mt-res-dev" onchange="mtLoadResource(this.value,document.getElementById('mt-res-range').value)" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:180px;"></select>
-            <select id="mt-res-range" onchange="mtLoadResource(document.getElementById('mt-res-dev').value,this.value)" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
-              <option value="1h" selected>1 hour</option><option value="6h">6 hours</option>
-              <option value="24h">24 hours</option><option value="3d">3 days</option><option value="7d">7 days</option>
-            </select>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
-              <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:10px;">CPU LOAD (%)</div>
-              <canvas id="mt-cpu-chart" style="height:200px;max-height:200px;"></canvas>
-            </div>
-            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;">
-              <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:10px;">RAM USAGE (%)</div>
-              <canvas id="mt-mem-chart" style="height:200px;max-height:200px;"></canvas>
-            </div>
+          <div style="margin-top:16px;">
+            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Slowest Devices</div>
+            <div id="net-poller-slow" style="font-size:12px;color:var(--muted);">—</div>
           </div>
         </div>
 
       </div><!-- end scrollable -->
-    </div><!-- end section-mikrotik -->
+    </div><!-- end section-network -->
+
+    <!-- ── Network: Add/Edit Device Modal ── -->
+    <div class="modal-overlay" id="netDevModalOverlay" onclick="closeNetDevModal(event)" style="display:none;z-index:700;">
+      <div class="modal" onclick="event.stopPropagation()" style="width:560px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-header">
+          <div class="modal-title" id="netDevModalTitle">Add Device</div>
+          <button class="modal-close" onclick="closeNetDevModal()">✕</button>
+        </div>
+        <div style="padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="netDevModalBody">
+          <div style="grid-column:span 2;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Device Name *</label>
+            <input id="ndf-name" placeholder="e.g. HP-MKT-Main" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">IP Address *</label>
+            <input id="ndf-ip" placeholder="192.168.1.1" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Hostname</label>
+            <input id="ndf-hostname" placeholder="router.lan (optional)" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Vendor</label>
+            <select id="ndf-vendor" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+              <option value="generic">Generic</option>
+              <option value="mikrotik">MikroTik</option>
+              <option value="cisco">Cisco</option>
+              <option value="juniper">Juniper</option>
+              <option value="huawei">Huawei</option>
+              <option value="linux">Linux</option>
+              <option value="windows">Windows</option>
+              <option value="fortinet">Fortinet</option>
+              <option value="ubiquiti">Ubiquiti</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Device Type</label>
+            <select id="ndf-type" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+              <option value="router">Router</option>
+              <option value="switch">Switch</option>
+              <option value="server">Server</option>
+              <option value="firewall">Firewall</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Location</label>
+            <input id="ndf-location" placeholder="DC-1 / Rack A3" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div style="grid-column:span 2;border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">SNMP Settings</div>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">SNMP Version</label>
+            <select id="ndf-snmpver" onchange="_netToggleSnmpV3()" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+              <option value="v2c">v2c</option>
+              <option value="v3">v3</option>
+            </select>
+          </div>
+          <div id="ndf-community-wrap">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Community</label>
+            <input id="ndf-community" value="public" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">SNMP Port</label>
+            <input id="ndf-port" value="161" type="number" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Timeout (s)</label>
+            <input id="ndf-timeout" value="3" type="number" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div style="grid-column:span 2;" id="ndf-v3-wrap" style="display:none;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">v3 Username</label>
+                   <input id="ndf-v3user" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;"></div>
+              <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Auth Proto</label>
+                   <select id="ndf-v3auth" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;"><option>SHA</option><option>MD5</option></select></div>
+              <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Auth Password</label>
+                   <input id="ndf-v3authpass" type="password" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;"></div>
+              <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Priv Proto</label>
+                   <select id="ndf-v3priv" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;"><option>AES</option><option>DES</option></select></div>
+              <div style="grid-column:span 2;"><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Priv Password</label>
+                   <input id="ndf-v3privpass" type="password" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;"></div>
+            </div>
+          </div>
+          <div style="grid-column:span 2;border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Polling</div>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Interval (s)</label>
+            <input id="ndf-interval" value="60" type="number" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding-top:20px;">
+            <input type="checkbox" id="ndf-enabled" checked style="cursor:pointer;">
+            <label for="ndf-enabled" style="font-size:13px;color:var(--text);cursor:pointer;">Polling enabled</label>
+          </div>
+          <div style="grid-column:span 2;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Tags (comma-separated)</label>
+            <input id="ndf-tags" placeholder="core, isp, building-A" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;">
+          </div>
+          <div style="grid-column:span 2;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Notes (optional — for MikroTik RouterOS API: <code style="font-size:11px;">{"ros_user":"admin","ros_pass":"..."}</code>)</label>
+            <textarea id="ndf-notes" rows="2" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;resize:vertical;box-sizing:border-box;"></textarea>
+          </div>
+          <div style="grid-column:span 2;">
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="ndf-auto-traffic">
+              Auto-create traffic graphs after discovery (for interfaces that are up)
+            </label>
+          </div>
+        </div>
+        <div style="padding:16px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
+          <button onclick="closeNetDevModal()" style="padding:8px 18px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="_netTestDevice()" id="ndf-test-btn" style="padding:8px 18px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;">🔍 Test SNMP</button>
+          <button onclick="netSaveDevice()" style="padding:8px 18px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;" id="ndf-save-btn">Save</button>
+        </div>
+        <div id="ndf-test-result" style="padding:0 20px 12px;font-size:12px;color:var(--muted);display:none;"></div>
+      </div>
+    </div>
+
+    <!-- ── Network: Discover Modal ── -->
+    <div class="modal-overlay" id="netDiscoverOverlay" onclick="closeNetDiscover(event)" style="display:none;z-index:710;">
+      <div class="modal" onclick="event.stopPropagation()" style="width:640px;max-height:85vh;overflow-y:auto;">
+        <div class="modal-header">
+          <div>
+            <div class="modal-title">Discover Interfaces</div>
+            <div class="modal-sn" id="netDiscoverDevName"></div>
+          </div>
+          <button class="modal-close" onclick="closeNetDiscover()">✕</button>
+        </div>
+        <div style="padding:20px;">
+          <div id="netDiscoverStatus" style="font-size:13px;color:var(--muted);margin-bottom:16px;">Running SNMP walk…</div>
+          <div id="netDiscoverIfaceList" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px;max-height:340px;overflow-y:auto;"></div>
+          <label style="font-size:13px;color:var(--text);display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;">
+            <input type="checkbox" id="netDiscoverAutoCreate" checked>
+            Auto-create traffic graphs for interfaces that are Up
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button onclick="closeNetDiscover()" style="padding:8px 18px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;">Close</button>
+            <button onclick="_netApplyDiscover()" id="netDiscoverApplyBtn" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Apply & Create Graphs</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Network: Graph Detail Modal ── -->
+    <div class="modal-overlay" id="netGraphModalOverlay" onclick="closeNetGraphModal(event)" style="display:none;z-index:720;">
+      <div class="modal" onclick="event.stopPropagation()" style="width:780px;max-height:85vh;overflow-y:auto;">
+        <div class="modal-header">
+          <div class="modal-title" id="netGraphModalTitle">Graph Detail</div>
+          <button class="modal-close" onclick="closeNetGraphModal()">✕</button>
+        </div>
+        <div style="padding:20px;">
+          <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+            <select id="netGraphModalRange" onchange="_netReloadGraphModal()" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+              <option value="1h" selected>1 hour</option>
+              <option value="6h">6 hours</option>
+              <option value="24h">24 hours</option>
+              <option value="7d">7 days</option>
+              <option value="30d">30 days</option>
+            </select>
+            <span id="netGraphModalMeta" style="font-size:12px;color:var(--muted);"></span>
+          </div>
+          <canvas id="netGraphModalCanvas" style="height:300px;max-height:300px;width:100%;"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Network: Add Template Modal ── -->
+    <div class="modal-overlay" id="netTplModalOverlay" onclick="closeNetTplModal(event)" style="display:none;z-index:730;">
+      <div class="modal" onclick="event.stopPropagation()" style="width:520px;">
+        <div class="modal-header">
+          <div class="modal-title">Add Custom Template</div>
+          <button class="modal-close" onclick="closeNetTplModal()">✕</button>
+        </div>
+        <div style="padding:20px;display:grid;gap:12px;">
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Template Name *</label>
+               <input id="ntf-name" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Graph Type *</label>
+               <select id="ntf-type" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+                 <option value="traffic">traffic</option><option value="cpu">cpu</option>
+                 <option value="memory">memory</option><option value="temperature">temperature</option>
+                 <option value="uptime">uptime</option><option value="custom">custom</option>
+               </select></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Vendor</label>
+               <select id="ntf-vendor" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
+                 <option value="generic">generic</option><option value="mikrotik">mikrotik</option>
+                 <option value="cisco">cisco</option><option value="juniper">juniper</option>
+                 <option value="huawei">huawei</option>
+               </select></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Unit</label>
+               <input id="ntf-unit" placeholder="bps, %, °C, sec…" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;box-sizing:border-box;"></div>
+          <div><label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">OID Map (JSON) *</label>
+               <textarea id="ntf-oidmap" rows="5" placeholder='{"rx_octets":"1.3.6.1.2.1.31.1.1.1.6","tx_octets":"1.3.6.1.2.1.31.1.1.1.10"}' style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:12px;font-family:monospace;resize:vertical;box-sizing:border-box;"></textarea></div>
+        </div>
+        <div style="padding:16px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
+          <button onclick="closeNetTplModal()" style="padding:8px 18px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;">Cancel</button>
+          <button onclick="_netSaveTemplate()" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Save Template</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Section: Settings -->
     <div class="main-section" id="section-settings" style="overflow-y:auto;">

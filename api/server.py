@@ -2892,7 +2892,7 @@ from(bucket:"{INFLUX_BUCKET}")
             try: payload = json.loads(body)
             except: return self.send_json(400,{"error":"Invalid JSON"})
 
-            import base64, os, re
+            import base64, os
             avatar_data = payload.get("avatar","")
             if not avatar_data:
                 return self.send_json(400,{"error":"No avatar data"})

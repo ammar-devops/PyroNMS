@@ -2887,6 +2887,10 @@ async function init() {
   updateDashboard();
   buildPONFilterOptions();
   renderTable();
+  // URL-based section routing: /graphs → Network Graphs Cacti view
+  if (window.location.pathname === '/graphs' || window.location.pathname === '/graphs/') {
+    switchSection('network');
+  }
 }
 
 async function loadONTs() {

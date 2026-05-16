@@ -4474,71 +4474,87 @@ init();
 </script>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
-<!-- Network Graphs Module JavaScript (v5.0.0 — Cacti-style multi-vendor)   -->
+<!-- Network Graphs Module JavaScript (v5.1.0 — Cacti-style layout)         -->
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <script>
-// ══════════════════════════════════════════════════════════════════════════
-// Network Graphs module — Cacti-style multi-vendor SNMP monitoring
-// ══════════════════════════════════════════════════════════════════════════
-
-// ── State ──────────────────────────────────────────────────────────────────
-let _netDevices    = [];
-let _netTemplates  = [];
-let _netGraphs     = [];
-let _netTree       = [];
-let _netPreviews   = [];   // current preview data from server
-let _netPrevPage   = 0;
+// ── State ─────────────────────────────────────────────────────────────────
+let _netDevices = [];
+let _netTemplates = [];
+let _netTree = [];
+let _netPreviews = [];
+let _netRange = '1h';
+let _netView_ = 'graphs';
+let _netConsolePageName = 'devices';
+let _netSelectedDevId = null;
+let _netCharts = {};
+let _netZoomGraphId = null;
+let _netCurrentEditId = null;
+let _netDiscoverDevId = null;
+let _netDiscoverData = null;
+let _netPrevPage = 0;
 const NET_PAGE_SIZE = 12;
-let _netDevPage    = 0;
-const NET_DEV_PAGE = 50;
-let _netCurrentEditId = null;   // device id being edited (null = add)
-let _netDiscoverDevId = null;   // device id being discovered
-let _netDiscoverData  = null;   // last discover result
-let _netGraphModalId  = null;   // graph being shown in detail modal
-let _netGraphModalChart = null;
 let _netAutoRefreshTimer = null;
 
-// ── CSS (injected once) ───────────────────────────────────────────────────
+// ── CSS injection ─────────────────────────────────────────────────────────
 (function _injectNetCSS() {
   if (document.getElementById('net-css')) return;
   const s = document.createElement('style');
   s.id = 'net-css';
   s.textContent = `
-    .net-tab { padding:8px 16px;background:none;border:none;border-bottom:3px solid transparent;
-      color:var(--muted);font-size:13px;font-weight:500;cursor:pointer;transition:color .15s; }
-    .net-tab:hover { color:var(--text); }
-    .net-tab.active { color:var(--accent);border-bottom-color:var(--accent);font-weight:700; }
-    .net-panel { padding:20px 24px; }
-    .net-status-online  { display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e; }
-    .net-status-offline { display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444; }
-    .net-status-unknown { display:inline-block;width:9px;height:9px;border-radius:50%;background:#6b7280; }
-    .net-graph-card { background:var(--bg2);border:1px solid var(--border);border-radius:12px;
-      padding:14px;display:flex;flex-direction:column;gap:10px; }
-    .net-graph-card:hover { border-color:var(--accent);transition:border-color .15s; }
-    .net-tree-folder, .net-tree-device, .net-tree-graph {
-      display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;
-      cursor:pointer;font-size:12px;color:var(--text); }
-    .net-tree-folder:hover,.net-tree-device:hover,.net-tree-graph:hover { background:var(--bg3); }
-    .net-tpl-card { background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px; }
-    .net-stat-card { background:var(--bg2);border:1px solid var(--border);border-radius:10px;
-      padding:14px;text-align:center; }
-    .net-tree-children { margin-left:18px;border-left:1px solid var(--border);padding-left:6px; }
+    .net-topnav{display:flex;align-items:center;gap:4px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;}
+    .net-topnav-btn{padding:6px 18px;border-radius:8px;border:none;background:none;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;}
+    .net-topnav-btn:hover{color:var(--text);}
+    .net-topnav-btn.active{background:var(--accent);color:#fff;}
+    .net-left-tree{width:220px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:10px;background:var(--bg2);}
+    .net-tree-node{display:flex;align-items:center;gap:5px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--text);user-select:none;}
+    .net-tree-node:hover{background:var(--bg3);}
+    .net-tree-node.active{background:rgba(99,102,241,.15);color:var(--accent);font-weight:600;}
+    .net-tree-children{margin-left:14px;border-left:1px dashed var(--border);padding-left:5px;}
+    .net-tr-bar{display:flex;align-items:center;gap:3px;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;}
+    .net-tr-label{font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;margin-right:4px;letter-spacing:.5px;}
+    .net-tr-btn{padding:3px 9px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;cursor:pointer;transition:all .1s;}
+    .net-tr-btn:hover{color:var(--text);border-color:var(--accent);}
+    .net-tr-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700;}
+    .net-graph-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;transition:border-color .15s;}
+    .net-graph-card:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)40;}
+    .net-graph-title{font-size:12px;font-weight:700;color:var(--text);display:flex;align-items:flex-start;justify-content:space-between;gap:6px;line-height:1.3;}
+    .net-graph-subtitle{font-size:10px;color:var(--muted);margin-top:1px;}
+    .net-graph-badge{font-size:9px;padding:1px 5px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--muted);white-space:nowrap;flex-shrink:0;}
+    .net-graph-stats{width:100%;border-collapse:collapse;font-size:10px;margin-top:2px;}
+    .net-graph-stats th{color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;padding:2px 4px;text-align:right;border-bottom:1px solid var(--border);}
+    .net-graph-stats th:first-child,.net-graph-stats th:nth-child(2){text-align:left;}
+    .net-graph-stats td{padding:2px 4px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums;}
+    .net-graph-stats td:nth-child(2){text-align:left;color:var(--muted);}
+    .net-legend-swatch{display:inline-block;width:8px;height:8px;border-radius:2px;vertical-align:middle;}
+    .net-status-online{display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;}
+    .net-status-offline{display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;flex-shrink:0;}
+    .net-status-unknown{display:inline-block;width:8px;height:8px;border-radius:50%;background:#6b7280;flex-shrink:0;}
+    .net-console-nav{width:180px;flex-shrink:0;border-right:1px solid var(--border);padding:14px 10px;background:var(--bg2);overflow-y:auto;}
+    .net-console-nav-item{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--text);margin-bottom:2px;transition:all .1s;}
+    .net-console-nav-item:hover{background:var(--bg3);}
+    .net-console-nav-item.active{background:rgba(99,102,241,.15);color:var(--accent);font-weight:700;}
+    .net-stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;}
+    .net-tpl-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;}
+    .net-modal-tr-bar{display:flex;gap:3px;flex-wrap:wrap;margin-bottom:10px;}
+    .net-modal-tr-btn{padding:3px 8px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;cursor:pointer;transition:all .1s;}
+    .net-modal-tr-btn:hover{color:var(--text);}
+    .net-modal-tr-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700;}
   `;
   document.head.appendChild(s);
 })();
 
 // ── Entry point ───────────────────────────────────────────────────────────
 async function loadNetwork() {
+  _injectNetCSS();
   try {
     await Promise.all([_netFetchDevices(), _netFetchTemplates()]);
-    netTab('preview');
+    _netSetRange('1h', false);
+    _netRenderTree();
+    _netLoadGrid();
   } catch(e) { console.error('loadNetwork:', e); }
-  // Auto-refresh every 60s when section is active
   if (_netAutoRefreshTimer) clearInterval(_netAutoRefreshTimer);
   _netAutoRefreshTimer = setInterval(() => {
-    if (document.getElementById('section-network')?.style.display !== 'none') {
-      _netRefresh();
-    }
+    if (document.getElementById('section-network')?.style.display !== 'none') _netLoadGrid();
   }, 60000);
 }
 
@@ -4554,244 +4570,163 @@ async function _netFetchTemplates() {
   _netTemplates = d.ok ? d.templates : [];
 }
 
-async function _netRefresh() {
-  await Promise.all([_netFetchDevices(), _netFetchTemplates()]);
-  // Re-render whichever panel is active
-  const tabs = ['preview','tree','devices','templates','poller'];
-  for (const t of tabs) {
-    const p = document.getElementById(`net-panel-${t}`);
-    if (p && p.style.display !== 'none') { _netRenderTab(t); break; }
-  }
-}
-
-// ── Tab switching ────────────────────────────────────────────────────────
-function netTab(name) {
-  document.querySelectorAll('.net-tab').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.net-panel').forEach(p => p.style.display = 'none');
-  const btn = document.getElementById(`net-tab-${name}`);
+// ── Top nav: Graphs | Console ─────────────────────────────────────────────
+function _netView(v) {
+  _netView_ = v;
+  document.querySelectorAll('.net-topnav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById(`net-nav-${v}`);
   if (btn) btn.classList.add('active');
-  const panel = document.getElementById(`net-panel-${name}`);
-  if (panel) panel.style.display = name === 'tree' ? 'flex' : '';
-  _netRenderTab(name);
+  const gv = document.getElementById('net-graphs-view');
+  const cv = document.getElementById('net-console-view');
+  if (gv) gv.style.display = v === 'graphs'  ? 'flex' : 'none';
+  if (cv) cv.style.display = v === 'console' ? 'flex' : 'none';
+  if (v === 'console') _netConsolePage(_netConsolePageName);
 }
 
-function _netRenderTab(name) {
-  if (name === 'preview')   { _netPopulateDevSel(); _netLoadPreview(); }
-  if (name === 'devices')   _netRenderDevices();
-  if (name === 'templates') _netRenderTemplates();
-  if (name === 'tree')      _netRenderTree();
-  if (name === 'poller')    _netLoadPollerStatus();
+// ── Time range ────────────────────────────────────────────────────────────
+function _netSetRange(r, reload) {
+  _netRange = r;
+  if (reload === undefined) reload = true;
+  document.querySelectorAll('.net-tr-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.trim() === r);
+  });
+  document.querySelectorAll('.net-modal-tr-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === r);
+  });
+  if (reload) _netLoadGrid();
 }
 
-// ── Device selector helper ────────────────────────────────────────────────
-function _netPopulateDevSel() {
-  const sel = document.getElementById('net-prev-dev');
-  if (!sel) return;
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">— All Devices —</option>' +
-    _netDevices.map(d =>
-      `<option value="${d.id}" ${String(d.id) === cur ? 'selected' : ''}>${d.name} (${d.ip})</option>`
-    ).join('');
-}
-
-// ── Graph Preview tab ─────────────────────────────────────────────────────
-async function _netLoadPreview() {
-  const devId = document.getElementById('net-prev-dev')?.value;
-  const range = document.getElementById('net-prev-range')?.value || '1h';
-  const grid  = document.getElementById('net-prev-grid');
-  if (!grid) return;
-  if (!devId) {
-    // Multi-device: load per-device previews in sequence
-    let all = [];
-    for (const d of _netDevices) {
-      try {
-        const r = await fetch(`${API}/network/graph-preview?device_id=${d.id}&range=${range}`, { headers: authHeaders() });
-        const data = await r.json();
-        if (data.ok) all = all.concat(data.previews || []);
-      } catch(e) {}
+// ── Graph Tree ────────────────────────────────────────────────────────────
+async function _netRenderTree() {
+  try {
+    const r = await fetch(`${API}/network/tree`, { headers: authHeaders() });
+    const d = await r.json();
+    _netTree = d.ok ? d.tree : [];
+    const list = document.getElementById('net-tree-list');
+    if (!list) return;
+    let html = _netTree.map(n => _netBuildTreeNode(n)).join('');
+    // Device shortcuts below tree items
+    if (_netDevices.length) {
+      html += _netDevices.map(dev =>
+        `<div class="net-tree-node" id="net-tn-dev-${dev.id}" onclick="_netTreeSelectDev(${dev.id})">
+          <span class="net-status-${dev.last_status||'unknown'}"></span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(dev.name)}</span>
+        </div>`
+      ).join('');
     }
-    _netPreviews = all;
-  } else {
-    try {
-      const r = await fetch(`${API}/network/graph-preview?device_id=${devId}&range=${range}`, { headers: authHeaders() });
-      const d = await r.json();
-      _netPreviews = d.ok ? (d.previews || []) : [];
-    } catch(e) { _netPreviews = []; }
-  }
-  _netPrevPage = 0;
-  _netRenderPreviewCards();
+    list.innerHTML = html || '<div style="color:var(--muted);font-size:11px;padding:6px 8px;">No devices yet</div>';
+  } catch(e) {}
 }
 
-function _netRenderPreviewCards() {
-  const grid   = document.getElementById('net-prev-grid');
-  const pager  = document.getElementById('net-prev-pager');
-  const count  = document.getElementById('net-prev-count');
-  const thumb  = document.getElementById('net-prev-thumb')?.checked;
+function _netBuildTreeNode(node) {
+  const icon = node.node_type === 'folder' ? '📁' : node.node_type === 'device' ? '🖥' : '📊';
+  const click = node.node_type === 'device' ? `_netTreeSelectDev(${node.device_id})`
+              : node.node_type === 'graph'  ? `netZoomGraph(${node.graph_id})`
+              : `_netTreeToggle(${node.id})`;
+  let html = `<div class="net-tree-node" id="net-tn-${node.id}" onclick="${click}">
+    ${icon}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(node.name)}</span>
+    <button onclick="event.stopPropagation();_netDeleteTreeNode(${node.id})"
+      style="padding:0 4px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;opacity:.5;flex-shrink:0;">✕</button>
+  </div>`;
+  if (node.children && node.children.length) {
+    html += `<div class="net-tree-children" id="net-tc-${node.id}">
+      ${node.children.map(c => _netBuildTreeNode(c)).join('')}
+    </div>`;
+  }
+  return html;
+}
+
+function _netTreeToggle(id) {
+  const el = document.getElementById(`net-tc-${id}`);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+function _netTreeAll() {
+  _netSelectedDevId = null;
+  document.querySelectorAll('.net-tree-node').forEach(n => n.classList.remove('active'));
+  const all = document.getElementById('net-tree-all');
+  if (all) all.classList.add('active');
+  _netLoadGrid();
+}
+
+function _netTreeSelectDev(id) {
+  _netSelectedDevId = id;
+  document.querySelectorAll('.net-tree-node').forEach(n => n.classList.remove('active'));
+  const el = document.getElementById(`net-tn-dev-${id}`);
+  if (el) el.classList.add('active');
+  const all = document.getElementById('net-tree-all');
+  if (all) all.classList.remove('active');
+  _netLoadGrid();
+}
+
+async function _netAddTreeFolder() {
+  const name = prompt('Folder name:');
+  if (!name) return;
+  try {
+    await fetch(`${API}/network/tree`, {
+      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, node_type: 'folder' }),
+    });
+    _netRenderTree();
+  } catch(e) {}
+}
+
+async function _netDeleteTreeNode(id) {
+  if (!confirm('Delete this tree node?')) return;
+  try {
+    await fetch(`${API}/network/tree/${id}/delete`, { method: 'POST', headers: authHeaders() });
+    _netRenderTree();
+  } catch(e) {}
+}
+
+// ── Graph Grid ────────────────────────────────────────────────────────────
+async function _netLoadGrid() {
+  const grid = document.getElementById('net-grid');
+  const info = document.getElementById('net-grid-info');
   if (!grid) return;
-
-  const total  = _netPreviews.length;
-  const pages  = Math.ceil(total / NET_PAGE_SIZE) || 1;
-  _netPrevPage = Math.min(_netPrevPage, pages - 1);
-  const slice  = _netPreviews.slice(_netPrevPage * NET_PAGE_SIZE,
-                                     (_netPrevPage + 1) * NET_PAGE_SIZE);
-  if (count) count.textContent = `${total} graph${total !== 1 ? 's' : ''}`;
-
-  grid.innerHTML = '';
-  // Destroy old charts before re-rendering
+  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);">Loading…</div>';
   for (const key in _netCharts) { try { _netCharts[key].destroy(); } catch(e) {} }
   _netCharts = {};
 
-  slice.forEach((pv, idx) => {
-    const g     = pv.graph;
-    const gtype = g.graph_type || '';
-    const dev   = _netDevices.find(d => d.id === g.device_id) || {};
-    const iname = g.interface_name || '';
-    const canId = `net-canvas-${_netPrevPage}-${idx}`;
-
-    const card = document.createElement('div');
-    card.className = 'net-graph-card';
-    card.style.cursor = 'pointer';
-    card.onclick = () => netShowGraph(g.id);
-
-    const titleRow = `
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
-        <div>
-          <div style="font-size:13px;font-weight:700;color:var(--text);">${_esc(g.graph_name || gtype)}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${_esc(dev.name || '')} ${iname ? '— ' + _esc(iname) : ''}</div>
-        </div>
-        <span style="font-size:10px;padding:2px 7px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;color:var(--muted);white-space:nowrap;">${gtype}</span>
-      </div>`;
-
-    const chartHeight = thumb ? '80px' : '160px';
-    const chartHtml = `<canvas id="${canId}" style="height:${chartHeight};max-height:${chartHeight};width:100%;"></canvas>`;
-
-    // Current value pills
-    let pills = '';
-    if (pv.series && pv.series.length) {
-      pills = '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
-      for (const s of pv.series) {
-        const last = s.data && s.data.length ? s.data[s.data.length - 1] : null;
-        if (last !== null && last !== undefined) {
-          const val = gtype === 'traffic' ? _fmtBps(last) :
-                      gtype === 'memory' || gtype === 'cpu' ? last.toFixed(1) + '%' :
-                      gtype === 'temperature' ? last.toFixed(1) + '°C' :
-                      gtype === 'uptime' ? _fmtUptime(last) : String(last);
-          const color = s.name.startsWith('RX') || s.name === 'rx_bps' ? '#22c55e' : '#60a5fa';
-          pills += `<span style="font-size:11px;padding:2px 8px;background:${color}22;color:${color};border-radius:12px;font-weight:600;">${_esc(s.name)}: ${val}</span>`;
-        }
-      }
-      pills += '</div>';
-    }
-
-    card.innerHTML = titleRow + chartHtml + pills;
-    grid.appendChild(card);
-
-    // Draw chart (after DOM insert)
-    if (pv.labels && pv.labels.length) {
-      requestAnimationFrame(() => {
-        const cv = document.getElementById(canId);
-        if (cv) _netDrawChart(canId, pv.labels, pv.series || []);
-      });
-    }
-  });
-
-  if (!slice.length) {
-    grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);">No graphs found — add a device and run discovery.</div>';
+  let all = [];
+  const devList = _netSelectedDevId
+    ? [_netDevices.find(d => d.id === _netSelectedDevId)].filter(Boolean)
+    : _netDevices;
+  for (const d of devList) {
+    try {
+      const r = await fetch(`${API}/network/graph-preview?device_id=${d.id}&range=${_netRange}`, { headers: authHeaders() });
+      const data = await r.json();
+      if (data.ok) all = all.concat(data.previews || []);
+    } catch(e) {}
   }
-
-  // Pager
-  if (pager) {
-    pager.innerHTML = '';
-    if (pages > 1) {
-      for (let i = 0; i < pages; i++) {
-        const btn = document.createElement('button');
-        btn.textContent = i + 1;
-        btn.style.cssText = `padding:5px 11px;border-radius:6px;border:1px solid var(--border);
-          background:${i === _netPrevPage ? 'var(--accent)' : 'var(--bg3)'};
-          color:${i === _netPrevPage ? '#fff' : 'var(--text)'};cursor:pointer;font-size:12px;`;
-        btn.onclick = () => { _netPrevPage = i; _netRenderPreviewCards(); };
-        pager.appendChild(btn);
-      }
-    }
-  }
+  _netPreviews = all;
+  _netPrevPage = 0;
+  if (info) info.textContent = `${all.length} graph${all.length !== 1 ? 's' : ''}`;
+  _netRenderGrid();
 }
 
-let _netCharts = {};
+function _netRenderGrid() {
+  const grid  = document.getElementById('net-grid');
+  const pager = document.getElementById('net-grid-pager');
+  if (!grid) return;
+  const total = _netPreviews.length;
+  const pages = Math.max(1, Math.ceil(total / NET_PAGE_SIZE));
+  _netPrevPage = Math.min(_netPrevPage, pages - 1);
+  const slice = _netPreviews.slice(_netPrevPage * NET_PAGE_SIZE, (_netPrevPage + 1) * NET_PAGE_SIZE);
 
-function _netDrawChart(canId, labels, series) {
-  const cv = document.getElementById(canId);
-  if (!cv) return;
-  if (_netCharts[canId]) { _netCharts[canId].destroy(); delete _netCharts[canId]; }
-  const COLORS = ['rgba(34,197,94,.8)','rgba(96,165,250,.8)','rgba(251,191,36,.8)','rgba(248,113,113,.8)'];
-  const datasets = (series || []).map((s, i) => ({
-    label: s.name,
-    data: s.data || [],
-    borderColor: COLORS[i % COLORS.length],
-    backgroundColor: COLORS[i % COLORS.length].replace('.8)', '.1)'),
-    borderWidth: 1.5,
-    pointRadius: 0,
-    tension: 0.3,
-    fill: true,
-  }));
-  _netCharts[canId] = new Chart(cv.getContext('2d'), {
-    type: 'line',
-    data: { labels, datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      animation: { duration: 200 },
-      plugins: { legend: { display: series.length > 1, labels: { color: 'var(--muted)', font: { size: 10 }, boxWidth: 10 } } },
-      scales: {
-        x: { ticks: { color: 'var(--muted)', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.03)' } },
-        y: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.04)' }, beginAtZero: false },
-      },
-    },
-  });
-}
-
-// ── Devices tab ───────────────────────────────────────────────────────────
-function _netRenderDevices() {
-  const tbody = document.getElementById('net-dev-tbody');
-  const badge = document.getElementById('net-dev-count-badge');
-  const pager = document.getElementById('net-dev-pager');
-  if (!tbody) return;
-  if (badge) badge.textContent = `(${_netDevices.length} total)`;
-
-  const total = _netDevices.length;
-  const pages = Math.ceil(total / NET_DEV_PAGE) || 1;
-  _netDevPage = Math.min(_netDevPage, pages - 1);
-  const slice = _netDevices.slice(_netDevPage * NET_DEV_PAGE, (_netDevPage + 1) * NET_DEV_PAGE);
-
+  grid.innerHTML = '';
   if (!slice.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">No devices yet — click + Add Device</td></tr>';
-    if (pager) pager.innerHTML = '';
-    return;
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">No graphs — add a device and run Discover in Console → Devices.</div>';
+  } else {
+    slice.forEach((pv, idx) => {
+      const card = _netRenderCard(pv, idx);
+      grid.appendChild(card);
+      if (pv.labels && pv.labels.length) {
+        requestAnimationFrame(() => _netDrawChart(`netc-${_netPrevPage}-${idx}`, pv.labels, pv.series || []));
+      }
+    });
   }
 
-  // Get interface and graph counts (from last fetch if available)
-  tbody.innerHTML = slice.map(d => {
-    const st  = d.last_status || 'unknown';
-    const dot = `<span class="net-status-${st}" title="${st}"></span>`;
-    const vendor = (d.vendor || 'generic');
-    const vendorEmoji = { mikrotik:'🔴', cisco:'🔵', juniper:'🟠', huawei:'🔷', linux:'🐧', windows:'🪟', fortinet:'🟣', ubiquiti:'⬜' }[vendor] || '⬙';
-    const lastPoll = d.last_poll ? new Date(d.last_poll * 1000).toLocaleTimeString() : '—';
-    return `<tr style="border-bottom:1px solid var(--border);">
-      <td style="padding:10px 6px;text-align:center;">${dot}</td>
-      <td style="padding:10px 12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_esc(d.name)}">${_esc(d.name)}</td>
-      <td style="padding:10px 12px;color:var(--muted);font-family:monospace;font-size:11px;">${_esc(d.ip)}</td>
-      <td style="padding:10px 12px;color:var(--muted);">${vendorEmoji} ${vendor}</td>
-      <td style="padding:10px 12px;text-align:center;color:var(--muted);">—</td>
-      <td style="padding:10px 12px;text-align:center;color:var(--muted);">—</td>
-      <td style="padding:10px 12px;text-align:center;color:var(--muted);">${d.last_poll_ms || '—'}</td>
-      <td style="padding:10px 12px;color:var(--muted);font-size:11px;">${lastPoll}</td>
-      <td style="padding:10px 12px;text-align:center;">
-        <button onclick="netEditDevice(${d.id})" style="padding:3px 8px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:5px;font-size:11px;cursor:pointer;margin-right:4px;">Edit</button>
-        <button onclick="netDiscover(${d.id})" style="padding:3px 8px;background:var(--accent);color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer;margin-right:4px;">Discover</button>
-        <button onclick="_netDeleteDevice(${d.id},'${_esc(d.name)}')" style="padding:3px 8px;background:#ef444420;border:1px solid #ef444440;color:#ef4444;border-radius:5px;font-size:11px;cursor:pointer;">Del</button>
-      </td>
-    </tr>`;
-  }).join('');
-
-  // Pager
   if (pager) {
     pager.innerHTML = '';
     if (pages > 1) {
@@ -4799,32 +4734,445 @@ function _netRenderDevices() {
         const btn = document.createElement('button');
         btn.textContent = i + 1;
         btn.style.cssText = `padding:4px 10px;border-radius:6px;border:1px solid var(--border);
-          background:${i === _netDevPage ? 'var(--accent)' : 'var(--bg3)'};
-          color:${i === _netDevPage ? '#fff' : 'var(--text)'};cursor:pointer;font-size:12px;margin:2px;`;
-        btn.onclick = () => { _netDevPage = i; _netRenderDevices(); };
+          background:${i === _netPrevPage ? 'var(--accent)' : 'var(--bg3)'};
+          color:${i === _netPrevPage ? '#fff' : 'var(--text)'};cursor:pointer;font-size:12px;margin:2px;`;
+        btn.onclick = () => { _netPrevPage = i; _netRenderGrid(); };
         pager.appendChild(btn);
       }
     }
   }
 }
 
-// ── Add / Edit device modal ────────────────────────────────────────────────
+function _netRenderCard(pv, idx) {
+  const g = pv.graph || {};
+  const gtype = g.graph_type || '';
+  const dev = _netDevices.find(d => d.id === g.device_id) || {};
+  const iname = g.interface_name || '';
+  const canId = `netc-${_netPrevPage}-${idx}`;
+  const COLORS = ['rgba(34,197,94,.85)', 'rgba(96,165,250,.85)', 'rgba(251,191,36,.85)', 'rgba(248,113,113,.85)'];
+
+  let statsRows = '';
+  if (pv.series && pv.series.length) {
+    statsRows = pv.series.map((s, si) => {
+      const st = _netCalcStats(s.data || []);
+      return `<tr>
+        <td><span class="net-legend-swatch" style="background:${COLORS[si % COLORS.length]};"></span></td>
+        <td>${_esc(s.name)}</td>
+        <td>${_netFmtVal(st.min, gtype)}</td>
+        <td>${_netFmtVal(st.avg, gtype)}</td>
+        <td>${_netFmtVal(st.max, gtype)}</td>
+        <td style="font-weight:600;color:var(--accent);">${_netFmtVal(st.last, gtype)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const card = document.createElement('div');
+  card.className = 'net-graph-card';
+  card.onclick = () => netZoomGraph(g.id);
+  card.innerHTML = `
+    <div class="net-graph-title">
+      <div>
+        <div>${_esc(g.graph_name || gtype)}</div>
+        <div class="net-graph-subtitle">${_esc(dev.name || '')}${iname ? ' — ' + _esc(iname) : ''}</div>
+      </div>
+      <span class="net-graph-badge">${gtype}</span>
+    </div>
+    <canvas id="${canId}" style="height:130px;max-height:130px;width:100%;"></canvas>
+    ${statsRows ? `<table class="net-graph-stats">
+      <thead><tr><th></th><th>Src</th><th>Min</th><th>Avg</th><th>Max</th><th>Last</th></tr></thead>
+      <tbody>${statsRows}</tbody>
+    </table>` : ''}`;
+  return card;
+}
+
+function _netCalcStats(arr) {
+  const clean = (arr || []).filter(v => v != null && isFinite(v));
+  if (!clean.length) return { min: null, avg: null, max: null, last: null };
+  const min  = Math.min(...clean);
+  const max  = Math.max(...clean);
+  const avg  = clean.reduce((a, b) => a + b, 0) / clean.length;
+  const last = clean[clean.length - 1];
+  return { min, avg, max, last };
+}
+
+function _netFmtVal(v, gtype) {
+  if (v == null || !isFinite(v)) return '—';
+  if (gtype === 'traffic')                       return _fmtBps(v);
+  if (gtype === 'cpu' || gtype === 'memory')     return v.toFixed(1) + '%';
+  if (gtype === 'temperature')                   return v.toFixed(1) + '°C';
+  if (gtype === 'uptime')                        return _fmtUptime(v);
+  return v.toFixed(1);
+}
+
+function _netDrawChart(canId, labels, series) {
+  const cv = document.getElementById(canId);
+  if (!cv) return;
+  if (_netCharts[canId]) { try { _netCharts[canId].destroy(); } catch(e) {} delete _netCharts[canId]; }
+  const COLORS = ['rgba(34,197,94,.85)', 'rgba(96,165,250,.85)', 'rgba(251,191,36,.85)', 'rgba(248,113,113,.85)'];
+  const datasets = (series || []).map((s, i) => ({
+    label: s.name,
+    data: s.data || [],
+    borderColor: COLORS[i % COLORS.length],
+    backgroundColor: COLORS[i % COLORS.length].replace('.85)', '.08)'),
+    borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: true,
+  }));
+  try {
+    _netCharts[canId] = new Chart(cv.getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 150 },
+        plugins: {
+          legend: { display: datasets.length > 1, labels: { color: '#888', font: { size: 9 }, boxWidth: 8, padding: 6 } },
+          tooltip: { mode: 'index', intersect: false },
+        },
+        scales: {
+          x: { ticks: { color: '#666', maxTicksLimit: 5, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,.03)' } },
+          y: { ticks: { color: '#666', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,.04)' }, beginAtZero: false },
+        },
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      },
+    });
+  } catch(e) { console.warn('Chart error:', canId, e); }
+}
+
+// ── Graph Zoom Modal ──────────────────────────────────────────────────────
+async function netZoomGraph(graphId) {
+  if (!graphId) return;
+  _netZoomGraphId = graphId;
+  document.getElementById('netGraphModalTitle').textContent = 'Loading…';
+  document.getElementById('netGraphModalMeta').textContent = '';
+  document.getElementById('netGraphModalOverlay').style.display = 'flex';
+  document.querySelectorAll('.net-modal-tr-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === _netRange);
+  });
+  await _netReloadZoomModal(_netRange);
+}
+
+async function _netReloadZoomModal(range) {
+  if (!_netZoomGraphId) return;
+  const r2 = range || _netRange;
+  // Update active modal button
+  document.querySelectorAll('.net-modal-tr-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === r2);
+  });
+  try {
+    const r = await fetch(`${API}/network/graph-data?graph_id=${_netZoomGraphId}&range=${r2}`, { headers: authHeaders() });
+    const d = await r.json();
+    if (!d.ok) return;
+    const g   = d.graph || {};
+    const dev = _netDevices.find(x => x.id === g.device_id) || {};
+    document.getElementById('netGraphModalTitle').textContent = g.graph_name || g.graph_type || 'Graph';
+    document.getElementById('netGraphModalMeta').textContent =
+      `${dev.name || ''}${g.interface_name ? ' — ' + g.interface_name : ''}  [${r2}]`;
+    const prev = _netCharts['netGraphModalCanvas'];
+    if (prev) { try { prev.destroy(); } catch(e2) {} delete _netCharts['netGraphModalCanvas']; }
+    _netDrawChart('netGraphModalCanvas', d.labels || [], d.series || []);
+    // Stats table
+    const sc = document.getElementById('netGraphModalStats');
+    if (sc && d.series && d.series.length) {
+      const COLORS = ['rgba(34,197,94,.85)', 'rgba(96,165,250,.85)', 'rgba(251,191,36,.85)', 'rgba(248,113,113,.85)'];
+      const rows = d.series.map((s, si) => {
+        const st = _netCalcStats(s.data || []);
+        return `<tr>
+          <td><span class="net-legend-swatch" style="background:${COLORS[si%COLORS.length]};"></span></td>
+          <td>${_esc(s.name)}</td>
+          <td>${_netFmtVal(st.min, g.graph_type)}</td>
+          <td>${_netFmtVal(st.avg, g.graph_type)}</td>
+          <td>${_netFmtVal(st.max, g.graph_type)}</td>
+          <td style="font-weight:700;color:var(--accent);">${_netFmtVal(st.last, g.graph_type)}</td>
+        </tr>`;
+      }).join('');
+      sc.innerHTML = `<table class="net-graph-stats" style="margin-top:14px;">
+        <thead><tr><th></th><th>Source</th><th>Min</th><th>Avg</th><th>Max</th><th>Last</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    } else if (sc) { sc.innerHTML = ''; }
+  } catch(e) { console.error('zoom modal:', e); }
+}
+
+function closeNetGraphModal(e) {
+  if (e && e.target !== document.getElementById('netGraphModalOverlay')) return;
+  const c = _netCharts['netGraphModalCanvas'];
+  if (c) { try { c.destroy(); } catch(e2) {} delete _netCharts['netGraphModalCanvas']; }
+  document.getElementById('netGraphModalOverlay').style.display = 'none';
+  _netZoomGraphId = null;
+}
+
+// ── Console ───────────────────────────────────────────────────────────────
+function _netConsolePage(name) {
+  _netConsolePageName = name;
+  document.querySelectorAll('.net-console-nav-item').forEach(el => el.classList.remove('active'));
+  const nav = document.getElementById(`net-cnav-${name}`);
+  if (nav) nav.classList.add('active');
+  const content = document.getElementById('net-console-content');
+  if (!content) return;
+  content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px;">Loading…</div>';
+  if      (name === 'devices')   _netRenderDevices(content);
+  else if (name === 'sources')   _netRenderDataSources(content);
+  else if (name === 'graphmgmt') _netRenderGraphMgmt(content);
+  else if (name === 'templates') _netRenderTemplates(content);
+  else if (name === 'hosttpl')   _netRenderHostTemplates(content);
+  else if (name === 'poller')    _netLoadPollerStatus(content);
+}
+
+function _netRenderDevices(c) {
+  if (!c) c = document.getElementById('net-console-content');
+  if (!c) return;
+  const VEMOJI = { mikrotik:'🔴', cisco:'🔵', juniper:'🟠', huawei:'🔷', linux:'🐧', windows:'🪟', fortinet:'🟣', ubiquiti:'⬜' };
+  const rows = _netDevices.map(d => {
+    const st = d.last_status || 'unknown';
+    const lastPoll = d.last_poll ? new Date(d.last_poll * 1000).toLocaleTimeString() : '—';
+    return `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:8px 6px;text-align:center;"><span class="net-status-${st}"></span></td>
+      <td style="padding:8px 10px;font-weight:600;color:var(--text);">${_esc(d.name)}</td>
+      <td style="padding:8px 10px;color:var(--muted);font-family:monospace;font-size:11px;">${_esc(d.ip)}</td>
+      <td style="padding:8px 10px;color:var(--muted);">${VEMOJI[d.vendor]||'⬙'} ${d.vendor||'generic'}</td>
+      <td style="padding:8px 10px;color:var(--muted);font-size:11px;">${d.location||'—'}</td>
+      <td style="padding:8px 10px;text-align:center;color:var(--muted);">${d.last_poll_ms||'—'} ms</td>
+      <td style="padding:8px 10px;color:var(--muted);font-size:11px;">${lastPoll}</td>
+      <td style="padding:8px 10px;text-align:center;">
+        <button onclick="netEditDevice(${d.id})" style="padding:3px 7px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:5px;font-size:11px;cursor:pointer;margin-right:3px;">Edit</button>
+        <button onclick="netDiscover(${d.id})" style="padding:3px 7px;background:var(--accent);color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer;margin-right:3px;">Discover</button>
+        <button onclick="_netDeleteDevice(${d.id},'${_esc(d.name)}')" style="padding:3px 7px;background:#ef444420;border:1px solid #ef444440;color:#ef4444;border-radius:5px;font-size:11px;cursor:pointer;">Del</button>
+      </td>
+    </tr>`;
+  }).join('');
+  c.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div style="font-size:14px;font-weight:700;color:var(--text);">Devices <span style="font-size:12px;font-weight:400;color:var(--muted);">(${_netDevices.length})</span></div>
+      <button onclick="netAddDevice()" style="padding:6px 14px;background:#22c55e;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Device</button>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="background:var(--bg3);color:var(--muted);font-size:10px;text-transform:uppercase;">
+            <th style="padding:8px 6px;text-align:center;">●</th>
+            <th style="padding:8px 10px;text-align:left;">Name</th>
+            <th style="padding:8px 10px;text-align:left;">IP</th>
+            <th style="padding:8px 10px;text-align:left;">Vendor</th>
+            <th style="padding:8px 10px;text-align:left;">Location</th>
+            <th style="padding:8px 10px;text-align:center;">Last ms</th>
+            <th style="padding:8px 10px;text-align:left;">Last Seen</th>
+            <th style="padding:8px 10px;text-align:center;">Actions</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted);">No devices — click + Add Device</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function _netRenderDataSources(c) {
+  if (!c) c = document.getElementById('net-console-content');
+  if (!c) return;
+  let rows = '';
+  for (const dev of _netDevices) {
+    try {
+      const r = await fetch(`${API}/network/interfaces?device_id=${dev.id}`, { headers: authHeaders() });
+      const d = await r.json();
+      (d.ok ? d.interfaces : []).forEach(i => {
+        rows += `<tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:7px 10px;font-weight:600;color:var(--text);">${_esc(dev.name)}</td>
+          <td style="padding:7px 10px;color:var(--muted);">${_esc(i.if_name||'')}</td>
+          <td style="padding:7px 10px;color:var(--muted);">${_esc(i.if_descr||'')}</td>
+          <td style="padding:7px 10px;text-align:right;color:var(--muted);">${i.if_speed?_fmtBps(i.if_speed):'—'}</td>
+          <td style="padding:7px 10px;text-align:center;"><span class="net-status-${i.oper_status===1?'online':'offline'}"></span></td>
+          <td style="padding:7px 10px;text-align:center;">
+            <span style="font-size:10px;padding:1px 6px;border-radius:8px;
+              background:${i.polling_enabled?'#22c55e22':'#ef444422'};
+              color:${i.polling_enabled?'#22c55e':'#ef4444'};">${i.polling_enabled?'Polling':'Paused'}</span>
+          </td>
+        </tr>`;
+      });
+    } catch(e) {}
+  }
+  c.innerHTML = `
+    <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;">Data Sources (Interfaces)</div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="background:var(--bg3);color:var(--muted);font-size:10px;text-transform:uppercase;">
+            <th style="padding:8px 10px;text-align:left;">Device</th>
+            <th style="padding:8px 10px;text-align:left;">Interface</th>
+            <th style="padding:8px 10px;text-align:left;">Description</th>
+            <th style="padding:8px 10px;text-align:right;">Speed</th>
+            <th style="padding:8px 10px;text-align:center;">Status</th>
+            <th style="padding:8px 10px;text-align:center;">Polling</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted);">No interfaces — run Discover on a device</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function _netRenderGraphMgmt(c) {
+  if (!c) c = document.getElementById('net-console-content');
+  if (!c) return;
+  let allGraphs = [];
+  for (const dev of _netDevices) {
+    try {
+      const r = await fetch(`${API}/network/graphs?device_id=${dev.id}`, { headers: authHeaders() });
+      const d = await r.json();
+      if (d.ok) allGraphs = allGraphs.concat((d.graphs||[]).map(g => ({...g, _devName: dev.name})));
+    } catch(e) {}
+  }
+  const rows = allGraphs.map(g => `<tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:7px 10px;font-weight:600;color:var(--text);">${_esc(g.graph_name||g.graph_type||'')}</td>
+    <td style="padding:7px 10px;color:var(--muted);">${_esc(g._devName||'')}</td>
+    <td style="padding:7px 10px;color:var(--muted);">${_esc(g.interface_name||'—')}</td>
+    <td style="padding:7px 10px;color:var(--muted);">${g.graph_type||''}</td>
+    <td style="padding:7px 10px;text-align:center;">
+      <button onclick="netZoomGraph(${g.id})" style="padding:3px 7px;background:var(--accent);color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer;margin-right:3px;">View</button>
+      <button onclick="_netDeleteGraph(${g.id})" style="padding:3px 7px;background:#ef444420;border:1px solid #ef444440;color:#ef4444;border-radius:5px;font-size:11px;cursor:pointer;">Del</button>
+    </td>
+  </tr>`).join('');
+  c.innerHTML = `
+    <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;">Graph Management <span style="font-size:12px;font-weight:400;color:var(--muted);">(${allGraphs.length})</span></div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="background:var(--bg3);color:var(--muted);font-size:10px;text-transform:uppercase;">
+            <th style="padding:8px 10px;text-align:left;">Graph Name</th>
+            <th style="padding:8px 10px;text-align:left;">Device</th>
+            <th style="padding:8px 10px;text-align:left;">Interface</th>
+            <th style="padding:8px 10px;text-align:left;">Type</th>
+            <th style="padding:8px 10px;text-align:center;">Actions</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);">No graphs yet</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function _netDeleteGraph(id) {
+  if (!confirm('Delete this graph? Historical data stays in InfluxDB.')) return;
+  try {
+    const r = await fetch(`${API}/network/graphs/${id}/delete`, { method: 'POST', headers: authHeaders() });
+    const d = await r.json();
+    if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
+    _netConsolePage('graphmgmt');
+    _netLoadGrid();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+function _netRenderTemplates(c) {
+  if (!c) c = document.getElementById('net-console-content');
+  if (!c) return;
+  const cards = (_netTemplates||[]).map(t => {
+    const badge = t.builtin
+      ? '<span style="font-size:9px;padding:1px 5px;background:#60a5fa22;color:#60a5fa;border-radius:8px;border:1px solid #60a5fa40;">builtin</span>'
+      : '<span style="font-size:9px;padding:1px 5px;background:#f59e0b22;color:#f59e0b;border-radius:8px;border:1px solid #f59e0b40;">custom</span>';
+    return `<div class="net-tpl-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:5px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">${_esc(t.name)}</div>${badge}
+      </div>
+      <div style="font-size:11px;color:var(--muted);">vendor: ${t.vendor} · type: ${t.graph_type} · unit: ${t.unit||'—'}</div>
+      ${!t.builtin?`<button onclick="_netDeleteTemplate(${t.id},'${_esc(t.name)}')" style="margin-top:6px;padding:3px 8px;background:#ef444420;border:1px solid #ef444440;color:#ef4444;border-radius:5px;font-size:11px;cursor:pointer;">Delete</button>`:''}
+    </div>`;
+  }).join('');
+  c.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div style="font-size:14px;font-weight:700;color:var(--text);">Graph Templates</div>
+      <button onclick="_netShowAddTemplate()" style="padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;">+ Custom Template</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
+      ${cards||'<div style="color:var(--muted);font-size:13px;">No templates found.</div>'}
+    </div>`;
+}
+
+function _netRenderHostTemplates(c) {
+  if (!c) c = document.getElementById('net-console-content');
+  if (!c) return;
+  const HOST_TPL = [
+    { vendor:'MikroTik (RouterOS)', templates:['MikroTik CPU Load','MikroTik Memory','MikroTik Temperature','Generic IF-MIB Traffic','Generic IF-MIB Errors/Drops','Generic sysUpTime'] },
+    { vendor:'Cisco IOS/IOS-XE',   templates:['Cisco CPU 5-min','Cisco Memory Pool','Generic IF-MIB Traffic','Generic IF-MIB Errors/Drops'] },
+    { vendor:'Juniper JunOS',       templates:['Juniper Routing-Engine CPU','Juniper Temperature','Generic IF-MIB Traffic'] },
+    { vendor:'Huawei VRP',          templates:['Huawei CPU','Huawei Memory','Generic IF-MIB Traffic'] },
+    { vendor:'Linux (Net-SNMP)',    templates:['Host Resources CPU','Host Resources Memory','Generic IF-MIB Traffic','Generic sysUpTime'] },
+    { vendor:'Generic SNMP',        templates:['Generic IF-MIB Traffic','Generic IF-MIB Errors/Drops','Generic sysUpTime','Host Resources CPU','Host Resources Memory'] },
+  ];
+  const rows = HOST_TPL.map(h => `<tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:10px 12px;font-weight:600;color:var(--text);vertical-align:top;">${_esc(h.vendor)}</td>
+    <td style="padding:10px 12px;font-size:11px;">${h.templates.map(t=>`<span style="display:inline-block;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:1px 7px;margin:2px 3px 2px 0;color:var(--muted);">${_esc(t)}</span>`).join('')}</td>
+  </tr>`).join('');
+  c.innerHTML = `
+    <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:8px;">Host Templates</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">Template sets applied automatically during discovery per vendor.</div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="background:var(--bg3);color:var(--muted);font-size:10px;text-transform:uppercase;">
+          <th style="padding:8px 12px;text-align:left;width:220px;">Host Template</th>
+          <th style="padding:8px 12px;text-align:left;">Associated Graph Templates</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function _netLoadPollerStatus(c) {
+  if (!c) c = document.getElementById('net-console-content');
+  if (!c) return;
+  try {
+    const r = await fetch(`${API}/network/poller/status`, { headers: authHeaders() });
+    const d = await r.json();
+    const s = d.status || {};
+    const stats = [
+      { label:'Max Workers', value: s.max_workers ?? '—' },
+      { label:'Cycles',      value: s.cycles ?? '—' },
+      { label:'Last Cycle',  value: s.last_cycle_ms != null ? s.last_cycle_ms + ' ms' : '—' },
+      { label:'Polled',      value: s.devices_polled ?? '—' },
+      { label:'Failed',      value: (s.failed_devices||[]).length },
+      { label:'Uptime',      value: s.uptime_sec != null ? _fmtUptime(s.uptime_sec) : '—' },
+    ];
+    const failedHtml = s.failed_devices && s.failed_devices.length
+      ? s.failed_devices.map(f=>`<div style="padding:3px 0;">${_esc(f.name||'')} (${_esc(f.ip||'')}) — ${_esc(f.error||'')}</div>`).join('')
+      : '<span style="color:var(--muted);">None</span>';
+    const slowHtml = s.slowest_devices && s.slowest_devices.length
+      ? s.slowest_devices.map(f=>`<div>${_esc(f.name||'')} — ${f.ms}ms</div>`).join('')
+      : '<span style="color:var(--muted);">—</span>';
+    c.innerHTML = `
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;">Poller Status</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:20px;">
+        ${stats.map(st=>`<div class="net-stat-card">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">${st.label}</div>
+          <div style="font-size:22px;font-weight:700;color:var(--text);">${st.value}</div>
+        </div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:8px;">Failed Devices</div>
+          <div style="font-size:12px;">${failedHtml}</div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:8px;">Slowest Devices</div>
+          <div style="font-size:12px;color:var(--text);">${slowHtml}</div>
+        </div>
+      </div>
+      ${d.error&&!s.cycles?`<div style="margin-top:12px;font-size:12px;color:#f59e0b;">⚠ ${_esc(d.error)}</div>`:''}`;
+  } catch(e) {
+    c.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:20px;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Device Modal ──────────────────────────────────────────────────────────
 function netAddDevice() {
   _netCurrentEditId = null;
   document.getElementById('netDevModalTitle').textContent = 'Add Device';
   ['ndf-name','ndf-ip','ndf-hostname','ndf-location','ndf-tags','ndf-notes'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
-  document.getElementById('ndf-vendor').value = 'generic';
-  document.getElementById('ndf-type').value   = 'router';
-  document.getElementById('ndf-snmpver').value = 'v2c';
+  document.getElementById('ndf-vendor').value    = 'generic';
+  document.getElementById('ndf-type').value      = 'router';
+  document.getElementById('ndf-snmpver').value   = 'v2c';
   document.getElementById('ndf-community').value = 'public';
-  document.getElementById('ndf-port').value    = '161';
-  document.getElementById('ndf-timeout').value = '3';
-  document.getElementById('ndf-interval').value = '60';
+  document.getElementById('ndf-port').value      = '161';
+  document.getElementById('ndf-timeout').value   = '3';
+  document.getElementById('ndf-interval').value  = '60';
   document.getElementById('ndf-enabled').checked = true;
-  document.getElementById('ndf-auto-traffic').checked = true;
-  document.getElementById('ndf-test-result').style.display = 'none';
+  const at = document.getElementById('ndf-auto-traffic'); if (at) at.checked = true;
+  const tr = document.getElementById('ndf-test-result'); if (tr) tr.style.display = 'none';
+  const se = document.getElementById('ndf-save-error'); if (se) { se.textContent=''; se.style.display='none'; }
   _netToggleSnmpV3();
   document.getElementById('netDevModalOverlay').style.display = 'flex';
 }
@@ -4834,21 +5182,22 @@ function netEditDevice(id) {
   if (!d) return;
   _netCurrentEditId = id;
   document.getElementById('netDevModalTitle').textContent = 'Edit Device';
-  document.getElementById('ndf-name').value     = d.name || '';
-  document.getElementById('ndf-ip').value       = d.ip || '';
-  document.getElementById('ndf-hostname').value = d.hostname || '';
-  document.getElementById('ndf-location').value = d.location || '';
-  document.getElementById('ndf-tags').value     = d.tags || '';
-  document.getElementById('ndf-notes').value    = d.notes || '';
-  document.getElementById('ndf-vendor').value   = d.vendor || 'generic';
-  document.getElementById('ndf-type').value     = d.device_type || 'router';
-  document.getElementById('ndf-snmpver').value  = d.snmp_version || 'v2c';
-  document.getElementById('ndf-community').value = '';  // never echoed
-  document.getElementById('ndf-port').value     = d.snmp_port || '161';
-  document.getElementById('ndf-timeout').value  = d.snmp_timeout || '3';
-  document.getElementById('ndf-interval').value = d.polling_interval || '60';
+  document.getElementById('ndf-name').value      = d.name || '';
+  document.getElementById('ndf-ip').value        = d.ip || '';
+  document.getElementById('ndf-hostname').value  = d.hostname || '';
+  document.getElementById('ndf-location').value  = d.location || '';
+  document.getElementById('ndf-tags').value      = d.tags || '';
+  document.getElementById('ndf-notes').value     = d.notes || '';
+  document.getElementById('ndf-vendor').value    = d.vendor || 'generic';
+  document.getElementById('ndf-type').value      = d.device_type || 'router';
+  document.getElementById('ndf-snmpver').value   = d.snmp_version || 'v2c';
+  document.getElementById('ndf-community').value = '';
+  document.getElementById('ndf-port').value      = d.snmp_port || '161';
+  document.getElementById('ndf-timeout').value   = d.snmp_timeout || '3';
+  document.getElementById('ndf-interval').value  = d.polling_interval || '60';
   document.getElementById('ndf-enabled').checked = !!d.polling_enabled;
-  document.getElementById('ndf-test-result').style.display = 'none';
+  const tr = document.getElementById('ndf-test-result'); if (tr) tr.style.display = 'none';
+  const se = document.getElementById('ndf-save-error'); if (se) { se.textContent=''; se.style.display='none'; }
   _netToggleSnmpV3();
   document.getElementById('netDevModalOverlay').style.display = 'flex';
 }
@@ -4860,38 +5209,40 @@ function closeNetDevModal(e) {
 
 function _netToggleSnmpV3() {
   const v3 = document.getElementById('ndf-snmpver')?.value === 'v3';
-  document.getElementById('ndf-v3-wrap').style.display = v3 ? '' : 'none';
-  document.getElementById('ndf-community-wrap').style.display = v3 ? 'none' : '';
+  const v3w = document.getElementById('ndf-v3-wrap');
+  const cw  = document.getElementById('ndf-community-wrap');
+  if (v3w) v3w.style.display = v3 ? '' : 'none';
+  if (cw)  cw.style.display  = v3 ? 'none' : '';
 }
 
 async function _netTestDevice() {
   const btn = document.getElementById('ndf-test-btn');
   const res = document.getElementById('ndf-test-result');
   if (!res) return;
-  // Save first so we have an ID
   const saved = await netSaveDevice(true);
   if (!saved) return;
-  btn.textContent = '⏳ Testing…'; btn.disabled = true;
+  if (btn) { btn.textContent = '⏳ Testing…'; btn.disabled = true; }
   res.style.display = 'none';
   try {
-    const r = await fetch(`${API}/network/devices/${saved}/test`, { method:'POST', headers: authHeaders() });
+    const r = await fetch(`${API}/network/devices/${saved}/test`, { method: 'POST', headers: authHeaders() });
     const d = await r.json();
     res.style.display = 'block';
     if (d.ok && d.snmp_ok) {
       res.style.color = '#22c55e';
-      res.textContent = `✓ SNMP OK — ${d.sys_name || ''} | ${d.vendor_detected} | ${d.ms}ms`;
+      res.textContent = `✓ SNMP OK — ${d.sys_name||''} | ${d.vendor_detected} | ${d.ms}ms`;
     } else {
       res.style.color = '#ef4444';
-      res.textContent = `✗ Failed — ${d.error || 'SNMP timeout/credentials'}`;
+      res.textContent = `✗ Failed — ${d.error||'SNMP timeout/credentials'}`;
     }
   } catch(e) {
     res.style.display = 'block'; res.style.color = '#ef4444';
-    res.textContent = `Error: ${e.message}`;
+    res.textContent = 'Error: ' + e.message;
   }
-  btn.textContent = '🔍 Test SNMP'; btn.disabled = false;
+  if (btn) { btn.textContent = '🔍 Test SNMP'; btn.disabled = false; }
 }
 
-async function netSaveDevice(returnId = false) {
+async function netSaveDevice(returnId) {
+  if (returnId === undefined) returnId = false;
   const payload = {
     name:             document.getElementById('ndf-name')?.value.trim(),
     ip:               document.getElementById('ndf-ip')?.value.trim(),
@@ -4911,7 +5262,7 @@ async function netSaveDevice(returnId = false) {
   if (!payload.name) { alert('Device name is required'); return null; }
   if (!payload.ip)   { alert('IP address is required');  return null; }
   if (document.getElementById('ndf-snmpver')?.value === 'v3') {
-    payload.snmp_v3_user      = document.getElementById('ndf-v3user')?.value;
+    payload.snmp_v3_user       = document.getElementById('ndf-v3user')?.value;
     payload.snmp_v3_auth_proto = document.getElementById('ndf-v3auth')?.value;
     payload.snmp_v3_auth_pass  = document.getElementById('ndf-v3authpass')?.value;
     payload.snmp_v3_priv_proto = document.getElementById('ndf-v3priv')?.value;
@@ -4921,34 +5272,44 @@ async function netSaveDevice(returnId = false) {
     let url = `${API}/network/devices`;
     if (_netCurrentEditId) url += `/${_netCurrentEditId}`;
     const r = await fetch(url, {
-      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     const d = await r.json();
-    if (!d.ok) { alert('Error: ' + (d.error || 'Unknown')); return null; }
+    if (!d.ok) {
+      const msg = d.error || 'Unknown error';
+      const errEl = document.getElementById('ndf-save-error');
+      if (errEl) { errEl.textContent = '⚠ ' + msg; errEl.style.display = 'block'; }
+      else alert('Error: ' + msg);
+      return null;
+    }
+    const errEl2 = document.getElementById('ndf-save-error');
+    if (errEl2) { errEl2.textContent = ''; errEl2.style.display = 'none'; }
     const savedId = _netCurrentEditId || d.id;
+    _netCurrentEditId = savedId;
     if (!returnId) {
       closeNetDevModal();
       await _netFetchDevices();
-      _netRenderDevices();
-      // Auto-discover if new device and auto-traffic checked
-      if (!_netCurrentEditId && document.getElementById('ndf-auto-traffic')?.checked) {
-        netDiscover(savedId);
-      }
+      _netRenderTree();
+      if (_netView_ === 'console') _netConsolePage('devices');
+      const at = document.getElementById('ndf-auto-traffic');
+      if (!_netCurrentEditId && at && at.checked) netDiscover(savedId);
     }
-    _netCurrentEditId = _netCurrentEditId || d.id;
     return savedId;
   } catch(e) { alert('Save failed: ' + e.message); return null; }
 }
 
 async function _netDeleteDevice(id, name) {
-  if (!confirm(`Delete device "${name}"?\nAll graphs and interfaces for this device will also be removed.`)) return;
+  if (!confirm(`Delete device "${name}"?\nAll graphs and interfaces will be removed.`)) return;
   try {
-    const r = await fetch(`${API}/network/devices/${id}/delete`, { method:'POST', headers: authHeaders() });
+    const r = await fetch(`${API}/network/devices/${id}/delete`, { method: 'POST', headers: authHeaders() });
     const d = await r.json();
-    if (!d.ok) { alert('Error: ' + (d.error || 'Unknown')); return; }
+    if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
     await _netFetchDevices();
-    _netRenderDevices();
+    _netRenderTree();
+    if (_netView_ === 'console') _netConsolePage('devices');
+    _netLoadGrid();
   } catch(e) { alert('Delete failed: ' + e.message); }
 }
 
@@ -4964,39 +5325,31 @@ async function netDiscover(deviceId) {
   try {
     const r = await fetch(`${API}/network/devices/${deviceId}/discover`, {
       method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auto_create_traffic: false }), // manual preview
+      body: JSON.stringify({ auto_create_traffic: false }),
     });
     const d = await r.json();
     _netDiscoverData = d;
-    if (!d.ok) {
-      document.getElementById('netDiscoverStatus').textContent = '✗ ' + (d.error || 'Failed');
-      return;
-    }
+    if (!d.ok) { document.getElementById('netDiscoverStatus').textContent = '✗ ' + (d.error||'Failed'); return; }
     const ifaces = d.interfaces || [];
     document.getElementById('netDiscoverStatus').textContent =
-      `Found ${ifaces.length} interface${ifaces.length !== 1 ? 's' : ''}` +
-      (d.snmp_ok ? '' : ' (SNMP timeout — limited data)');
+      `Found ${ifaces.length} interface${ifaces.length!==1?'s':''}`;
     if (ifaces.length) {
       document.getElementById('netDiscoverIfaceList').innerHTML = `
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
           <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;">
-            <th style="padding:8px 10px;text-align:left;">Index</th>
-            <th style="padding:8px 10px;text-align:left;">Name</th>
-            <th style="padding:8px 10px;text-align:left;">Description</th>
-            <th style="padding:8px 10px;text-align:right;">Speed</th>
-            <th style="padding:8px 10px;text-align:center;">Status</th>
+            <th style="padding:7px 10px;text-align:left;">Index</th>
+            <th style="padding:7px 10px;text-align:left;">Name</th>
+            <th style="padding:7px 10px;text-align:left;">Description</th>
+            <th style="padding:7px 10px;text-align:right;">Speed</th>
+            <th style="padding:7px 10px;text-align:center;">Status</th>
           </tr></thead>
-          <tbody>
-            ${ifaces.map(i => `<tr style="border-bottom:1px solid var(--border);">
-              <td style="padding:7px 10px;color:var(--muted);">${i.if_index}</td>
-              <td style="padding:7px 10px;font-weight:600;color:var(--text);">${_esc(i.if_name||'')}</td>
-              <td style="padding:7px 10px;color:var(--muted);">${_esc(i.if_descr||'')}</td>
-              <td style="padding:7px 10px;text-align:right;color:var(--muted);">${i.if_speed ? _fmtBps(i.if_speed) : '—'}</td>
-              <td style="padding:7px 10px;text-align:center;">
-                <span class="net-status-${i.oper_status===1?'online':'offline'}" title="${i.oper_status===1?'Up':'Down'}"></span>
-              </td>
-            </tr>`).join('')}
-          </tbody>
+          <tbody>${ifaces.map(i=>`<tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:6px 10px;color:var(--muted);">${i.if_index}</td>
+            <td style="padding:6px 10px;font-weight:600;color:var(--text);">${_esc(i.if_name||'')}</td>
+            <td style="padding:6px 10px;color:var(--muted);">${_esc(i.if_descr||'')}</td>
+            <td style="padding:6px 10px;text-align:right;color:var(--muted);">${i.if_speed?_fmtBps(i.if_speed):'—'}</td>
+            <td style="padding:6px 10px;text-align:center;"><span class="net-status-${i.oper_status===1?'online':'offline'}"></span></td>
+          </tr>`).join('')}</tbody>
         </table>`;
       document.getElementById('netDiscoverApplyBtn').style.display = '';
     }
@@ -5017,9 +5370,10 @@ async function _netApplyDiscover() {
     });
     const d = await r.json();
     document.getElementById('netDiscoverStatus').textContent =
-      d.ok ? `✓ Done — ${(d.interfaces||[]).length} interfaces, ${d.graphs_created||0} graphs created` :
-             '✗ ' + (d.error || 'Failed');
+      d.ok ? `✓ Done — ${(d.interfaces||[]).length} interfaces, ${d.graphs_created||0} graphs created`
+           : '✗ ' + (d.error||'Failed');
     await _netFetchDevices();
+    if (d.ok && d.graphs_created) { await new Promise(res => setTimeout(res, 500)); _netLoadGrid(); }
   } catch(e) {
     document.getElementById('netDiscoverStatus').textContent = '✗ Error: ' + e.message;
   }
@@ -5031,29 +5385,7 @@ function closeNetDiscover(e) {
   document.getElementById('netDiscoverOverlay').style.display = 'none';
 }
 
-// ── Templates tab ─────────────────────────────────────────────────────────
-function _netRenderTemplates() {
-  const list = document.getElementById('net-tpl-list');
-  if (!list) return;
-  if (!_netTemplates.length) {
-    list.innerHTML = '<div style="color:var(--muted);font-size:13px;">No templates found.</div>';
-    return;
-  }
-  list.innerHTML = _netTemplates.map(t => {
-    const badge = t.builtin
-      ? '<span style="font-size:10px;padding:1px 6px;background:#60a5fa22;color:#60a5fa;border-radius:10px;border:1px solid #60a5fa40;">builtin</span>'
-      : '<span style="font-size:10px;padding:1px 6px;background:#f59e0b22;color:#f59e0b;border-radius:10px;border:1px solid #f59e0b40;">custom</span>';
-    return `<div class="net-tpl-card">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">
-        <div style="font-size:13px;font-weight:700;color:var(--text);">${_esc(t.name)}</div>
-        ${badge}
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">vendor: ${t.vendor} | type: ${t.graph_type} | unit: ${t.unit||'—'}</div>
-      ${!t.builtin ? `<button onclick="_netDeleteTemplate(${t.id},'${_esc(t.name)}')" style="padding:3px 8px;background:#ef444420;border:1px solid #ef444440;color:#ef4444;border-radius:5px;font-size:11px;cursor:pointer;margin-top:4px;">Delete</button>` : ''}
-    </div>`;
-  }).join('');
-}
-
+// ── Templates modal ───────────────────────────────────────────────────────
 function _netShowAddTemplate() {
   ['ntf-name','ntf-unit','ntf-oidmap'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
@@ -5073,10 +5405,10 @@ async function _netSaveTemplate() {
   let oid_map;
   try { oid_map = JSON.parse(oidRaw); } catch(e) { alert('OID Map must be valid JSON'); return; }
   const payload = {
-    name:       document.getElementById('ntf-name')?.value.trim(),
+    name: document.getElementById('ntf-name')?.value.trim(),
     graph_type: document.getElementById('ntf-type')?.value,
-    vendor:     document.getElementById('ntf-vendor')?.value,
-    unit:       document.getElementById('ntf-unit')?.value.trim(),
+    vendor: document.getElementById('ntf-vendor')?.value,
+    unit: document.getElementById('ntf-unit')?.value.trim(),
     oid_map,
   };
   if (!payload.name) { alert('Name required'); return; }
@@ -5089,200 +5421,25 @@ async function _netSaveTemplate() {
     if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
     closeNetTplModal();
     await _netFetchTemplates();
-    _netRenderTemplates();
+    if (_netView_ === 'console') _netConsolePage('templates');
   } catch(e) { alert('Save failed: ' + e.message); }
 }
 
 async function _netDeleteTemplate(id, name) {
   if (!confirm(`Delete template "${name}"?`)) return;
   try {
-    const r = await fetch(`${API}/network/templates/${id}/delete`, { method:'POST', headers: authHeaders() });
+    const r = await fetch(`${API}/network/templates/${id}/delete`, { method: 'POST', headers: authHeaders() });
     const d = await r.json();
     if (!d.ok) { alert('Error: ' + (d.error||'Unknown')); return; }
     await _netFetchTemplates();
-    _netRenderTemplates();
+    if (_netView_ === 'console') _netConsolePage('templates');
   } catch(e) { alert('Delete failed: ' + e.message); }
 }
 
-// ── Graph Tree tab ────────────────────────────────────────────────────────
-async function _netRenderTree() {
-  try {
-    const r = await fetch(`${API}/network/tree`, { headers: authHeaders() });
-    const d = await r.json();
-    _netTree = d.ok ? d.tree : [];
-    const list = document.getElementById('net-tree-list');
-    if (!list) return;
-    list.innerHTML = _netTree.length
-      ? _netTree.map(n => _netTreeNode(n)).join('')
-      : '<div style="color:var(--muted);font-size:12px;padding:8px;">Empty — click + Folder</div>';
-  } catch(e) {}
-}
-
-function _netTreeNode(node, depth = 0) {
-  const icon = node.node_type === 'folder' ? '📁' : node.node_type === 'device' ? '🖥' : '📊';
-  const cls  = `net-tree-${node.node_type}`;
-  const click = node.node_type === 'device'
-    ? `_netTreeSelectDevice(${node.device_id})`
-    : node.node_type === 'graph'
-    ? `netShowGraph(${node.graph_id})`
-    : `_netTreeToggle(${node.id})`;
-  let html = `<div class="${cls}" onclick="${click}" id="net-tree-node-${node.id}">
-    ${icon} ${_esc(node.name)}
-    <button onclick="event.stopPropagation();_netDeleteTreeNode(${node.id})" style="margin-left:auto;padding:1px 5px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;">✕</button>
-  </div>`;
-  if (node.children && node.children.length) {
-    html += `<div class="net-tree-children" id="net-tree-children-${node.id}">
-      ${node.children.map(c => _netTreeNode(c, depth + 1)).join('')}
-    </div>`;
-  }
-  return html;
-}
-
-function _netTreeToggle(id) {
-  const el = document.getElementById(`net-tree-children-${id}`);
-  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
-}
-
-async function _netTreeSelectDevice(deviceId) {
-  const dev = _netDevices.find(d => d.id === deviceId) || {};
-  const title = document.getElementById('net-tree-title');
-  if (title) title.textContent = dev.name || `Device #${deviceId}`;
-  try {
-    const r = await fetch(`${API}/network/graphs?device_id=${deviceId}`, { headers: authHeaders() });
-    const d = await r.json();
-    const graphs = d.ok ? d.graphs : [];
-    const range = '1h';
-    const container = document.getElementById('net-tree-graphs');
-    if (!container) return;
-    // Load preview for each graph card
-    const prev = await fetch(`${API}/network/graph-preview?device_id=${deviceId}&range=${range}`, { headers: authHeaders() });
-    const pd = await prev.json();
-    _netPreviews = pd.ok ? pd.previews : [];
-    _netPrevPage = 0;
-    // Render in tree-graphs container
-    const tmpGrid = document.getElementById('net-tree-graphs');
-    tmpGrid.innerHTML = '';
-    for (const key in _netCharts) { try { _netCharts[key].destroy(); } catch(e) {} }
-    _netCharts = {};
-    (_netPreviews.length ? _netPreviews : graphs.map(g => ({ graph: g, labels:[], series:[] }))).forEach((pv, idx) => {
-      const g = pv.graph || pv;
-      const canId = `net-tree-canvas-${idx}`;
-      const card = document.createElement('div');
-      card.className = 'net-graph-card';
-      card.style.cursor = 'pointer';
-      card.onclick = () => netShowGraph(g.id);
-      card.innerHTML = `<div style="font-size:13px;font-weight:700;color:var(--text);">${_esc(g.graph_name||g.graph_type||'')}</div>
-        <canvas id="${canId}" style="height:140px;max-height:140px;width:100%;"></canvas>`;
-      tmpGrid.appendChild(card);
-      if (pv.labels && pv.labels.length) {
-        requestAnimationFrame(() => _netDrawChart(canId, pv.labels, pv.series || []));
-      }
-    });
-    if (!_netPreviews.length && !graphs.length) {
-      tmpGrid.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px;">No graphs for this device yet — run discovery first.</div>';
-    }
-  } catch(e) {}
-}
-
-async function _netAddTreeFolder() {
-  const name = prompt('Folder name:');
-  if (!name) return;
-  try {
-    await fetch(`${API}/network/tree`, {
-      method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, node_type: 'folder' }),
-    });
-    await _netRenderTree();
-  } catch(e) {}
-}
-
-async function _netDeleteTreeNode(id) {
-  if (!confirm('Delete this tree node?')) return;
-  try {
-    await fetch(`${API}/network/tree/${id}/delete`, { method:'POST', headers: authHeaders() });
-    await _netRenderTree();
-  } catch(e) {}
-}
-
-// ── Graph detail modal ────────────────────────────────────────────────────
-async function netShowGraph(graphId) {
-  _netGraphModalId = graphId;
-  document.getElementById('netGraphModalTitle').textContent = 'Loading…';
-  document.getElementById('netGraphModalMeta').textContent = '';
-  document.getElementById('netGraphModalOverlay').style.display = 'flex';
-  await _netReloadGraphModal();
-}
-
-async function _netReloadGraphModal() {
-  const graphId = _netGraphModalId;
-  if (!graphId) return;
-  const range = document.getElementById('netGraphModalRange')?.value || '1h';
-  try {
-    const r = await fetch(`${API}/network/graph-data?graph_id=${graphId}&range=${range}`, { headers: authHeaders() });
-    const d = await r.json();
-    if (!d.ok) { return; }
-    const g   = d.graph || {};
-    const dev = _netDevices.find(x => x.id === g.device_id) || {};
-    document.getElementById('netGraphModalTitle').textContent =
-      g.graph_name || g.graph_type || 'Graph';
-    document.getElementById('netGraphModalMeta').textContent =
-      `${dev.name || ''} ${g.interface_name ? '— ' + g.interface_name : ''}`;
-    if (_netGraphModalChart) { _netGraphModalChart.destroy(); _netGraphModalChart = null; }
-    _netDrawChart('netGraphModalCanvas', d.labels || [], d.series || []);
-    _netGraphModalChart = _netCharts['netGraphModalCanvas'] || null;
-  } catch(e) {}
-}
-
-function closeNetGraphModal(e) {
-  if (e && e.target !== document.getElementById('netGraphModalOverlay')) return;
-  if (_netGraphModalChart) { _netGraphModalChart.destroy(); _netGraphModalChart = null; }
-  document.getElementById('netGraphModalOverlay').style.display = 'none';
-}
-
-// ── Poller status ─────────────────────────────────────────────────────────
-async function _netLoadPollerStatus() {
-  const body   = document.getElementById('net-poller-body');
-  const failed = document.getElementById('net-poller-failed');
-  const slow   = document.getElementById('net-poller-slow');
-  if (!body) return;
-  body.innerHTML = '<div style="color:var(--muted);font-size:13px;">Loading…</div>';
-  try {
-    const r = await fetch(`${API}/network/poller/status`, { headers: authHeaders() });
-    const d = await r.json();
-    const s = d.status || {};
-    const stats = [
-      { label: 'Max Workers', value: s.max_workers ?? '—' },
-      { label: 'Cycles',      value: s.cycles ?? '—' },
-      { label: 'Last Cycle',  value: s.last_cycle_ms != null ? s.last_cycle_ms + ' ms' : '—' },
-      { label: 'Polled',      value: s.devices_polled ?? '—' },
-      { label: 'Failed',      value: s.devices_failed ?? '—' },
-      { label: 'Uptime',      value: s.uptime_sec != null ? _fmtUptime(s.uptime_sec) : '—' },
-    ];
-    body.innerHTML = stats.map(st => `
-      <div class="net-stat-card">
-        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">${st.label}</div>
-        <div style="font-size:20px;font-weight:700;color:var(--text);">${st.value}</div>
-      </div>`).join('');
-    if (failed && s.failed_devices && s.failed_devices.length) {
-      failed.innerHTML = s.failed_devices.map(f =>
-        `<div style="padding:5px 0;border-bottom:1px solid var(--border);">${_esc(f.name||'')} (${_esc(f.ip||'')}) — ${_esc(f.error||'')}</div>`
-      ).join('');
-    } else if (failed) {
-      failed.textContent = s.error ? s.error : 'None';
-    }
-    if (slow && s.slowest_devices && s.slowest_devices.length) {
-      slow.innerHTML = s.slowest_devices.map(f =>
-        `<div>${_esc(f.name||'')} — ${f.ms}ms</div>`).join('');
-    } else if (slow) {
-      slow.textContent = '—';
-    }
-  } catch(e) {
-    body.innerHTML = `<div style="color:var(--muted);font-size:13px;">Error: ${e.message}</div>`;
-  }
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────
-function _esc(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _esc(s) {
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 function _fmtBps(bps) {
   bps = Number(bps) || 0;
   if (bps >= 1e9) return (bps/1e9).toFixed(2)+' Gbps';
@@ -5296,10 +5453,10 @@ function _fmtUptime(sec) {
   return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-// (loadNetwork() is called directly from switchSection)
-
-// (MikroTik module removed — all mt* functions deleted; vendor=mikrotik handled by Network Graphs module)
-function mtTab_REMOVED_STUB() { /* stub kept to avoid ReferenceError if any stale onclick remains */ }
+// Legacy / compatibility stubs
+function mtTab_REMOVED_STUB() {}
+function netTab() {}
+function netShowGraph(id) { netZoomGraph(id); }
 </script>
 
 
@@ -5965,137 +6122,76 @@ function mtTab_REMOVED_STUB() { /* stub kept to avoid ReferenceError if any stal
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
     <!-- Section: Network Graphs (Cacti-style multi-vendor monitor)         -->
     <!-- ═══════════════════════════════════════════════════════════════════ -->
     <div class="main-section" id="section-network" style="flex-direction:column;overflow:hidden;">
 
-      <!-- ── Top bar ── -->
-      <div style="display:flex;align-items:center;gap:12px;padding:16px 24px;border-bottom:1px solid var(--border);flex-shrink:0;">
-        <span style="font-size:20px;">🌐</span>
-        <div>
-          <div style="font-size:16px;font-weight:700;color:var(--text);">Network Monitor</div>
-          <div style="font-size:12px;color:var(--muted);">Cacti-style multi-vendor SNMP graphs</div>
-        </div>
-        <div style="margin-left:auto;display:flex;gap:8px;">
-          <button onclick="_netRefresh()" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">⟳ Refresh</button>
-          <button onclick="netAddDevice()" style="padding:7px 16px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Device</button>
+      <!-- Top nav bar: Graphs | Console -->
+      <div class="net-topnav">
+        <button class="net-topnav-btn active" id="net-nav-graphs" onclick="_netView('graphs')">📊 Graphs</button>
+        <button class="net-topnav-btn" id="net-nav-console" onclick="_netView('console')">🖥 Console</button>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <span id="net-status-pill" style="font-size:11px;color:var(--muted);"></span>
+          <button onclick="netAddDevice()" style="padding:5px 14px;background:#22c55e;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;">+ Device</button>
         </div>
       </div>
 
-      <!-- ── Tab bar ── -->
-      <div style="display:flex;gap:2px;padding:10px 24px 0;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);">
-        <button class="net-tab active" id="net-tab-preview"   onclick="netTab('preview')">📊 Graph Preview</button>
-        <button class="net-tab"        id="net-tab-tree"      onclick="netTab('tree')">🌲 Graph Tree</button>
-        <button class="net-tab"        id="net-tab-devices"   onclick="netTab('devices')">🖥 Devices</button>
-        <button class="net-tab"        id="net-tab-templates" onclick="netTab('templates')">📐 Templates</button>
-        <button class="net-tab"        id="net-tab-poller"    onclick="netTab('poller')">⚙ Poller</button>
-      </div>
-
-      <!-- ── Tab panels ── -->
-      <div style="flex:1;overflow-y:auto;position:relative;">
-
-        <!-- ── GRAPH PREVIEW panel ── -->
-        <div id="net-panel-preview" class="net-panel" style="padding:20px 24px;">
-          <!-- Filter bar -->
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
-            <select id="net-prev-dev" onchange="_netLoadPreview()" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;min-width:200px;">
-              <option value="">— All Devices —</option>
-            </select>
-            <select id="net-prev-range" onchange="_netLoadPreview()" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
-              <option value="1h" selected>1 hour</option>
-              <option value="6h">6 hours</option>
-              <option value="24h">24 hours</option>
-              <option value="7d">7 days</option>
-              <option value="30d">30 days</option>
-            </select>
-            <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;">
-              <input type="checkbox" id="net-prev-thumb" onchange="_netRenderPreviewCards()" style="cursor:pointer;">
-              Thumbnails only
-            </label>
-            <span id="net-prev-count" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
+      <!-- GRAPHS VIEW -->
+      <div id="net-graphs-view" style="display:flex;flex:1;overflow:hidden;">
+        <!-- Left tree panel -->
+        <div class="net-left-tree">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Graph Tree</div>
+            <button onclick="_netAddTreeFolder()" style="padding:2px 7px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:10px;cursor:pointer;">+ Folder</button>
           </div>
-          <!-- Graph card grid -->
-          <div id="net-prev-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;"></div>
+          <div class="net-tree-node active" id="net-tree-all" onclick="_netTreeAll()">🌐 All Devices</div>
+          <div id="net-tree-list" style="margin-top:3px;"></div>
+        </div>
+        <!-- Right graph area -->
+        <div style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+          <!-- Time range toolbar -->
+          <div class="net-tr-bar">
+            <span class="net-tr-label">Timespan:</span>
+            <button class="net-tr-btn" onclick="_netSetRange('30m')">30m</button>
+            <button class="net-tr-btn active" onclick="_netSetRange('1h')">1h</button>
+            <button class="net-tr-btn" onclick="_netSetRange('2h')">2h</button>
+            <button class="net-tr-btn" onclick="_netSetRange('4h')">4h</button>
+            <button class="net-tr-btn" onclick="_netSetRange('6h')">6h</button>
+            <button class="net-tr-btn" onclick="_netSetRange('12h')">12h</button>
+            <button class="net-tr-btn" onclick="_netSetRange('1d')">1d</button>
+            <button class="net-tr-btn" onclick="_netSetRange('2d')">2d</button>
+            <button class="net-tr-btn" onclick="_netSetRange('1w')">1w</button>
+            <button class="net-tr-btn" onclick="_netSetRange('2w')">2w</button>
+            <button class="net-tr-btn" onclick="_netSetRange('1m')">1m</button>
+            <button class="net-tr-btn" onclick="_netSetRange('1y')">1y</button>
+            <span id="net-grid-info" style="margin-left:auto;font-size:11px;color:var(--muted);"></span>
+          </div>
+          <!-- Graph grid -->
+          <div id="net-grid" style="flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:12px;padding:14px;align-content:start;">
+            <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);">Loading graphs…</div>
+          </div>
           <!-- Pager -->
-          <div id="net-prev-pager" style="display:flex;justify-content:center;gap:8px;margin-top:16px;flex-wrap:wrap;"></div>
+          <div id="net-grid-pager" style="display:flex;justify-content:center;gap:6px;padding:8px;flex-shrink:0;flex-wrap:wrap;border-top:1px solid var(--border);"></div>
         </div>
+      </div>
 
-        <!-- ── GRAPH TREE panel ── -->
-        <div id="net-panel-tree" class="net-panel" style="display:none;height:100%;flex-direction:row;gap:0;padding:0;">
-          <!-- Left: tree -->
-          <div style="width:280px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:16px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-              <div style="font-size:13px;font-weight:700;color:var(--text);">Graph Tree</div>
-              <button onclick="_netAddTreeFolder()" style="padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;">+ Folder</button>
-            </div>
-            <div id="net-tree-list" style="font-size:13px;"></div>
-          </div>
-          <!-- Right: graphs for selected node -->
-          <div style="flex:1;overflow-y:auto;padding:20px 24px;">
-            <div id="net-tree-title" style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:16px;">Select a node in the tree</div>
-            <div id="net-tree-graphs" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;"></div>
-          </div>
+      <!-- CONSOLE VIEW -->
+      <div id="net-console-view" style="display:none;flex:1;overflow:hidden;flex-direction:row;">
+        <!-- Left nav -->
+        <div class="net-console-nav">
+          <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Management</div>
+          <div class="net-console-nav-item active" id="net-cnav-devices"  onclick="_netConsolePage('devices')">🖥 Devices</div>
+          <div class="net-console-nav-item" id="net-cnav-sources"         onclick="_netConsolePage('sources')">📡 Data Sources</div>
+          <div class="net-console-nav-item" id="net-cnav-graphmgmt"       onclick="_netConsolePage('graphmgmt')">📈 Graph Management</div>
+          <div class="net-console-nav-item" id="net-cnav-templates"       onclick="_netConsolePage('templates')">📐 Graph Templates</div>
+          <div class="net-console-nav-item" id="net-cnav-hosttpl"         onclick="_netConsolePage('hosttpl')">🏷 Host Templates</div>
+          <div class="net-console-nav-item" id="net-cnav-poller"          onclick="_netConsolePage('poller')">⚙ Poller</div>
         </div>
+        <!-- Console content -->
+        <div id="net-console-content" style="flex:1;overflow-y:auto;padding:20px 24px;"></div>
+      </div>
 
-        <!-- ── DEVICES panel ── -->
-        <div id="net-panel-devices" class="net-panel" style="display:none;padding:20px 24px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-            <div style="font-size:13px;font-weight:700;color:var(--text);">Registered Devices
-              <span id="net-dev-count-badge" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px;"></span>
-            </div>
-            <button onclick="netAddDevice()" style="padding:7px 16px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Device</button>
-          </div>
-          <!-- Device table -->
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
-            <div style="overflow-x:auto;">
-              <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;">
-                <colgroup>
-                  <col style="width:4%"><col style="width:18%"><col style="width:13%">
-                  <col style="width:11%"><col style="width:10%"><col style="width:9%">
-                  <col style="width:9%"><col style="width:13%"><col style="width:13%">
-                </colgroup>
-                <thead><tr style="background:var(--bg3);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;">
-                  <th style="padding:10px 6px;text-align:center;">●</th>
-                  <th style="padding:10px 12px;text-align:left;">Name / IP</th>
-                  <th style="padding:10px 12px;text-align:left;">IP</th>
-                  <th style="padding:10px 12px;text-align:left;">Vendor</th>
-                  <th style="padding:10px 12px;text-align:center;">Ifaces</th>
-                  <th style="padding:10px 12px;text-align:center;">Graphs</th>
-                  <th style="padding:10px 12px;text-align:center;">Poll ms</th>
-                  <th style="padding:10px 12px;text-align:left;">Last Seen</th>
-                  <th style="padding:10px 12px;text-align:center;">Actions</th>
-                </tr></thead>
-                <tbody id="net-dev-tbody"><tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted);">Loading…</td></tr></tbody>
-              </table>
-            </div>
-            <div id="net-dev-pager" style="display:flex;justify-content:center;gap:6px;padding:10px;flex-wrap:wrap;"></div>
-          </div>
-        </div>
-
-        <!-- ── TEMPLATES panel ── -->
-        <div id="net-panel-templates" class="net-panel" style="display:none;padding:20px 24px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-            <div style="font-size:13px;font-weight:700;color:var(--text);">Graph Templates</div>
-            <button onclick="_netShowAddTemplate()" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Custom Template</button>
-          </div>
-          <div id="net-tpl-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;"></div>
-        </div>
-
-        <!-- ── POLLER panel ── -->
-        <div id="net-panel-poller" class="net-panel" style="display:none;padding:20px 24px;">
-          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">Poller Status</div>
-          <div id="net-poller-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;"></div>
-          <div style="margin-top:20px;">
-            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Failed Devices</div>
-            <div id="net-poller-failed" style="font-size:12px;color:var(--muted);">—</div>
-          </div>
-          <div style="margin-top:16px;">
-            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Slowest Devices</div>
-            <div id="net-poller-slow" style="font-size:12px;color:var(--muted);">—</div>
-          </div>
-        </div>
-
-      </div><!-- end scrollable -->
     </div><!-- end section-network -->
 
     <!-- ── Network: Add/Edit Device Modal ── -->
@@ -6214,6 +6310,7 @@ function mtTab_REMOVED_STUB() { /* stub kept to avoid ReferenceError if any stal
           <button onclick="netSaveDevice()" style="padding:8px 18px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;" id="ndf-save-btn">Save</button>
         </div>
         <div id="ndf-test-result" style="padding:0 20px 12px;font-size:12px;color:var(--muted);display:none;"></div>
+        <div id="ndf-save-error" style="display:none;padding:0 20px 14px;font-size:12px;color:#f87171;background:rgba(239,68,68,.08);border-top:1px solid rgba(239,68,68,.2);border-radius:0 0 14px 14px;"></div>
       </div>
     </div>
 
@@ -6244,23 +6341,33 @@ function mtTab_REMOVED_STUB() { /* stub kept to avoid ReferenceError if any stal
 
     <!-- ── Network: Graph Detail Modal ── -->
     <div class="modal-overlay" id="netGraphModalOverlay" onclick="closeNetGraphModal(event)" style="display:none;z-index:720;">
-      <div class="modal" onclick="event.stopPropagation()" style="width:780px;max-height:85vh;overflow-y:auto;">
+      <div class="modal" onclick="event.stopPropagation()" style="width:820px;max-height:90vh;overflow-y:auto;">
         <div class="modal-header">
-          <div class="modal-title" id="netGraphModalTitle">Graph Detail</div>
+          <div>
+            <div class="modal-title" id="netGraphModalTitle">Graph Detail</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;" id="netGraphModalMeta"></div>
+          </div>
           <button class="modal-close" onclick="closeNetGraphModal()">✕</button>
         </div>
-        <div style="padding:20px;">
-          <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
-            <select id="netGraphModalRange" onchange="_netReloadGraphModal()" style="padding:7px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px;">
-              <option value="1h" selected>1 hour</option>
-              <option value="6h">6 hours</option>
-              <option value="24h">24 hours</option>
-              <option value="7d">7 days</option>
-              <option value="30d">30 days</option>
-            </select>
-            <span id="netGraphModalMeta" style="font-size:12px;color:var(--muted);"></span>
+        <div style="padding:16px 20px 4px;">
+          <div class="net-modal-tr-bar">
+            <button class="net-modal-tr-btn" data-range="30m" onclick="_netReloadZoomModal('30m')">30m</button>
+            <button class="net-modal-tr-btn active" data-range="1h" onclick="_netReloadZoomModal('1h')">1h</button>
+            <button class="net-modal-tr-btn" data-range="2h" onclick="_netReloadZoomModal('2h')">2h</button>
+            <button class="net-modal-tr-btn" data-range="4h" onclick="_netReloadZoomModal('4h')">4h</button>
+            <button class="net-modal-tr-btn" data-range="6h" onclick="_netReloadZoomModal('6h')">6h</button>
+            <button class="net-modal-tr-btn" data-range="12h" onclick="_netReloadZoomModal('12h')">12h</button>
+            <button class="net-modal-tr-btn" data-range="1d" onclick="_netReloadZoomModal('1d')">1d</button>
+            <button class="net-modal-tr-btn" data-range="2d" onclick="_netReloadZoomModal('2d')">2d</button>
+            <button class="net-modal-tr-btn" data-range="1w" onclick="_netReloadZoomModal('1w')">1w</button>
+            <button class="net-modal-tr-btn" data-range="2w" onclick="_netReloadZoomModal('2w')">2w</button>
+            <button class="net-modal-tr-btn" data-range="1m" onclick="_netReloadZoomModal('1m')">1m</button>
+            <button class="net-modal-tr-btn" data-range="1y" onclick="_netReloadZoomModal('1y')">1y</button>
           </div>
-          <canvas id="netGraphModalCanvas" style="height:300px;max-height:300px;width:100%;"></canvas>
+        </div>
+        <div style="padding:0 20px 20px;">
+          <canvas id="netGraphModalCanvas" style="height:320px;max-height:320px;width:100%;"></canvas>
+          <div id="netGraphModalStats"></div>
         </div>
       </div>
     </div>

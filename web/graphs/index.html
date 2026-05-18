@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PyroGraphs — Network Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:     #0f1117;
+      --bg2:    #161922;
+      --bg3:    #1e2330;
+      --border: #2a2f3e;
+      --text:   #e2e8f0;
+      --muted:  #64748b;
+      --accent: #6366f1;
+      --accent2:#818cf8;
+      --green:  #22c55e;
+      --red:    #ef4444;
+      --orange: #f97316;
+      --yellow: #eab308;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; }
+
+    /* ── Header ── */
+    #pg-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 20px; height: 52px; flex-shrink: 0;
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+    }
+    #pg-logo { font-size: 20px; font-weight: 800; color: var(--orange); letter-spacing: -0.5px; }
+    #pg-subtitle { font-size: 11px; color: var(--muted); font-weight: 500; }
+    #pg-header-spacer { flex: 1; }
+    #pg-status-pill { font-size: 11px; color: var(--muted); }
+    .pg-header-btn {
+      padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--text); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: background .15s;
+    }
+    .pg-header-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* ── Top tabs ── */
+    #pg-tabs {
+      display: flex; align-items: center; gap: 2px;
+      padding: 0 16px; height: 42px; flex-shrink: 0;
+      background: var(--bg2); border-bottom: 2px solid var(--border);
+    }
+    .pg-tab {
+      padding: 8px 18px; border-radius: 8px 8px 0 0; border: none;
+      background: none; color: var(--muted); font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: color .15s; position: relative;
+    }
+    .pg-tab:hover { color: var(--text); }
+    .pg-tab.active { color: var(--accent); }
+    .pg-tab.active::after {
+      content: ''; position: absolute; bottom: -2px; left: 0; right: 0;
+      height: 2px; background: var(--accent); border-radius: 2px 2px 0 0;
+    }
+
+    /* ── Layout ── */
+    #pg-body { display: flex; flex: 1; overflow: hidden; height: calc(100vh - 94px); }
+
+    /* ── Left tree ── */
+    #pg-tree {
+      width: 220px; flex-shrink: 0; border-right: 1px solid var(--border);
+      overflow-y: auto; padding: 12px; background: var(--bg2);
+      display: none; /* shown only on Graphs tab */
+    }
+    .pg-tree-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .pg-tree-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .pg-tree-add { padding: 2px 8px; background: var(--accent); color: #fff; border: none; border-radius: 5px; font-size: 10px; cursor: pointer; }
+    .pg-tree-node {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 8px; border-radius: 6px; cursor: pointer;
+      font-size: 12px; color: var(--text); user-select: none;
+    }
+    .pg-tree-node:hover { background: var(--bg3); }
+    .pg-tree-node.active { background: rgba(99,102,241,.15); color: var(--accent); font-weight: 600; }
+    .pg-tree-children { margin-left: 14px; border-left: 1px dashed var(--border); padding-left: 6px; }
+    .pg-tree-device { font-size: 11px; color: var(--muted); padding: 3px 8px; border-radius: 5px; cursor: pointer; }
+    .pg-tree-device:hover { background: var(--bg3); color: var(--text); }
+    .pg-tree-device.active { color: var(--accent); }
+
+    /* ── Right content ── */
+    #pg-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ── Tab views ── */
+    .pg-view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+    .pg-view.active { display: flex; }
+
+    /* ── Filter toolbar ── */
+    #pg-filter-bar {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .pg-filter-select, .pg-filter-input {
+      padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--text); font-size: 12px; outline: none;
+    }
+    .pg-filter-select:focus, .pg-filter-input:focus { border-color: var(--accent); }
+    .pg-filter-input { width: 160px; }
+    .pg-filter-label { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+    .pg-tr-btn {
+      padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--muted); font-size: 12px; cursor: pointer;
+    }
+    .pg-tr-btn:hover { color: var(--text); }
+    .pg-tr-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+    .pg-refresh-btn {
+      padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--text); font-size: 12px; cursor: pointer;
+      margin-left: auto;
+    }
+    .pg-refresh-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* ── Graph grid ── */
+    #pg-grid {
+      flex: 1; overflow-y: auto; display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+      gap: 12px; padding: 14px; align-content: start;
+    }
+    .pg-card {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px; display: flex; flex-direction: column; gap: 8px;
+      cursor: pointer; transition: border-color .15s;
+    }
+    .pg-card:hover { border-color: var(--accent); }
+    .pg-card-title {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      font-size: 12px; font-weight: 700; color: var(--text);
+    }
+    .pg-badge {
+      font-size: 10px; padding: 1px 7px; background: var(--bg3);
+      border: 1px solid var(--border); border-radius: 10px; color: var(--muted);
+      white-space: nowrap; font-weight: 400; flex-shrink: 0;
+    }
+    .pg-canvas-wrap { position: relative; height: 140px; }
+    .pg-canvas-wrap canvas { width: 100% !important; height: 100% !important; }
+    .pg-stats {
+      width: 100%; border-collapse: collapse; font-size: 10px;
+    }
+    .pg-stats th {
+      color: var(--muted); font-weight: 600; text-transform: uppercase;
+      letter-spacing: .4px; padding: 2px 5px; text-align: right;
+    }
+    .pg-stats th:nth-child(1), .pg-stats th:nth-child(2) { text-align: left; }
+    .pg-stats td { padding: 2px 5px; text-align: right; color: var(--text); }
+    .pg-stats td:nth-child(2) { text-align: left; }
+    .pg-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+    .pg-stat-val { font-weight: 600; }
+    .pg-card-footer { font-size: 10px; color: var(--muted); }
+
+    /* ── Pager ── */
+    #pg-pager {
+      display: flex; justify-content: center; gap: 6px; padding: 8px;
+      flex-shrink: 0; flex-wrap: wrap; border-top: 1px solid var(--border);
+    }
+    .pg-page-btn {
+      padding: 3px 10px; border-radius: 5px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--muted); font-size: 11px; cursor: pointer;
+    }
+    .pg-page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* ── Console layout ── */
+    #pg-console-view { flex-direction: row !important; }
+    .pg-console-nav {
+      width: 190px; flex-shrink: 0; border-right: 1px solid var(--border);
+      padding: 16px 12px; background: var(--bg2); overflow-y: auto;
+    }
+    .pg-console-nav-title { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+    .pg-cnav-item {
+      display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+      border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--text);
+      margin-bottom: 2px;
+    }
+    .pg-cnav-item:hover { background: var(--bg3); }
+    .pg-cnav-item.active { background: rgba(99,102,241,.15); color: var(--accent); font-weight: 700; }
+    #pg-console-content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+    /* ── Generic tables ── */
+    .pg-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .pg-table th { background: var(--bg3); color: var(--muted); font-weight: 600; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+    .pg-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+    .pg-table tr:last-child td { border-bottom: none; }
+    .pg-table tr:hover td { background: var(--bg3); }
+    .pg-page-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+    .pg-action-btn { padding: 4px 10px; border-radius: 6px; border: none; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .pg-btn-green { background: var(--green); color: #fff; }
+    .pg-btn-red { background: var(--red); color: #fff; }
+    .pg-btn-blue { background: var(--accent); color: #fff; }
+    .pg-btn-gray { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+
+    /* ── Status dots ── */
+    .pg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+    .pg-dot-green { background: var(--green); }
+    .pg-dot-red { background: var(--red); }
+    .pg-dot-gray { background: var(--muted); }
+
+    /* ── Template cards ── */
+    .pg-tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap: 12px; }
+    .pg-tpl-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .pg-tpl-name { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+    .pg-tpl-vendor { font-size: 11px; color: var(--accent); margin-bottom: 6px; }
+    .pg-tpl-meta { font-size: 11px; color: var(--muted); }
+
+    /* ── Poller stat cards ── */
+    .pg-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; margin-bottom: 20px; }
+    .pg-stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+    .pg-stat-num { font-size: 28px; font-weight: 800; color: var(--accent); }
+    .pg-stat-lbl { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* ── Zoom modal ── */
+    #pg-zoom-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.75); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    #pg-zoom-overlay.open { display: flex; }
+    #pg-zoom-modal {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
+      width: 860px; max-width: 95vw; max-height: 90vh; overflow-y: auto;
+      padding: 20px; display: flex; flex-direction: column; gap: 14px;
+    }
+    #pg-zoom-header { display: flex; align-items: center; gap: 10px; }
+    #pg-zoom-title { font-size: 15px; font-weight: 700; flex: 1; }
+    #pg-zoom-close { padding: 6px 14px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 8px; cursor: pointer; font-size: 13px; }
+    #pg-zoom-tr-bar { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .pg-zoom-tr-btn {
+      padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--muted); font-size: 12px; cursor: pointer;
+    }
+    .pg-zoom-tr-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+    #pg-zoom-canvas-wrap { position: relative; height: 300px; }
+    #pg-zoom-canvas-wrap canvas { width: 100% !important; height: 100% !important; }
+    #pg-zoom-stats { margin-top: 4px; }
+
+    /* ── Device / Discover modal ── */
+    .pg-modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.7); z-index: 900;
+      align-items: center; justify-content: center;
+    }
+    .pg-modal-overlay.open { display: flex; }
+    .pg-modal {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
+      width: 480px; max-width: 95vw; max-height: 88vh; overflow-y: auto;
+      padding: 24px; display: flex; flex-direction: column; gap: 14px;
+    }
+    .pg-modal-title { font-size: 15px; font-weight: 700; }
+    .pg-form-row { display: flex; flex-direction: column; gap: 4px; }
+    .pg-form-label { font-size: 11px; color: var(--muted); font-weight: 600; }
+    .pg-form-input, .pg-form-select {
+      padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--text); font-size: 13px; outline: none; width: 100%;
+    }
+    .pg-form-input:focus, .pg-form-select:focus { border-color: var(--accent); }
+    .pg-form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .pg-modal-error { background: rgba(239,68,68,.1); border: 1px solid var(--red); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: var(--red); display: none; }
+    .pg-modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+    .pg-modal-btn { padding: 8px 20px; border-radius: 8px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .pg-modal-btn-primary { background: var(--accent); color: #fff; }
+    .pg-modal-btn-cancel { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+    .pg-discover-iface { padding: 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+    .pg-discover-iface:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     HEADER
+════════════════════════════════════════ -->
+<div id="pg-header">
+  <div id="pg-logo">🔥 PyroGraphs</div>
+  <div id="pg-subtitle">Cacti-style Network Monitoring</div>
+  <div id="pg-header-spacer"></div>
+  <span id="pg-status-pill"></span>
+  <button class="pg-header-btn" onclick="pgAddDevice()">+ Device</button>
+  <button class="pg-header-btn" onclick="window.open('http://172.20.101.160/','_blank')" style="border-color:var(--orange);color:var(--orange);">⬅ PyroNMS</button>
+</div>
+
+<!-- ═══════════════════════════════════════
+     TOP TABS
+════════════════════════════════════════ -->
+<div id="pg-tabs">
+  <button class="pg-tab active" id="pg-tab-graphs"    onclick="pgTab('graphs')">📊 Graphs</button>
+  <button class="pg-tab"        id="pg-tab-console"   onclick="pgTab('console')">🖥 Console</button>
+  <button class="pg-tab"        id="pg-tab-devices"   onclick="pgTab('devices')">📡 Devices</button>
+  <button class="pg-tab"        id="pg-tab-templates" onclick="pgTab('templates')">📐 Templates</button>
+  <button class="pg-tab"        id="pg-tab-poller"    onclick="pgTab('poller')">⚙ Poller</button>
+  <button class="pg-tab"        id="pg-tab-logs"      onclick="pgTab('logs')">📋 Logs</button>
+</div>
+
+<!-- ═══════════════════════════════════════
+     BODY
+════════════════════════════════════════ -->
+<div id="pg-body">
+
+  <!-- Left tree (visible only on Graphs tab) -->
+  <div id="pg-tree">
+    <div class="pg-tree-header">
+      <div class="pg-tree-label">Graph Tree</div>
+      <button class="pg-tree-add" onclick="pgAddDevice()">+ Device</button>
+    </div>
+    <div class="pg-tree-node active" id="pg-tree-all" onclick="pgTreeAll()">🌐 All Devices</div>
+    <div id="pg-tree-list"></div>
+  </div>
+
+  <!-- Right content -->
+  <div id="pg-content">
+
+    <!-- ── GRAPHS VIEW ── -->
+    <div class="pg-view active" id="pg-graphs-view" style="flex-direction:column;">
+
+      <!-- Filter/toolbar bar -->
+      <div id="pg-filter-bar">
+        <span class="pg-filter-label">Device:</span>
+        <select class="pg-filter-select" id="pg-dev-filter" onchange="pgApplyFilters()">
+          <option value="">All Devices</option>
+        </select>
+        <span class="pg-filter-label">Template:</span>
+        <select class="pg-filter-select" id="pg-tpl-filter" onchange="pgApplyFilters()">
+          <option value="">All Types</option>
+          <option value="traffic">Traffic</option>
+          <option value="cpu">CPU</option>
+          <option value="memory">Memory</option>
+          <option value="disk">Disk</option>
+          <option value="latency">Latency</option>
+          <option value="uptime">Uptime</option>
+          <option value="temperature">Temperature</option>
+          <option value="wireless">Wireless</option>
+        </select>
+        <span class="pg-filter-label">Search:</span>
+        <input class="pg-filter-input" id="pg-search" placeholder="device or interface…" oninput="pgApplyFilters()">
+        <span class="pg-filter-label">Per page:</span>
+        <select class="pg-filter-select" id="pg-per-page" onchange="pgApplyFilters()">
+          <option value="12">12</option>
+          <option value="24">24</option>
+          <option value="48">48</option>
+          <option value="96">96</option>
+        </select>
+        <span class="pg-filter-label">Cols:</span>
+        <select class="pg-filter-select" id="pg-cols" style="width:70px;" onchange="pgApplyCols()">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+        </select>
+        <span class="pg-filter-label">Timespan:</span>
+        <button class="pg-tr-btn" onclick="pgSetRange('30m')">30m</button>
+        <button class="pg-tr-btn active" id="pg-tr-1h" onclick="pgSetRange('1h')">1h</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('2h')">2h</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('4h')">4h</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('6h')">6h</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('12h')">12h</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('1d')">1d</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('2d')">2d</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('1w')">1w</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('2w')">2w</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('1m')">1m</button>
+        <button class="pg-tr-btn" onclick="pgSetRange('1y')">1y</button>
+        <button class="pg-refresh-btn" onclick="pgLoadGrid()">↻ Refresh</button>
+        <span id="pg-grid-info" style="font-size:11px;color:var(--muted);"></span>
+      </div>
+
+      <!-- Graph grid -->
+      <div id="pg-grid">
+        <div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">Loading graphs…</div>
+      </div>
+      <!-- Pager -->
+      <div id="pg-pager"></div>
+    </div>
+
+    <!-- ── CONSOLE VIEW ── -->
+    <div class="pg-view" id="pg-console-view">
+      <div class="pg-console-nav">
+        <div class="pg-console-nav-title">Management</div>
+        <div class="pg-cnav-item active" id="pg-cnav-devices"   onclick="pgConsole('devices')">🖥 Devices</div>
+        <div class="pg-cnav-item"        id="pg-cnav-sources"   onclick="pgConsole('sources')">📡 Data Sources</div>
+        <div class="pg-cnav-item"        id="pg-cnav-graphmgmt" onclick="pgConsole('graphmgmt')">📈 Graph Management</div>
+        <div class="pg-cnav-item"        id="pg-cnav-templates" onclick="pgConsole('templates2')">📐 Graph Templates</div>
+        <div class="pg-cnav-item"        id="pg-cnav-hosttpl"   onclick="pgConsole('hosttpl')">🏷 Host Templates</div>
+        <div class="pg-cnav-item"        id="pg-cnav-poller2"   onclick="pgConsole('poller2')">⚙ Poller</div>
+      </div>
+      <div id="pg-console-content" style="flex:1;overflow-y:auto;padding:20px 24px;"></div>
+    </div>
+
+    <!-- ── DEVICES TAB ── -->
+    <div class="pg-view" id="pg-devices-view" style="flex-direction:column;overflow:hidden;">
+      <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="pg-devices-content"></div>
+    </div>
+
+    <!-- ── TEMPLATES TAB ── -->
+    <div class="pg-view" id="pg-templates-view" style="flex-direction:column;overflow:hidden;">
+      <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="pg-templates-content"></div>
+    </div>
+
+    <!-- ── POLLER TAB ── -->
+    <div class="pg-view" id="pg-poller-view" style="flex-direction:column;overflow:hidden;">
+      <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="pg-poller-content"></div>
+    </div>
+
+    <!-- ── LOGS TAB ── -->
+    <div class="pg-view" id="pg-logs-view" style="flex-direction:column;overflow:hidden;">
+      <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="pg-logs-content">
+        <div class="pg-page-title">📋 Logs</div>
+        <p style="color:var(--muted);font-size:12px;">Poller logs will appear here. Feature coming soon.</p>
+      </div>
+    </div>
+
+  </div><!-- end #pg-content -->
+</div><!-- end #pg-body -->
+
+<!-- ═══════════════════════════════════════
+     ZOOM MODAL
+════════════════════════════════════════ -->
+<div id="pg-zoom-overlay" onclick="if(event.target===this)pgZoomClose()">
+  <div id="pg-zoom-modal">
+    <div id="pg-zoom-header">
+      <div id="pg-zoom-title">Graph</div>
+      <button id="pg-zoom-close" onclick="pgZoomClose()">✕ Close</button>
+    </div>
+    <div id="pg-zoom-tr-bar">
+      <span style="font-size:11px;color:var(--muted);font-weight:600;margin-right:4px;">Timespan:</span>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('30m')">30m</button>
+      <button class="pg-zoom-tr-btn active" id="pgz-tr-1h" onclick="pgZoomRange('1h')">1h</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('2h')">2h</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('4h')">4h</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('6h')">6h</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('12h')">12h</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('1d')">1d</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('2d')">2d</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('1w')">1w</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('2w')">2w</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('1m')">1m</button>
+      <button class="pg-zoom-tr-btn" onclick="pgZoomRange('1y')">1y</button>
+    </div>
+    <div id="pg-zoom-canvas-wrap"><canvas id="pg-zoom-canvas"></canvas></div>
+    <div id="pg-zoom-stats"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ADD/EDIT DEVICE MODAL
+════════════════════════════════════════ -->
+<div class="pg-modal-overlay" id="pg-dev-modal-overlay" onclick="if(event.target===this)pgCloseDevModal()">
+  <div class="pg-modal">
+    <div class="pg-modal-title" id="pg-dev-modal-title">Add Device</div>
+    <div class="pg-modal-error" id="pg-dev-modal-err"></div>
+    <div class="pg-form-row">
+      <label class="pg-form-label">Hostname / Label</label>
+      <input class="pg-form-input" id="pg-dev-name" placeholder="Router-01">
+    </div>
+    <div class="pg-form-row-2">
+      <div class="pg-form-row">
+        <label class="pg-form-label">IP Address</label>
+        <input class="pg-form-input" id="pg-dev-ip" placeholder="192.168.1.1">
+      </div>
+      <div class="pg-form-row">
+        <label class="pg-form-label">SNMP Community</label>
+        <input class="pg-form-input" id="pg-dev-community" placeholder="public">
+      </div>
+    </div>
+    <div class="pg-form-row-2">
+      <div class="pg-form-row">
+        <label class="pg-form-label">SNMP Version</label>
+        <select class="pg-form-select" id="pg-dev-snmp-ver">
+          <option value="2c">v2c</option>
+          <option value="3">v3</option>
+          <option value="1">v1</option>
+        </select>
+      </div>
+      <div class="pg-form-row">
+        <label class="pg-form-label">Vendor</label>
+        <select class="pg-form-select" id="pg-dev-vendor">
+          <option value="mikrotik">MikroTik</option>
+          <option value="cisco">Cisco</option>
+          <option value="juniper">Juniper</option>
+          <option value="huawei">Huawei</option>
+          <option value="linux">Linux</option>
+          <option value="windows">Windows</option>
+          <option value="generic">Generic</option>
+        </select>
+      </div>
+    </div>
+    <div class="pg-form-row">
+      <label class="pg-form-label">Graph Templates (comma-separated OIDs or leave blank for auto)</label>
+      <input class="pg-form-input" id="pg-dev-templates" placeholder="auto-detected from vendor">
+    </div>
+    <input type="hidden" id="pg-dev-edit-id">
+    <div class="pg-modal-footer">
+      <button class="pg-modal-btn pg-modal-btn-cancel" onclick="pgCloseDevModal()">Cancel</button>
+      <button class="pg-modal-btn pg-modal-btn-primary" onclick="pgSaveDevice()">Save Device</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     DISCOVER MODAL
+════════════════════════════════════════ -->
+<div class="pg-modal-overlay" id="pg-discover-overlay" onclick="if(event.target===this)pgCloseDiscover()">
+  <div class="pg-modal" style="width:560px;">
+    <div class="pg-modal-title">🔍 Discover Interfaces</div>
+    <div id="pg-discover-body" style="font-size:12px;color:var(--muted);">Scanning…</div>
+    <div class="pg-modal-footer">
+      <button class="pg-modal-btn pg-modal-btn-cancel" onclick="pgCloseDiscover()">Cancel</button>
+      <button class="pg-modal-btn pg-modal-btn-primary" id="pg-discover-apply-btn" style="display:none;" onclick="pgApplyDiscover()">Apply Selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     JAVASCRIPT
+════════════════════════════════════════ -->
+<script>
+'use strict';
+
+// ── Config ──────────────────────────────
+const API = 'http://172.20.101.160:8088';
+
+const PG_TREE_GROUPS = [
+  { label:'Uplink',           icon:'🔗', vendor:null,       tags:['uplink'] },
+  { label:'CIR Customers',    icon:'👥', vendor:null,       tags:['cir'] },
+  { label:'MikroTik Routers', icon:'🟥', vendor:'mikrotik', tags:[] },
+  { label:'Cisco Routers',    icon:'🔵', vendor:'cisco',    tags:[] },
+  { label:'Juniper Routers',  icon:'🟢', vendor:'juniper',  tags:[] },
+  { label:'Huawei Devices',   icon:'🔴', vendor:'huawei',   tags:[] },
+  { label:'Switches',         icon:'🔀', vendor:null,       tags:['switch'] },
+  { label:'Servers',          icon:'🖥', vendor:null,       tags:['server','linux','windows'] },
+];
+
+const PG_COLORS = ['#6366f1','#22c55e','#f97316','#eab308','#06b6d4','#ec4899','#8b5cf6','#14b8a6'];
+
+// ── State ────────────────────────────────
+let pgRange       = '1h';
+let pgActiveTab   = 'graphs';
+let pgConsolePage = 'devices';
+let pgDevFilter   = '';
+let pgTplFilter   = '';
+let pgSearch      = '';
+let pgPerPage     = 12;
+let pgPage        = 0;
+let pgDevices     = [];
+let pgTemplates   = [];
+let pgPreviews    = [];
+let pgCharts      = {};
+let pgZoomChart   = null;
+let pgZoomGraphId = null;
+let pgZoomRange   = '1h';
+let pgEditDevId   = null;
+let pgDiscoverDevId  = null;
+let pgDiscoverData   = null;
+
+// ── Auth ─────────────────────────────────
+function pgAuthHeaders() {
+  const tok = localStorage.getItem('token') || localStorage.getItem('pyronms_token') || '';
+  return tok ? { 'Authorization': 'Bearer ' + tok } : {};
+}
+
+function pgCheckAuth() {
+  const tok = localStorage.getItem('token') || localStorage.getItem('pyronms_token') || '';
+  if (!tok) {
+    window.location.href = 'http://172.20.101.160/';
+  }
+}
+
+// ── Init ─────────────────────────────────
+document.addEventListener('DOMContentLoaded', pgInit);
+
+async function pgInit() {
+  pgCheckAuth();
+  try {
+    const [dRes, tRes] = await Promise.all([
+      fetch(API + '/network/devices', { headers: pgAuthHeaders() }),
+      fetch(API + '/network/templates', { headers: pgAuthHeaders() }),
+    ]);
+    pgDevices   = dRes.ok   ? (await dRes.json()).devices   || [] : [];
+    pgTemplates = tRes.ok   ? (await tRes.json()).templates || [] : [];
+  } catch(e) {
+    console.warn('pgInit fetch error', e);
+  }
+  pgRenderTree();
+  pgPopulateDevFilter();
+  pgLoadGrid();
+  pgUpdateStatusPill();
+}
+
+function pgUpdateStatusPill() {
+  const online = pgDevices.filter(d => d.status === 'online').length;
+  const offline = pgDevices.filter(d => d.status === 'offline').length;
+  document.getElementById('pg-status-pill').innerHTML =
+    `<span style="color:#22c55e;">●</span> ${online} online &nbsp;` +
+    (offline ? `<span style="color:#ef4444;">●</span> ${offline} offline` : '');
+}
+
+// ── Tab switching ────────────────────────
+function pgTab(name) {
+  pgActiveTab = name;
+  document.querySelectorAll('.pg-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('pg-tab-' + name).classList.add('active');
+  document.querySelectorAll('.pg-view').forEach(v => v.classList.remove('active'));
+  document.getElementById('pg-' + name + '-view').classList.add('active');
+  // Show/hide left tree
+  document.getElementById('pg-tree').style.display = (name === 'graphs') ? 'block' : 'none';
+
+  if (name === 'devices')   pgRenderDevicesTab();
+  if (name === 'templates') pgRenderTemplatesTab();
+  if (name === 'poller')    pgRenderPollerTab();
+  if (name === 'console')   pgConsole(pgConsolePage);
+}
+
+// ── Left tree ────────────────────────────
+function pgRenderTree() {
+  const list = document.getElementById('pg-tree-list');
+  let html = '';
+
+  // Build group → devices map
+  const grouped = {};
+  const ungrouped = [];
+  PG_TREE_GROUPS.forEach((g, gi) => { grouped[gi] = []; });
+
+  pgDevices.forEach(dev => {
+    let placed = false;
+    PG_TREE_GROUPS.forEach((g, gi) => {
+      if (placed) return;
+      if (g.vendor && dev.vendor === g.vendor) { grouped[gi].push(dev); placed = true; }
+      else if (g.tags && g.tags.length) {
+        const name = (dev.name||'').toLowerCase();
+        const vendor = (dev.vendor||'').toLowerCase();
+        if (g.tags.some(t => name.includes(t) || vendor.includes(t))) {
+          grouped[gi].push(dev); placed = true;
+        }
+      }
+    });
+    if (!placed) ungrouped.push(dev);
+  });
+
+  PG_TREE_GROUPS.forEach((g, gi) => {
+    if (!grouped[gi].length) return;
+    const folderId = 'pg-folder-' + gi;
+    html += `<div class="pg-tree-node" onclick="pgToggleFolder('${folderId}')" style="margin-top:2px;">
+      ${g.icon} ${g.label} <span style="margin-left:auto;font-size:10px;color:var(--muted);">${grouped[gi].length}</span>
+    </div>
+    <div class="pg-tree-children" id="${folderId}">`;
+    grouped[gi].forEach(dev => {
+      const dot = dev.status === 'online' ? '#22c55e' : dev.status === 'offline' ? '#ef4444' : '#6b7280';
+      html += `<div class="pg-tree-device" onclick="pgTreeSelectDev(${dev.id})" id="pg-tdev-${dev.id}">
+        <span style="color:${dot};">●</span> ${_pgEsc(dev.name)}
+      </div>`;
+    });
+    html += `</div>`;
+  });
+
+  // Ungrouped
+  if (ungrouped.length) {
+    html += `<div class="pg-tree-node" style="margin-top:4px;">📦 Other</div>
+    <div class="pg-tree-children">`;
+    ungrouped.forEach(dev => {
+      html += `<div class="pg-tree-device" onclick="pgTreeSelectDev(${dev.id})" id="pg-tdev-${dev.id}">${_pgEsc(dev.name)}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  list.innerHTML = html;
+}
+
+function pgToggleFolder(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+function pgTreeAll() {
+  pgDevFilter = '';
+  pgPage = 0;
+  document.getElementById('pg-dev-filter').value = '';
+  document.querySelectorAll('.pg-tree-device').forEach(el => el.classList.remove('active'));
+  document.getElementById('pg-tree-all').classList.add('active');
+  pgLoadGrid();
+}
+
+function pgTreeSelectDev(devId) {
+  pgDevFilter = String(devId);
+  pgPage = 0;
+  document.getElementById('pg-dev-filter').value = String(devId);
+  document.querySelectorAll('.pg-tree-device').forEach(el => el.classList.remove('active'));
+  document.getElementById('pg-tree-all').classList.remove('active');
+  const el = document.getElementById('pg-tdev-' + devId);
+  if (el) el.classList.add('active');
+  pgLoadGrid();
+}
+
+function pgPopulateDevFilter() {
+  const sel = document.getElementById('pg-dev-filter');
+  pgDevices.forEach(d => {
+    const o = document.createElement('option');
+    o.value = d.id; o.textContent = d.name;
+    sel.appendChild(o);
+  });
+}
+
+// ── Filter/range controls ────────────────
+function pgApplyFilters() {
+  pgDevFilter = document.getElementById('pg-dev-filter').value;
+  pgTplFilter = document.getElementById('pg-tpl-filter').value;
+  pgSearch    = document.getElementById('pg-search').value.toLowerCase();
+  pgPerPage   = parseInt(document.getElementById('pg-per-page').value) || 12;
+  pgPage = 0;
+  pgLoadGrid();
+}
+
+function pgApplyCols() {
+  const cols = parseInt(document.getElementById('pg-cols').value) || 3;
+  const minW = cols === 1 ? 600 : cols === 2 ? 440 : cols === 4 ? 260 : 380;
+  document.getElementById('pg-grid').style.gridTemplateColumns =
+    `repeat(${cols}, minmax(${minW}px, 1fr))`;
+}
+
+function pgSetRange(r) {
+  pgRange = r;
+  document.querySelectorAll('.pg-tr-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.pg-tr-btn').forEach(b => {
+    if (b.textContent.trim() === r) b.classList.add('active');
+  });
+  pgPage = 0;
+  pgLoadGrid();
+}
+
+// ── Grid loading ─────────────────────────
+async function pgLoadGrid() {
+  const grid = document.getElementById('pg-grid');
+  grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">Loading…</div>`;
+
+  // Destroy existing charts
+  Object.values(pgCharts).forEach(c => { try { c.destroy(); } catch(e){} });
+  pgCharts = {};
+
+  let url = API + '/network/graph-preview?range=' + pgRange;
+  if (pgDevFilter) url += '&device_id=' + pgDevFilter;
+
+  try {
+    const res = await fetch(url, { headers: pgAuthHeaders() });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    pgPreviews = data.graphs || [];
+  } catch(e) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:#ef4444;">Failed to load graphs: ${e.message}</div>`;
+    return;
+  }
+
+  // Apply client-side filters
+  let filtered = pgPreviews;
+  if (pgTplFilter) filtered = filtered.filter(pv => (pv.graph_type||'') === pgTplFilter);
+  if (pgSearch)    filtered = filtered.filter(pv =>
+    (pv.device_name||'').toLowerCase().includes(pgSearch) ||
+    (pv.graph_name||'').toLowerCase().includes(pgSearch));
+
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / pgPerPage));
+  if (pgPage >= totalPages) pgPage = 0;
+  const slice = filtered.slice(pgPage * pgPerPage, (pgPage + 1) * pgPerPage);
+
+  document.getElementById('pg-grid-info').textContent =
+    `${total} graph${total !== 1 ? 's' : ''}`;
+
+  if (!slice.length) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">No graphs found. Add a device and run the poller.</div>`;
+    pgRenderPager(0, 0);
+    return;
+  }
+
+  grid.innerHTML = '';
+  slice.forEach((pv, idx) => {
+    const card = pgRenderCard(pv, idx);
+    grid.appendChild(card);
+  });
+
+  // Draw charts after DOM insertion
+  slice.forEach((pv) => {
+    const canId = 'pgc-' + pv.graph_id;
+    if (pv.labels && pv.series) pgDrawChart(canId, pv.labels, pv.series);
+  });
+
+  pgRenderPager(pgPage, totalPages);
+}
+
+function pgRenderCard(pv, idx) {
+  const card = document.createElement('div');
+  card.className = 'pg-card';
+  card.onclick = () => pgZoomGraph(pv.graph_id);
+
+  const canId = 'pgc-' + pv.graph_id;
+  const badge = pv.graph_type || 'graph';
+  const devName = _pgEsc(pv.device_name || 'Unknown');
+  const graphName = _pgEsc(pv.graph_name || 'Graph');
+
+  // Build stats rows
+  let statsRows = '';
+  if (pv.series && pv.series.length) {
+    pv.series.forEach((s, si) => {
+      const st = pgCalcStats(s.data || []);
+      const color = PG_COLORS[si % PG_COLORS.length];
+      statsRows += `<tr>
+        <td><span class="pg-swatch" style="background:${color}"></span></td>
+        <td>${_pgEsc(s.label||'Series '+(si+1))}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.current, pv.graph_type)}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.avg, pv.graph_type)}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.max, pv.graph_type)}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.total, pv.graph_type)}</td>
+      </tr>`;
+    });
+  }
+
+  card.innerHTML = `
+    <div class="pg-card-title">
+      <span>${devName} — ${graphName}</span>
+      <span class="pg-badge">${badge}</span>
+    </div>
+    <div class="pg-canvas-wrap"><canvas id="${canId}"></canvas></div>
+    ${statsRows ? `<table class="pg-stats">
+      <thead><tr><th></th><th>Name</th><th>Current</th><th>Avg</th><th>Max</th><th>Total</th></tr></thead>
+      <tbody>${statsRows}</tbody>
+    </table>` : ''}
+    <div class="pg-card-footer">Device: ${devName} · Interface: ${graphName}</div>
+  `;
+  return card;
+}
+
+// ── Pager ────────────────────────────────
+function pgRenderPager(cur, total) {
+  const el = document.getElementById('pg-pager');
+  if (total <= 1) { el.innerHTML = ''; return; }
+  let html = '';
+  for (let i = 0; i < total; i++) {
+    html += `<button class="pg-page-btn${i===cur?' active':''}" onclick="pgGoPage(${i})">${i+1}</button>`;
+  }
+  el.innerHTML = html;
+}
+function pgGoPage(p) { pgPage = p; pgLoadGrid(); }
+
+// ── Stats computation ────────────────────
+function pgCalcStats(arr) {
+  const clean = arr.filter(v => v != null && isFinite(v));
+  if (!clean.length) return { current:'—', avg:'—', max:'—', total:'—' };
+  const min  = Math.min(...clean);
+  const max  = Math.max(...clean);
+  const sum  = clean.reduce((a,b)=>a+b,0);
+  const avg  = sum / clean.length;
+  const current = clean[clean.length - 1];
+  return { current, avg, max, total: sum };
+}
+
+function pgFmtVal(v, gtype) {
+  if (v === '—' || v == null || !isFinite(v)) return '—';
+  if (gtype === 'cpu' || gtype === 'memory' || gtype === 'disk') return v.toFixed(1) + '%';
+  if (gtype === 'latency') return v.toFixed(2) + 'ms';
+  if (gtype === 'temperature') return v.toFixed(1) + '°C';
+  // Default: bps formatting
+  return pgFmtBps(v);
+}
+
+function pgFmtBps(v) {
+  if (!isFinite(v)) return '—';
+  if (v >= 1e9) return (v/1e9).toFixed(2) + ' Gbps';
+  if (v >= 1e6) return (v/1e6).toFixed(2) + ' Mbps';
+  if (v >= 1e3) return (v/1e3).toFixed(2) + ' Kbps';
+  return v.toFixed(0) + ' bps';
+}
+
+// ── Chart.js drawing ─────────────────────
+function pgDrawChart(canId, labels, series) {
+  const canvas = document.getElementById(canId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  const datasets = series.map((s, i) => ({
+    label: s.label || ('Series ' + (i+1)),
+    data: s.data,
+    borderColor: PG_COLORS[i % PG_COLORS.length],
+    backgroundColor: PG_COLORS[i % PG_COLORS.length] + '22',
+    borderWidth: 1.5,
+    pointRadius: 0,
+    fill: true,
+    tension: 0.3,
+  }));
+
+  pgCharts[canId] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: series.length > 1, labels: { color: '#64748b', font: { size: 10 }, boxWidth: 10 } } },
+      scales: {
+        x: { display: false },
+        y: {
+          display: true,
+          ticks: { color: '#64748b', font: { size: 9 }, maxTicksLimit: 4,
+            callback: v => pgFmtBps(v) },
+          grid: { color: '#2a2f3e55' },
+        }
+      }
+    }
+  });
+}
+
+// ── Zoom modal ───────────────────────────
+async function pgZoomGraph(graphId) {
+  pgZoomGraphId = graphId;
+  pgZoomRange   = pgRange;
+  document.getElementById('pg-zoom-overlay').classList.add('open');
+  // Set active zoom range btn
+  document.querySelectorAll('.pg-zoom-tr-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.trim() === pgZoomRange);
+  });
+  await pgZoomLoad();
+}
+
+function pgZoomClose() {
+  document.getElementById('pg-zoom-overlay').classList.remove('open');
+  if (pgZoomChart) { pgZoomChart.destroy(); pgZoomChart = null; }
+}
+
+function pgZoomRange(r) {
+  pgZoomRange = r;
+  document.querySelectorAll('.pg-zoom-tr-btn').forEach(b =>
+    b.classList.toggle('active', b.textContent.trim() === r));
+  pgZoomLoad();
+}
+
+async function pgZoomLoad() {
+  const statsEl = document.getElementById('pg-zoom-stats');
+  const titleEl = document.getElementById('pg-zoom-title');
+  statsEl.innerHTML = '<div style="color:var(--muted);font-size:12px;">Loading…</div>';
+  if (pgZoomChart) { pgZoomChart.destroy(); pgZoomChart = null; }
+
+  try {
+    const res = await fetch(
+      API + '/network/graph-data?graph_id=' + pgZoomGraphId + '&range=' + pgZoomRange,
+      { headers: pgAuthHeaders() }
+    );
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    titleEl.textContent = (data.device_name || '') + ' — ' + (data.graph_name || 'Graph');
+
+    const labels  = data.labels  || [];
+    const series  = data.series  || [];
+    const gtype   = data.graph_type || '';
+
+    // Draw chart
+    const canvas = document.getElementById('pg-zoom-canvas');
+    const ctx = canvas.getContext('2d');
+    const datasets = series.map((s, i) => ({
+      label: s.label || 'Series ' + (i+1),
+      data: s.data,
+      borderColor: PG_COLORS[i % PG_COLORS.length],
+      backgroundColor: PG_COLORS[i % PG_COLORS.length] + '22',
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: true,
+      tension: 0.3,
+    }));
+    pgZoomChart = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 12 } } },
+        scales: {
+          x: { ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: '#2a2f3e55' } },
+          y: { ticks: { color: '#64748b', font: { size: 10 }, callback: v => pgFmtBps(v) }, grid: { color: '#2a2f3e55' } }
+        }
+      }
+    });
+
+    // Stats table
+    let rows = '';
+    series.forEach((s, si) => {
+      const st  = pgCalcStats(s.data || []);
+      const col = PG_COLORS[si % PG_COLORS.length];
+      rows += `<tr>
+        <td><span class="pg-swatch" style="background:${col}"></span></td>
+        <td>${_pgEsc(s.label||'Series '+(si+1))}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.current, gtype)}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.avg, gtype)}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.max, gtype)}</td>
+        <td class="pg-stat-val">${pgFmtVal(st.total, gtype)}</td>
+      </tr>`;
+    });
+    statsEl.innerHTML = rows ? `<table class="pg-stats" style="margin-top:8px;">
+      <thead><tr><th></th><th>Series</th><th>Current</th><th>Avg</th><th>Max</th><th>Total</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>` : '';
+
+  } catch(e) {
+    statsEl.innerHTML = `<div style="color:#ef4444;font-size:12px;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Console ──────────────────────────────
+function pgConsole(page) {
+  pgConsolePage = page;
+  document.querySelectorAll('.pg-cnav-item').forEach(el => el.classList.remove('active'));
+  const navEl = document.getElementById('pg-cnav-' + page.replace('2',''));
+  if (navEl) navEl.classList.add('active');
+  const c = document.getElementById('pg-console-content');
+  if (page === 'devices')   pgRenderDevicesPage(c);
+  if (page === 'sources')   pgRenderSourcesPage(c);
+  if (page === 'graphmgmt') pgRenderGraphMgmtPage(c);
+  if (page === 'templates2') pgRenderTemplatesPage(c);
+  if (page === 'hosttpl')   pgRenderHostTplPage(c);
+  if (page === 'poller2')   pgRenderPollerPage(c);
+}
+
+// ── Devices tab & console page ───────────
+function pgRenderDevicesTab() {
+  pgRenderDevicesPage(document.getElementById('pg-devices-content'));
+}
+
+async function pgRenderDevicesPage(c) {
+  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
+  try {
+    const res = await fetch(API + '/network/devices', { headers: pgAuthHeaders() });
+    const data = await res.json();
+    const devs = data.devices || [];
+    pgDevices = devs;
+
+    let rows = devs.map(d => {
+      const dot = d.status === 'online'  ? 'pg-dot-green' :
+                  d.status === 'offline' ? 'pg-dot-red'   : 'pg-dot-gray';
+      return `<tr>
+        <td>${d.id}</td>
+        <td><strong>${_pgEsc(d.name)}</strong></td>
+        <td>${_pgEsc(d.ip_address)}</td>
+        <td>${_pgEsc(d.vendor||'generic')}</td>
+        <td>${_pgEsc(d.snmp_community||'public')}</td>
+        <td><span class="pg-dot ${dot}"></span> ${d.status||'unknown'}</td>
+        <td style="white-space:nowrap;">
+          <button class="pg-action-btn pg-btn-blue" onclick="pgEditDevice(${d.id})">Edit</button>
+          <button class="pg-action-btn pg-btn-gray" onclick="pgDiscover(${d.id})" style="margin-left:4px;">Discover</button>
+          <button class="pg-action-btn pg-btn-red" onclick="pgDeleteDevice(${d.id})" style="margin-left:4px;">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    c.innerHTML = `
+      <div class="pg-page-title">🖥 Devices
+        <button class="pg-action-btn pg-btn-green" onclick="pgAddDevice()">+ Add Device</button>
+      </div>
+      <table class="pg-table">
+        <thead><tr><th>#</th><th>Name</th><th>IP</th><th>Vendor</th><th>Community</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:var(--muted);">No devices. Click + Add Device.</td></tr>'}</tbody>
+      </table>`;
+  } catch(e) {
+    c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Data Sources ─────────────────────────
+async function pgRenderSourcesPage(c) {
+  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
+  try {
+    let url = API + '/network/interfaces';
+    const res = await fetch(url, { headers: pgAuthHeaders() });
+    const data = await res.json();
+    const ifaces = data.interfaces || [];
+    let rows = ifaces.map(i => `<tr>
+      <td>${_pgEsc(i.device_name||'?')}</td>
+      <td>${_pgEsc(i.if_name||'')}</td>
+      <td>${_pgEsc(i.if_descr||'')}</td>
+      <td>${i.if_speed ? pgFmtBps(i.if_speed) : '—'}</td>
+      <td>${i.enabled ? '<span style="color:#22c55e;">Active</span>' : '<span style="color:#ef4444;">Disabled</span>'}</td>
+    </tr>`).join('');
+    c.innerHTML = `<div class="pg-page-title">📡 Data Sources</div>
+      <table class="pg-table">
+        <thead><tr><th>Device</th><th>Interface</th><th>Description</th><th>Speed</th><th>Status</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:var(--muted);">No interfaces discovered yet.</td></tr>'}</tbody>
+      </table>`;
+  } catch(e) {
+    c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Graph Management ─────────────────────
+async function pgRenderGraphMgmtPage(c) {
+  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
+  try {
+    const res = await fetch(API + '/network/graphs', { headers: pgAuthHeaders() });
+    const data = await res.json();
+    const graphs = data.graphs || [];
+    let rows = graphs.map(g => `<tr>
+      <td>${g.id}</td>
+      <td>${_pgEsc(g.device_name||'?')}</td>
+      <td>${_pgEsc(g.graph_name||'')}</td>
+      <td>${_pgEsc(g.graph_type||'')}</td>
+      <td><button class="pg-action-btn pg-btn-red" onclick="pgDeleteGraph(${g.id})">Delete</button></td>
+    </tr>`).join('');
+    c.innerHTML = `<div class="pg-page-title">📈 Graph Management</div>
+      <table class="pg-table">
+        <thead><tr><th>#</th><th>Device</th><th>Graph Name</th><th>Type</th><th>Action</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:var(--muted);">No graphs yet.</td></tr>'}</tbody>
+      </table>`;
+  } catch(e) {
+    c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+async function pgDeleteGraph(id) {
+  if (!confirm('Delete this graph and its data?')) return;
+  try {
+    await fetch(API + '/network/graphs/' + id, { method: 'DELETE', headers: pgAuthHeaders() });
+    pgConsole('graphmgmt');
+    pgLoadGrid();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── Templates ────────────────────────────
+function pgRenderTemplatesTab() {
+  pgRenderTemplatesPage(document.getElementById('pg-templates-content'));
+}
+
+async function pgRenderTemplatesPage(c) {
+  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
+  try {
+    const res = await fetch(API + '/network/templates', { headers: pgAuthHeaders() });
+    const data = await res.json();
+    const tpls = data.templates || [];
+    let cards = tpls.map(t => `<div class="pg-tpl-card">
+      <div class="pg-tpl-name">${_pgEsc(t.name)}</div>
+      <div class="pg-tpl-vendor">${_pgEsc(t.vendor||'generic')}</div>
+      <div class="pg-tpl-meta">Type: ${_pgEsc(t.graph_type||'—')}</div>
+      <div class="pg-tpl-meta" style="margin-top:4px;font-size:10px;word-break:break-all;">${_pgEsc(t.oid||'')}</div>
+    </div>`).join('');
+    c.innerHTML = `<div class="pg-page-title">📐 Graph Templates</div>
+      <div class="pg-tpl-grid">${cards || '<p style="color:var(--muted);">No templates found.</p>'}</div>`;
+  } catch(e) {
+    c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Host Templates ───────────────────────
+function pgRenderHostTplPage(c) {
+  const rows = [
+    ['MikroTik',  'traffic, cpu, memory, wireless'],
+    ['Cisco',     'traffic, cpu, memory, temperature'],
+    ['Juniper',   'traffic, cpu, memory'],
+    ['Huawei',    'traffic, cpu, memory'],
+    ['Linux',     'traffic, cpu, memory, disk'],
+    ['Windows',   'traffic, cpu, memory, disk'],
+    ['Generic',   'traffic'],
+  ];
+  c.innerHTML = `<div class="pg-page-title">🏷 Host Templates</div>
+    <table class="pg-table">
+      <thead><tr><th>Vendor</th><th>Applicable Graph Types</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td><strong>${r[0]}</strong></td><td style="color:var(--muted);">${r[1]}</td></tr>`).join('')}</tbody>
+    </table>`;
+}
+
+// ── Poller ───────────────────────────────
+function pgRenderPollerTab() {
+  pgRenderPollerPage(document.getElementById('pg-poller-content'));
+}
+
+async function pgRenderPollerPage(c) {
+  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
+  try {
+    const res = await fetch(API + '/network/poller-status', { headers: pgAuthHeaders() });
+    const d = await res.json();
+    c.innerHTML = `<div class="pg-page-title">⚙ Poller Status</div>
+      <div class="pg-stat-grid">
+        <div class="pg-stat-card"><div class="pg-stat-num">${d.total_devices??'—'}</div><div class="pg-stat-lbl">Total Devices</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#22c55e">${d.online??'—'}</div><div class="pg-stat-lbl">Online</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#ef4444">${d.offline??'—'}</div><div class="pg-stat-lbl">Offline</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num">${d.total_graphs??'—'}</div><div class="pg-stat-lbl">Graphs</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num">${d.poll_interval??60}s</div><div class="pg-stat-lbl">Poll Interval</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num">${d.threads??4}</div><div class="pg-stat-lbl">Threads</div></div>
+      </div>
+      <table class="pg-table">
+        <thead><tr><th>Field</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Last Poll</td><td>${d.last_poll||'—'}</td></tr>
+          <tr><td>Next Poll</td><td>${d.next_poll||'—'}</td></tr>
+          <tr><td>InfluxDB Bucket</td><td>${d.influx_bucket||'network_monitoring'}</td></tr>
+          <tr><td>Service</td><td>pyronms-network-poller.service</td></tr>
+        </tbody>
+      </table>`;
+  } catch(e) {
+    c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Device CRUD modal ────────────────────
+function pgAddDevice() {
+  pgEditDevId = null;
+  document.getElementById('pg-dev-modal-title').textContent = 'Add Device';
+  document.getElementById('pg-dev-name').value = '';
+  document.getElementById('pg-dev-ip').value = '';
+  document.getElementById('pg-dev-community').value = 'public';
+  document.getElementById('pg-dev-snmp-ver').value = '2c';
+  document.getElementById('pg-dev-vendor').value = 'mikrotik';
+  document.getElementById('pg-dev-templates').value = '';
+  document.getElementById('pg-dev-edit-id').value = '';
+  document.getElementById('pg-dev-modal-err').style.display = 'none';
+  document.getElementById('pg-dev-modal-overlay').classList.add('open');
+}
+
+async function pgEditDevice(id) {
+  const dev = pgDevices.find(d => d.id === id);
+  if (!dev) return;
+  pgEditDevId = id;
+  document.getElementById('pg-dev-modal-title').textContent = 'Edit Device';
+  document.getElementById('pg-dev-name').value = dev.name || '';
+  document.getElementById('pg-dev-ip').value = dev.ip_address || '';
+  document.getElementById('pg-dev-community').value = dev.snmp_community || 'public';
+  document.getElementById('pg-dev-snmp-ver').value = dev.snmp_version || '2c';
+  document.getElementById('pg-dev-vendor').value = dev.vendor || 'mikrotik';
+  document.getElementById('pg-dev-templates').value = '';
+  document.getElementById('pg-dev-edit-id').value = id;
+  document.getElementById('pg-dev-modal-err').style.display = 'none';
+  document.getElementById('pg-dev-modal-overlay').classList.add('open');
+}
+
+function pgCloseDevModal() {
+  document.getElementById('pg-dev-modal-overlay').classList.remove('open');
+}
+
+async function pgSaveDevice() {
+  const name      = document.getElementById('pg-dev-name').value.trim();
+  const ip        = document.getElementById('pg-dev-ip').value.trim();
+  const community = document.getElementById('pg-dev-community').value.trim() || 'public';
+  const snmpVer   = document.getElementById('pg-dev-snmp-ver').value;
+  const vendor    = document.getElementById('pg-dev-vendor').value;
+  const errEl     = document.getElementById('pg-dev-modal-err');
+
+  if (!name || !ip) {
+    errEl.textContent = 'Name and IP Address are required.';
+    errEl.style.display = 'block'; return;
+  }
+
+  const payload = { name, ip_address: ip, snmp_community: community, snmp_version: snmpVer, vendor };
+  const editId  = document.getElementById('pg-dev-edit-id').value;
+  const method  = editId ? 'PUT' : 'POST';
+  const url     = editId ? API + '/network/devices/' + editId : API + '/network/devices';
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || data.detail || 'Save failed.';
+      errEl.style.display = 'block'; return;
+    }
+    pgCloseDevModal();
+    // Refresh devices list + tree
+    const r2 = await fetch(API + '/network/devices', { headers: pgAuthHeaders() });
+    const d2 = await r2.json();
+    pgDevices = d2.devices || [];
+    pgRenderTree();
+    pgPopulateDevFilter();
+    // Refresh current view
+    if (pgActiveTab === 'devices') pgRenderDevicesTab();
+    if (pgActiveTab === 'console') pgConsole(pgConsolePage);
+    pgLoadGrid();
+  } catch(e) {
+    errEl.textContent = 'Network error: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function pgDeleteDevice(id) {
+  if (!confirm('Delete this device and all its graphs?')) return;
+  try {
+    await fetch(API + '/network/devices/' + id, { method: 'DELETE', headers: pgAuthHeaders() });
+    const r2 = await fetch(API + '/network/devices', { headers: pgAuthHeaders() });
+    const d2 = await r2.json();
+    pgDevices = d2.devices || [];
+    pgRenderTree();
+    if (pgActiveTab === 'devices') pgRenderDevicesTab();
+    if (pgActiveTab === 'console') pgConsole(pgConsolePage);
+    pgLoadGrid();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── Discover ─────────────────────────────
+async function pgDiscover(devId) {
+  pgDiscoverDevId = devId;
+  pgDiscoverData  = null;
+  document.getElementById('pg-discover-body').innerHTML = '<div style="color:var(--muted);">Scanning device…</div>';
+  document.getElementById('pg-discover-apply-btn').style.display = 'none';
+  document.getElementById('pg-discover-overlay').classList.add('open');
+  try {
+    const res = await fetch(API + '/network/discover?device_id=' + devId, { headers: pgAuthHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Discover failed');
+    pgDiscoverData = data;
+    const ifaces = data.interfaces || [];
+    if (!ifaces.length) {
+      document.getElementById('pg-discover-body').innerHTML = '<div style="color:var(--muted);">No interfaces found.</div>';
+      return;
+    }
+    let html = `<p style="margin-bottom:12px;font-size:12px;color:var(--muted);">Found ${ifaces.length} interface(s). Select to graph:</p>`;
+    ifaces.forEach((iface, i) => {
+      html += `<div class="pg-discover-iface">
+        <input type="checkbox" id="pg-di-${i}" value="${i}" checked>
+        <label for="pg-di-${i}" style="flex:1;cursor:pointer;">
+          <strong>${_pgEsc(iface.if_name||iface.if_index)}</strong>
+          ${iface.if_descr ? '<span style="color:var(--muted);font-size:11px;"> — '+_pgEsc(iface.if_descr)+'</span>' : ''}
+          ${iface.if_speed ? '<span style="color:var(--accent);font-size:11px;"> '+pgFmtBps(iface.if_speed)+'</span>' : ''}
+        </label>
+      </div>`;
+    });
+    document.getElementById('pg-discover-body').innerHTML = html;
+    document.getElementById('pg-discover-apply-btn').style.display = '';
+  } catch(e) {
+    document.getElementById('pg-discover-body').innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+function pgCloseDiscover() {
+  document.getElementById('pg-discover-overlay').classList.remove('open');
+}
+
+async function pgApplyDiscover() {
+  if (!pgDiscoverData) return;
+  const ifaces = pgDiscoverData.interfaces || [];
+  const selected = [];
+  ifaces.forEach((iface, i) => {
+    const cb = document.getElementById('pg-di-' + i);
+    if (cb && cb.checked) selected.push(iface);
+  });
+  if (!selected.length) { alert('Select at least one interface.'); return; }
+  try {
+    const res = await fetch(API + '/network/apply-discovery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
+      body: JSON.stringify({ device_id: pgDiscoverDevId, interfaces: selected }),
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Apply failed'); }
+    pgCloseDiscover();
+    pgLoadGrid();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── Utility ──────────────────────────────
+function _pgEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

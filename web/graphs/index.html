@@ -551,7 +551,7 @@ let pgPreviews    = [];
 let pgCharts      = {};
 let pgZoomChart   = null;
 let pgZoomGraphId = null;
-let pgZoomRange   = '1h';
+let pgZoomCurrentRange = '1h';
 let pgEditDevId   = null;
 let pgDiscoverDevId  = null;
 let pgDiscoverData   = null;
@@ -1061,11 +1061,11 @@ function pgDrawChart(canId, labels, series) {
 // ── Zoom modal ───────────────────────────
 async function pgZoomGraph(graphId) {
   pgZoomGraphId = graphId;
-  pgZoomRange   = pgRange;
+  pgZoomCurrentRange = pgRange;
   document.getElementById('pg-zoom-overlay').classList.add('open');
   // Set active zoom range btn
   document.querySelectorAll('.pg-zoom-tr-btn').forEach(b => {
-    b.classList.toggle('active', b.textContent.trim() === pgZoomRange);
+    b.classList.toggle('active', b.textContent.trim() === pgZoomCurrentRange);
   });
   await pgZoomLoad();
 }
@@ -1076,7 +1076,7 @@ function pgZoomClose() {
 }
 
 function pgZoomRange(r) {
-  pgZoomRange = r;
+  pgZoomCurrentRange = r;
   document.querySelectorAll('.pg-zoom-tr-btn').forEach(b =>
     b.classList.toggle('active', b.textContent.trim() === r));
   pgZoomLoad();
@@ -1090,7 +1090,7 @@ async function pgZoomLoad() {
 
   try {
     const res = await fetch(
-      API + '/network/graph-data?graph_id=' + pgZoomGraphId + '&range=' + pgZoomRange,
+      API + '/network/graph-data?graph_id=' + pgZoomGraphId + '&range=' + pgZoomCurrentRange,
       { headers: pgAuthHeaders() }
     );
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1130,7 +1130,7 @@ async function pgZoomLoad() {
 
     // Real Cacti stats from backend (server-computed via Flux)
     try {
-      const sr = await fetch(API + '/network/graph-stats?graph_id=' + pgZoomGraphId + '&range=' + pgZoomRange,
+      const sr = await pgFetch(API + '/network/graph-stats?graph_id=' + pgZoomGraphId + '&range=' + pgZoomCurrentRange,
         { headers: pgAuthHeaders() });
       const sj = await sr.json();
       const s = sj.stats || {};

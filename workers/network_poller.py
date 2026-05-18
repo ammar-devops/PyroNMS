@@ -248,22 +248,57 @@ def probe_resources(dev: dict) -> dict:
         out["uptime_sec"] = ticks // 100 if ticks else None
 
     if vendor == "mikrotik":
+        # CPU + try MTXR memory + temperature (older RouterOS only)
         r = nsnmp.snmp_get(dev,
-            "1.3.6.1.2.1.25.3.3.1.2.1",
-            "1.3.6.1.4.1.14988.1.1.3.5.0",
-            "1.3.6.1.4.1.14988.1.1.3.6.0",
-            "1.3.6.1.4.1.14988.1.1.3.10.0")
+            "1.3.6.1.2.1.25.3.3.1.2.1",       # hrProcessorLoad
+            "1.3.6.1.4.1.14988.1.1.3.5.0",    # mtxrTotalRam (often 0 on newer ROS)
+            "1.3.6.1.4.1.14988.1.1.3.6.0",    # mtxrFreeRam (often 0 on newer ROS)
+            "1.3.6.1.4.1.14988.1.1.3.10.0")   # mtxrTemperature (often missing)
         if r:
-            out["cpu_pct"]   = _safe_float(r.get("1.3.6.1.2.1.25.3.3.1.2.1"))
+            out["cpu_pct"] = _safe_float(r.get("1.3.6.1.2.1.25.3.3.1.2.1"))
             mt = _safe_int(r.get("1.3.6.1.4.1.14988.1.1.3.5.0"))
             mf = _safe_int(r.get("1.3.6.1.4.1.14988.1.1.3.6.0"))
-            if mt:
+            if mt > 0:
                 out["mem_total"] = mt
                 out["mem_used"]  = max(0, mt - mf)
                 out["mem_pct"]   = round((mt - mf) * 100.0 / mt, 1)
             t = _safe_float(r.get("1.3.6.1.4.1.14988.1.1.3.10.0"))
-            if t is not None:
-                out["temp_c"] = t / 10.0  # ×10
+            if t is not None and t > 0:
+                out["temp_c"] = t / 10.0   # ×10 in tenths-degree
+
+        # Fallback: Host Resources MIB (hrStorageTable) for memory.
+        # New RouterOS (v7+) drops the MTXR memory OIDs but always serves
+        # Host Resources. Walk hrStorageType (.2) to find the entry whose
+        # value equals hrStorageRam (1.3.6.1.2.1.25.2.1.2), then read size
+        # (.5) and used (.6) at that index. Result is in allocation units
+        # (×1024 bytes per allocation_unit which is .4).
+        if out["mem_pct"] is None:
+            try:
+                types_map = nsnmp.snmp_bulk_walk(dev, "1.3.6.1.2.1.25.2.3.1.2", max_rep=15)
+                ram_idx = None
+                for idx, val in types_map.items():
+                    v = (val or "").strip()
+                    # Match against hrStorageRam OID in any of the common forms
+                    if v.endswith("25.2.1.2") or v == "1.3.6.1.2.1.25.2.1.2":
+                        ram_idx = idx
+                        break
+                if ram_idx:
+                    size = nsnmp.snmp_get(dev,
+                        f"1.3.6.1.2.1.25.2.3.1.5.{ram_idx}",
+                        f"1.3.6.1.2.1.25.2.3.1.6.{ram_idx}",
+                        f"1.3.6.1.2.1.25.2.3.1.4.{ram_idx}")
+                    if size:
+                        units = _safe_int(size.get(f"1.3.6.1.2.1.25.2.3.1.5.{ram_idx}"))
+                        used  = _safe_int(size.get(f"1.3.6.1.2.1.25.2.3.1.6.{ram_idx}"))
+                        au    = _safe_int(size.get(f"1.3.6.1.2.1.25.2.3.1.4.{ram_idx}"), default=1024)
+                        if units > 0:
+                            total_bytes = units * au
+                            used_bytes  = used  * au
+                            out["mem_total"] = total_bytes
+                            out["mem_used"]  = used_bytes
+                            out["mem_pct"]   = round(used_bytes * 100.0 / total_bytes, 1)
+            except Exception as _e:
+                log.debug(f"hrStorage memory probe failed for {dev.get('ip')}: {_e}")
         # Optional: PPPoE session count via RouterOS API
         # Credentials from notes JSON: {"ros_user":"admin","ros_pass":"..."}
         try:

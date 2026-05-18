@@ -2570,6 +2570,76 @@ from(bucket:"{INFLUX_BUCKET}")
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
+        # ── GET /network/logs?level=&since=&limit= ────────────────────────────
+        # Tails the network poller log file. Real backend logs, not placeholder.
+        #   level   — filter: ALL | DEBUG | INFO | WARNING | ERROR
+        #   since   — unix ts; only return entries newer than this
+        #   limit   — max entries to return (default 200, max 2000)
+        elif parsed.path == "/network/logs":
+            user = require_auth(self)
+            if not user: return
+            level_filter = (params.get("level", ["ALL"])[0] or "ALL").upper()
+            since_ts     = float(params.get("since", ["0"])[0] or 0)
+            try: limit   = max(1, min(2000, int(params.get("limit", ["200"])[0])))
+            except: limit = 200
+
+            LOG_PATH = "/opt/ont-monitor/logs/network_poller.log"
+            try:
+                if not os.path.exists(LOG_PATH):
+                    return self.send_json(200, {"ok": True, "entries": [],
+                                                "note": "log file not found"})
+                # Read last ~512KB (enough for thousands of lines, fast)
+                size = os.path.getsize(LOG_PATH)
+                read_bytes = min(size, 512 * 1024)
+                with open(LOG_PATH, "rb") as f:
+                    if size > read_bytes:
+                        f.seek(-read_bytes, 2)
+                        f.readline()  # discard partial first line
+                    raw = f.read().decode("utf-8", errors="replace")
+
+                # Parse "YYYY-MM-DD HH:MM:SS,mmm [LEVEL] name: msg"
+                import re as _re
+                line_re = _re.compile(
+                    r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})(?:,(\d+))?"
+                    r"\s+\[(\w+)\]\s+([^:]+):\s+(.*)$")
+                entries = []
+                for line in raw.splitlines():
+                    m = line_re.match(line)
+                    if m:
+                        date_s, time_s, ms_s, lvl, name, msg = m.groups()
+                        try:
+                            ts = time.mktime(time.strptime(
+                                f"{date_s} {time_s}", "%Y-%m-%d %H:%M:%S"))
+                        except: ts = 0
+                        entries.append({
+                            "ts":      ts,
+                            "date":    date_s,
+                            "time":    time_s,
+                            "ms":      int(ms_s) if ms_s else 0,
+                            "level":   lvl,
+                            "logger":  name.strip(),
+                            "message": msg,
+                        })
+                    elif entries:
+                        # Continuation line — append to previous entry
+                        entries[-1]["message"] += "\n" + line
+
+                # Apply filters
+                if level_filter != "ALL":
+                    entries = [e for e in entries if e["level"] == level_filter]
+                if since_ts > 0:
+                    entries = [e for e in entries if e["ts"] > since_ts]
+
+                # Newest first, limit
+                entries.reverse()
+                entries = entries[:limit]
+
+                return self.send_json(200, {"ok": True, "entries": entries,
+                                            "log_path": LOG_PATH,
+                                            "total": len(entries)})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
         # ── GET /network/tree ─────────────────────────────────────────────────
         elif parsed.path == "/network/tree":
             user = require_auth(self)

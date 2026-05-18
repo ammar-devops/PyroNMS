@@ -451,10 +451,21 @@ def poll_one_device(dev: dict) -> dict:
         enabled_idx = {i["if_index"] for i in ifaces_db if i.get("polling_enabled", 1)}
         poll_all_ifaces = (not ifaces_db)   # never discovered → poll everything
 
-        # Interface counters with retry+backoff
-        counters, r2 = _snmp_retry("counters", nsnmp.fetch_interface_counters, dev)
-        counters = counters or {}
-        total_retries += r2
+        # Interface counters — NO retry on empty.
+        # An OLT with all interfaces idle legitimately returns 0 for
+        # discards/errors. The retry-on-empty logic was triggering 3 retries
+        # × 7 bulkwalks on devices like HP-OLT, costing 5-10 extra seconds
+        # per cycle on local-network devices. fetch_interface_counters
+        # internally returns {} only if ifHCInOctets/ifHCOutOctets walks
+        # both fail — that's the only real failure mode and we don't need
+        # the retry layer to catch it (the bulkwalk subprocess already
+        # has -r1 built in).
+        r2 = 0
+        try:
+            counters = nsnmp.fetch_interface_counters(dev) or {}
+        except Exception as _e:
+            log.debug(f"fetch_interface_counters {dev_name}: {_e}")
+            counters = {}
 
         # Build lookup map for tags from SQLite (alias, type, vlan)
         iface_meta = {i["if_index"]: i for i in ifaces_db}

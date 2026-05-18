@@ -3451,6 +3451,7 @@ from(bucket:"{INFLUX_BUCKET}")
                     return self.send_json(404, {"ok": False, "error": "Device not found"})
                 # Vendor + sys info
                 sysinfo = nsnmp.test_device(dev)
+                vendor_det = "unknown"
                 if sysinfo.get("snmp_ok"):
                     vendor_det = sysinfo.get("vendor_detected") or dev.get("vendor", "generic")
                     ndb.update_device(dev_id, {"vendor": vendor_det})
@@ -3461,9 +3462,12 @@ from(bucket:"{INFLUX_BUCKET}")
                 # Interface walk
                 ifaces = nsnmp.discover_interfaces(dev)
                 ndb.upsert_interfaces(dev_id, ifaces)
-                # Auto-create traffic graphs?
+                # Auto-create traffic graphs — default ON for discover endpoint
+                # so PyroGraphs frontend doesn't need to pass anything special.
+                # Caller can pass {"auto_create_traffic": false} to disable.
                 graphs_created = 0
-                if payload.get("auto_create_traffic") and ifaces:
+                auto_create = payload.get("auto_create_traffic", True)
+                if auto_create and ifaces:
                     templates = ndb.get_templates(graph_type="traffic")
                     traffic_tpl = next((t for t in templates
                                         if t.get("builtin") and "IF-MIB" in t["name"]),
@@ -3471,20 +3475,60 @@ from(bucket:"{INFLUX_BUCKET}")
                     if traffic_tpl:
                         existing = ndb.get_graphs(device_id=dev_id, graph_type="traffic")
                         existing_iface_ids = {g.get("interface_id") for g in existing}
+
+                        # Real-physical filter (type + name based) avoids the
+                        # "2400 PPPoE-session graph" problem on MikroTik while
+                        # also handling Huawei OLT (ethernet0/6/0, GPON 0/0/0).
+                        #
+                        # SKIP these IF-MIB ifTypes (RFC 1213 / IANA ifType MIB):
+                        #   1   = other            (null0)
+                        #   24  = softwareLoopback (lo, InLoopBack0)
+                        #   53  = propVirtual      (virtual interfaces)
+                        #   131 = tunnel
+                        #   135 = l2vlan
+                        #   136 = l3ipvlan        (vlanif on Huawei)
+                        # Names starting with these are also skipped:
+                        #   pppoe-*, vlan*, vlanif*, lo, loop*, tunnel*,
+                        #   br-*, bridge*, null*
+                        SKIP_TYPES = {1, 24, 53, 131, 135, 136}
+                        SKIP_NAME_PREFIX = (
+                            "pppoe-", "vlan", "lo", "tunnel", "br-",
+                            "bridge", "null", "<")
+
                         for iface_row in ndb.get_interfaces(dev_id):
-                            if (iface_row.get("oper_status") == 1 and
-                                    iface_row["id"] not in existing_iface_ids):
+                            if iface_row["id"] in existing_iface_ids:
+                                continue
+                            ifname = (iface_row.get("if_name") or "").strip()
+                            iftype = iface_row.get("if_type") or 0
+                            if iftype in SKIP_TYPES:
+                                continue
+                            if iface_row.get("is_vlan"):
+                                continue
+                            lower = ifname.lower()
+                            if any(lower.startswith(p) for p in SKIP_NAME_PREFIX):
+                                continue
+                            # Skip "notPresent" (oper_status=6 = empty slot)
+                            if iface_row.get("oper_status") == 6:
+                                continue
+                            try:
                                 ndb.add_graph(
                                     device_id=dev_id,
                                     template_id=traffic_tpl["id"],
                                     interface_id=iface_row["id"],
-                                    graph_name=f"Traffic — {iface_row.get('if_name','')}")
+                                    graph_name=f"{ifname or 'if'+str(iface_row.get('if_index',''))} Traffic")
                                 graphs_created += 1
+                            except Exception:
+                                pass
                 return self.send_json(200, {
                     "ok": True,
-                    "interfaces": ifaces,
-                    "graphs_created": graphs_created,
-                    "snmp_ok": sysinfo.get("snmp_ok", False),
+                    "interfaces":       ifaces,
+                    "graphs_created":   graphs_created,
+                    "snmp_ok":          sysinfo.get("snmp_ok", False),
+                    "vendor_detected":  vendor_det,
+                    "sys_name":         sysinfo.get("sys_name", ""),
+                    "sys_descr":        sysinfo.get("sys_descr", ""),
+                    "sys_object_id":    sysinfo.get("sys_object_id", ""),
+                    "ms":               sysinfo.get("ms", 0),
                 })
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})

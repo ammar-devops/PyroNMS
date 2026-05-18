@@ -3179,7 +3179,11 @@ from(bucket:"{INFLUX_BUCKET}")
             try: payload = json.loads(body)
             except: return self.send_json(400,{"error":"Invalid JSON"})
 
-            import base64, os, re
+            # Note: do NOT re-import `re` here - it's at module level (line 14).
+            # A local `import re` triggers Python compile-time scoping that makes
+            # `re` local to the ENTIRE do_POST function, causing UnboundLocalError
+            # on every earlier `re.match(...)` call. This broke every POST endpoint.
+            import base64
             avatar_data = payload.get("avatar","")
             if not avatar_data:
                 return self.send_json(400,{"error":"No avatar data"})

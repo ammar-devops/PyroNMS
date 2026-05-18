@@ -556,23 +556,37 @@ let pgDiscoverDevId  = null;
 let pgDiscoverData   = null;
 
 // ── Auth ─────────────────────────────────
+function pgGetToken() {
+  // PyroNMS stores JWT under 'ont_token'
+  return localStorage.getItem('ont_token') || localStorage.getItem('token') || localStorage.getItem('pyronms_token') || '';
+}
+
 function pgAuthHeaders() {
-  const tok = localStorage.getItem('token') || localStorage.getItem('pyronms_token') || '';
+  const tok = pgGetToken();
   return tok ? { 'Authorization': 'Bearer ' + tok } : {};
 }
 
 function pgCheckAuth() {
-  const tok = localStorage.getItem('token') || localStorage.getItem('pyronms_token') || '';
-  if (!tok) {
-    window.location.href = 'http://172.20.101.160/';
+  const tok = pgGetToken();
+  const exp = parseInt(localStorage.getItem('ont_expires') || '0');
+  if (!tok || (exp && Date.now() / 1000 > exp)) {
+    // Show login prompt instead of hard redirect so user can open directly
+    document.getElementById('pg-grid').innerHTML =
+      `<div style="grid-column:1/-1;text-align:center;padding:60px;">
+        <div style="font-size:18px;font-weight:700;color:var(--orange);margin-bottom:12px;">🔒 Not authenticated</div>
+        <div style="color:var(--muted);margin-bottom:20px;">Please log in to PyroNMS first, then return here.</div>
+        <button onclick="window.location.href='http://172.20.101.160/'" style="padding:10px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;">Go to PyroNMS Login</button>
+      </div>`;
+    return false;
   }
+  return true;
 }
 
 // ── Init ─────────────────────────────────
 document.addEventListener('DOMContentLoaded', pgInit);
 
 async function pgInit() {
-  pgCheckAuth();
+  if (!pgCheckAuth()) return;
   try {
     const [dRes, tRes] = await Promise.all([
       fetch(API + '/network/devices', { headers: pgAuthHeaders() }),

@@ -69,16 +69,76 @@ _counters_cache: dict[int, dict[int, tuple]] = {}
 # Poller stats (for /network/poller/status)
 _stats_lock = threading.Lock()
 _stats = {
-    "started_at":     int(time.time()),
-    "max_workers":    MAX_WORKERS,
-    "cycles":         0,
-    "last_cycle_ms":  0,
-    "last_cycle_at":  0,
-    "devices_polled": 0,
-    "devices_failed": 0,
-    "failed_devices": [],     # list of {id, name, ip, error, ts}
-    "slowest_devices": [],    # list of {id, name, ms}
+    "started_at":      int(time.time()),
+    "max_workers":     MAX_WORKERS,
+    "cycles":          0,
+    "last_cycle_ms":   0,
+    "last_cycle_at":   0,
+    "devices_polled":  0,
+    "devices_failed":  0,
+    "total_retries":   0,
+    "avg_poll_ms":     0,        # rolling avg of per-device poll ms
+    "active_workers":  0,        # currently in-flight devices
+    "degraded_count":  0,        # devices that succeeded only after retries
+    "last_success_at": 0,        # last cycle that had >=1 successful poll
+    "queue_depth":     0,        # devices waiting to be polled this cycle
+    "failed_devices":  [],       # list of {id, name, ip, error, ts}
+    "slowest_devices": [],       # list of {id, name, ms}
+    "degraded_devices": [],      # list of {id, name, retries, ts}
 }
+
+# Rolling window for avg_poll_ms — keep last 200 successful polls
+_poll_ms_window = []
+_poll_ms_window_lock = threading.Lock()
+_POLL_MS_WINDOW_MAX = 200
+
+def _record_poll_ms(ms: int):
+    with _poll_ms_window_lock:
+        _poll_ms_window.append(ms)
+        if len(_poll_ms_window) > _POLL_MS_WINDOW_MAX:
+            _poll_ms_window.pop(0)
+        avg = sum(_poll_ms_window) // len(_poll_ms_window)
+    with _stats_lock:
+        _stats["avg_poll_ms"] = avg
+
+# ── Retry helper (Spine-style exponential backoff with jitter) ──────────
+MAX_SNMP_RETRIES = int(os.environ.get("NET_POLLER_RETRIES", "3"))
+RETRY_BASE_MS    = int(os.environ.get("NET_POLLER_RETRY_BASE_MS", "500"))
+
+def _snmp_retry(fn_name: str, fn, *args, **kwargs):
+    """
+    Call an SNMP function with exponential backoff retry.
+    Treats empty/None result as a failure to retry.
+    Returns (result, retries_used). Caller can detect degraded state when
+    retries_used > 0 even on success.
+    """
+    import random
+    last_result = None
+    retries_used = 0
+    for attempt in range(MAX_SNMP_RETRIES):
+        try:
+            result = fn(*args, **kwargs)
+            if result:
+                if attempt > 0:
+                    with _stats_lock:
+                        _stats["total_retries"] += attempt
+                    log.info(f"{fn_name} succeeded on attempt {attempt+1} "
+                             f"(after {attempt} retries)")
+                retries_used = attempt
+                return result, retries_used
+            last_result = result
+        except Exception as e:
+            last_result = None
+            log.debug(f"{fn_name} attempt {attempt+1} raised: {e}")
+        if attempt < MAX_SNMP_RETRIES - 1:
+            # Exponential backoff with jitter: base * 2^attempt + random(0..base)
+            delay_ms = RETRY_BASE_MS * (2 ** attempt) + random.randint(0, RETRY_BASE_MS)
+            time.sleep(delay_ms / 1000.0)
+            retries_used = attempt + 1
+    # All retries exhausted
+    with _stats_lock:
+        _stats["total_retries"] += MAX_SNMP_RETRIES - 1
+    return last_result, retries_used
 
 
 def _stats_set(**kv):
@@ -316,16 +376,21 @@ def poll_one_device(dev: dict) -> dict:
         "location":    dev.get("location") or "",
     }
 
+    total_retries = 0  # accumulated retries this poll cycle
     try:
-        # 1) System info + uptime
-        sysinfo = nsnmp.snmp_get(dev,
+        # 1) System info + uptime (with retry+backoff)
+        sysinfo, r1 = _snmp_retry("sysinfo", nsnmp.snmp_get, dev,
             nsnmp.OID_SYS_DESCR, nsnmp.OID_SYS_NAME,
             nsnmp.OID_SYS_OBJECT_ID, nsnmp.OID_SYS_UPTIME)
+        total_retries += r1
         if not sysinfo:
             ms = int((time.time() - start) * 1000)
             ndb.set_device_status(dev_id, "offline", ms)
+            log.warning(f"[{dev_name}] OFFLINE after {MAX_SNMP_RETRIES} retries "
+                        f"({dev_ip}) — sysinfo SNMP timeout")
             return {"id": dev_id, "name": dev_name, "ms": ms,
-                    "ok": False, "error": "SNMP timeout"}
+                    "ok": False, "error": f"SNMP timeout (after {MAX_SNMP_RETRIES} retries)",
+                    "retries": r1}
 
         sys_descr  = sysinfo.get(nsnmp.OID_SYS_DESCR, "")
         sys_name   = sysinfo.get(nsnmp.OID_SYS_NAME, "")
@@ -351,7 +416,10 @@ def poll_one_device(dev: dict) -> dict:
         enabled_idx = {i["if_index"] for i in ifaces_db if i.get("polling_enabled", 1)}
         poll_all_ifaces = (not ifaces_db)   # never discovered → poll everything
 
-        counters = nsnmp.fetch_interface_counters(dev)
+        # Interface counters with retry+backoff
+        counters, r2 = _snmp_retry("counters", nsnmp.fetch_interface_counters, dev)
+        counters = counters or {}
+        total_retries += r2
 
         # Build lookup map for tags from SQLite (alias, type, vlan)
         iface_meta = {i["if_index"]: i for i in ifaces_db}
@@ -405,16 +473,46 @@ def poll_one_device(dev: dict) -> dict:
         with _counters_lock:
             _counters_cache[dev_id] = new_cache
 
-        # 4) Write to InfluxDB
-        ok = write_influx(lines)
+        # 4) Per-device poll health line (Cacti-style poller telemetry)
         ms = int((time.time() - start) * 1000)
+        health_fields = {
+            "poll_duration_ms": int(ms),
+            "lines_written":    int(len(lines)),
+            "interfaces":       int(len(counters)),
+            "retries":          int(total_retries),
+        }
+        hl = _build_line("net_poll_health", base_tags, health_fields, ts_ns)
+        if hl: lines.append(hl)
+
+        # 5) Write to InfluxDB
+        ok = write_influx(lines)
+
+        # Status logic: online | degraded (had retries) | offline (write failed)
+        if not ok:
+            status = "offline"
+        elif total_retries > 0:
+            status = "degraded"
+            with _stats_lock:
+                _stats["degraded_count"] = _stats.get("degraded_count", 0) + 1
+                dl = _stats.setdefault("degraded_devices", [])
+                dl.insert(0, {"id": dev_id, "name": dev_name,
+                              "retries": total_retries, "ts": int(time.time())})
+                _stats["degraded_devices"] = dl[:20]
+        else:
+            status = "online"
 
         ndb.set_device_status(
-            dev_id, "online" if ok else "offline", ms,
+            dev_id, status, ms,
             sys_name=sys_name, sys_descr=sys_descr, sys_object_id=sys_obj_id)
 
+        if ok:
+            _record_poll_ms(ms)
+            with _stats_lock:
+                _stats["last_success_at"] = int(time.time())
+
         return {"id": dev_id, "name": dev_name, "ms": ms, "ok": ok,
-                "lines": len(lines)}
+                "lines": len(lines), "retries": total_retries,
+                "status": status}
 
     except Exception as e:
         ms = int((time.time() - start) * 1000)
@@ -481,6 +579,10 @@ def main():
                 fail_count = 0
                 slow = []
                 failed = []
+                # Track queue depth + active workers for /network/poller/status
+                with _stats_lock:
+                    _stats["queue_depth"]    = len(futures)
+                    _stats["active_workers"] = min(MAX_WORKERS, len(futures))
                 for f in as_completed(futures, timeout=120):
                     try:
                         r = f.result()
@@ -512,6 +614,8 @@ def main():
                     devices_failed=fail_count,
                     failed_devices=failed[-50:],   # keep last 50
                     slowest_devices=slow[:10],
+                    queue_depth=0,
+                    active_workers=0,
                 )
 
                 if ok_count or fail_count:

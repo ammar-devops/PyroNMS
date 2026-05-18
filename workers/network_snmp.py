@@ -97,7 +97,10 @@ def snmp_get(dev: dict, *oids, timeout: int = None) -> dict:
                 continue
             parts = line.split(None, 1)
             if len(parts) == 2:
-                out[parts[0]] = parts[1].strip().strip('"')
+                # Strip leading dot from -Oqn output so callers can index
+                # the dict by their original (non-dotted) OID.
+                key = parts[0].lstrip(".")
+                out[key] = parts[1].strip().strip('"')
         return out
     except Exception as e:
         log.debug(f"snmp_get {dev.get('ip')} {oids}: {e}")
@@ -110,16 +113,22 @@ def snmp_bulk_walk(dev: dict, base_oid: str, max_rep: int = 25,
     snmpbulkwalk — returns {index_suffix: value_str} for a subtree.
     Index_suffix is the part of the OID after base_oid (e.g. for
     ifDescr.42 we return {"42": "..."}).
+
+    NOTE: net-snmp's -Oqn emits OIDs with a leading dot (".1.3.6...").
+    Strip it before prefix-matching so the caller can pass base_oid
+    with or without leading dot. (Earlier code missed every match
+    because of this — silently broke ALL interface polling.)
     """
     t = timeout or int(dev.get("snmp_timeout") or 3)
     r = int(dev.get("snmp_retries") or 1)
     cmd = ["snmpbulkwalk", "-Oqn", f"-t{t}", f"-r{r}", f"-Cr{max_rep}"] \
         + _build_auth_args(dev) + [_target(dev), base_oid]
     out = {}
+    base_norm = base_oid.lstrip(".")
+    prefix    = base_norm + "."
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=max(t * 4, 30))
-        prefix = base_oid + "."
         for line in proc.stdout.splitlines():
             line = line.strip()
             if not line or "No Such" in line:
@@ -127,10 +136,11 @@ def snmp_bulk_walk(dev: dict, base_oid: str, max_rep: int = 25,
             parts = line.split(None, 1)
             if len(parts) != 2:
                 continue
-            oid, val = parts[0], parts[1].strip().strip('"')
+            oid_raw, val = parts[0], parts[1].strip().strip('"')
+            oid = oid_raw.lstrip(".")
             if oid.startswith(prefix):
                 out[oid[len(prefix):]] = val
-            elif oid.startswith(base_oid):  # exact match (uncommon)
+            elif oid == base_norm:   # exact match (uncommon)
                 out[""] = val
         return out
     except Exception as e:
@@ -145,10 +155,11 @@ def snmp_walk(dev: dict, base_oid: str, timeout: int = None) -> dict:
     cmd = ["snmpwalk", "-Oqn", f"-t{t}", f"-r{r}"] \
         + _build_auth_args(dev) + [_target(dev), base_oid]
     out = {}
+    base_norm = base_oid.lstrip(".")
+    prefix    = base_norm + "."
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=max(t * 4, 30))
-        prefix = base_oid + "."
         for line in proc.stdout.splitlines():
             line = line.strip()
             if not line or "No Such" in line:
@@ -156,7 +167,8 @@ def snmp_walk(dev: dict, base_oid: str, timeout: int = None) -> dict:
             parts = line.split(None, 1)
             if len(parts) != 2:
                 continue
-            oid, val = parts[0], parts[1].strip().strip('"')
+            oid_raw, val = parts[0], parts[1].strip().strip('"')
+            oid = oid_raw.lstrip(".")
             if oid.startswith(prefix):
                 out[oid[len(prefix):]] = val
         return out

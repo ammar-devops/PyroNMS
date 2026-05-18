@@ -55,6 +55,28 @@ SNMP_OID_TEMPLATE_PATH = Path("/opt/ont-monitor/config/snmp_oid_templates.json")
 
 # ─── InfluxDB helpers ─────────────────────────────────────────────────────────
 
+# Server-side graph-stats cache (5-second TTL) — avoids hammering Flux
+# on repeated card refreshes/re-renders
+_NET_STATS_CACHE: dict = {}      # key="<graph_id>:<range>" → (expires_at, payload)
+_NET_STATS_TTL_SEC = 5
+import threading as _threading
+_NET_STATS_LOCK = _threading.Lock()
+
+def _net_stats_cache_get(key):
+    with _NET_STATS_LOCK:
+        entry = _NET_STATS_CACHE.get(key)
+        if entry and entry[0] > time.time():
+            return entry[1]
+    return None
+
+def _net_stats_cache_put(key, payload):
+    with _NET_STATS_LOCK:
+        _NET_STATS_CACHE[key] = (time.time() + _NET_STATS_TTL_SEC, payload)
+        # Crude eviction — keep size bounded
+        if len(_NET_STATS_CACHE) > 500:
+            _NET_STATS_CACHE.clear()
+
+
 def influx_query(flux):
     """Run a Flux query against InfluxDB, return list of row dicts."""
     url  = f"{INFLUX_URL}/api/v2/query?org={urllib.parse.quote(INFLUX_ORG)}"
@@ -2588,10 +2610,15 @@ from(bucket:"{INFLUX_BUCKET}")
                 import network_db as ndb
                 NET_BUCKET = os.environ.get("NETWORK_INFLUX_BUCKET",
                                             "network_monitoring")
-                _range_map = {"1h":"-1h","6h":"-6h","24h":"-24h",
-                              "7d":"-7d","30d":"-30d"}
-                _win_map   = {"1h":"1m","6h":"5m","24h":"15m",
-                              "7d":"1h","30d":"6h"}
+                # Cacti-style full range → Flux start/aggregation window
+                _range_map = {"30m":"-30m","1h":"-1h","2h":"-2h","4h":"-4h",
+                              "6h":"-6h","12h":"-12h","1d":"-24h","2d":"-48h",
+                              "1w":"-7d","2w":"-14d","1m":"-30d","2m":"-60d",
+                              "1y":"-365d","24h":"-24h","7d":"-7d","30d":"-30d"}
+                _win_map   = {"30m":"30s","1h":"1m","2h":"2m","4h":"5m",
+                              "6h":"5m","12h":"10m","1d":"15m","2d":"30m",
+                              "1w":"1h","2w":"2h","1m":"6h","2m":"12h",
+                              "1y":"1d","24h":"15m","7d":"1h","30d":"6h"}
                 start  = _range_map.get(range_p, "-1h")
                 window = _win_map.get(range_p, "5m")
                 graph  = ndb.get_graph(int(graph_id_s))
@@ -2636,7 +2663,9 @@ from(bucket:"{INFLUX_BUCKET}")
                     series = [{"name": field,
                                "data": [float(r.get("_value") or 0) for r in rows]}]
                 return self.send_json(200, {"ok": True, "labels": labels,
-                                           "series": series, "graph": graph})
+                                           "series": series, "graph": graph,
+                                           "graph_name": graph.get("graph_name",""),
+                                           "graph_type": gtype})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
@@ -2652,10 +2681,15 @@ from(bucket:"{INFLUX_BUCKET}")
                 import network_db as ndb
                 NET_BUCKET = os.environ.get("NETWORK_INFLUX_BUCKET",
                                             "network_monitoring")
-                _range_map = {"1h":"-1h","6h":"-6h","24h":"-24h",
-                              "7d":"-7d","30d":"-30d"}
-                _win_map   = {"1h":"1m","6h":"5m","24h":"15m",
-                              "7d":"1h","30d":"6h"}
+                # Cacti-style full range → Flux start/aggregation window
+                _range_map = {"30m":"-30m","1h":"-1h","2h":"-2h","4h":"-4h",
+                              "6h":"-6h","12h":"-12h","1d":"-24h","2d":"-48h",
+                              "1w":"-7d","2w":"-14d","1m":"-30d","2m":"-60d",
+                              "1y":"-365d","24h":"-24h","7d":"-7d","30d":"-30d"}
+                _win_map   = {"30m":"30s","1h":"1m","2h":"2m","4h":"5m",
+                              "6h":"5m","12h":"10m","1d":"15m","2d":"30m",
+                              "1w":"1h","2w":"2h","1m":"6h","2m":"12h",
+                              "1y":"1d","24h":"15m","7d":"1h","30d":"6h"}
                 start  = _range_map.get(range_p, "-1h")
                 window = _win_map.get(range_p, "5m")
                 did    = int(device_id_s)
@@ -2707,6 +2741,150 @@ from(bucket:"{INFLUX_BUCKET}")
                     result.append({"graph": graph, "labels": labels,
                                    "series": series})
                 return self.send_json(200, {"ok": True, "previews": result})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── GET /network/graph-stats?graph_id=N&range=1h ──────────────────────
+        # Cacti-style real stats — server-computed via separate Flux queries.
+        # Returns {current, avg, max, total_in, total_out, last_updated, points}
+        # 5-second server-side cache to avoid hammering Flux on rapid refreshes.
+        elif parsed.path == "/network/graph-stats":
+            user = require_auth(self)
+            if not user: return
+            graph_id_s = params.get("graph_id", [""])[0].strip()
+            range_p    = params.get("range",    ["1h"])[0].strip()
+            if not graph_id_s:
+                return self.send_json(400, {"error": "graph_id required"})
+            # Cache check
+            _cache_key = f"{graph_id_s}:{range_p}"
+            _cached = _net_stats_cache_get(_cache_key)
+            if _cached is not None:
+                _cached["_cached"] = True
+                return self.send_json(200, _cached)
+            try:
+                import network_db as ndb
+                NET_BUCKET = os.environ.get("NETWORK_INFLUX_BUCKET",
+                                            "network_monitoring")
+                _range_map = {"30m":"-30m","1h":"-1h","2h":"-2h","4h":"-4h",
+                              "6h":"-6h","12h":"-12h","1d":"-24h","2d":"-48h",
+                              "1w":"-7d","2w":"-14d","1m":"-30d","2m":"-60d",
+                              "1y":"-365d","24h":"-24h","7d":"-7d","30d":"-30d"}
+                # window in seconds — used to convert bps avg → total bytes
+                _win_secs = {"30m":1800,"1h":3600,"2h":7200,"4h":14400,
+                             "6h":21600,"12h":43200,"1d":86400,"2d":172800,
+                             "1w":604800,"2w":1209600,"1m":2592000,
+                             "2m":5184000,"1y":31536000,"24h":86400,
+                             "7d":604800,"30d":2592000}
+                start  = _range_map.get(range_p, "-1h")
+                window_sec = _win_secs.get(range_p, 3600)
+                graph  = ndb.get_graph(int(graph_id_s))
+                if not graph:
+                    return self.send_json(404, {"error": "Graph not found"})
+                gtype  = graph.get("graph_type", "")
+                did    = str(graph.get("device_id", ""))
+
+                # Helper — run a Flux query, return first row's _value (or None)
+                def _flux_one(flux):
+                    rows = influx_query(flux)
+                    if not rows: return None
+                    v = rows[0].get("_value")
+                    try: return float(v) if v is not None else None
+                    except: return None
+
+                stats = {"current": None, "avg": None, "max": None,
+                         "total_in": None, "total_out": None,
+                         "last_updated": None, "points": 0,
+                         "graph_type": gtype}
+
+                if gtype == "traffic":
+                    iname = graph.get("interface_name") or ""
+                    base_filter = (f'r._measurement=="net_iface"'
+                                   f' and r.device_id=="{did}"'
+                                   f' and r.interface=="{iname}"')
+                    # RX: current/avg/max/sum
+                    rx_cur = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="rx_bps")'
+                        f' |> last()')
+                    rx_avg = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="rx_bps")'
+                        f' |> mean()')
+                    rx_max = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="rx_bps")'
+                        f' |> max()')
+                    tx_cur = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="tx_bps")'
+                        f' |> last()')
+                    tx_avg = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="tx_bps")'
+                        f' |> mean()')
+                    tx_max = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="tx_bps")'
+                        f' |> max()')
+                    # Total bytes ≈ avg_bps × window_seconds / 8
+                    stats["rx_current"] = rx_cur
+                    stats["rx_avg"]     = rx_avg
+                    stats["rx_max"]     = rx_max
+                    stats["tx_current"] = tx_cur
+                    stats["tx_avg"]     = tx_avg
+                    stats["tx_max"]     = tx_max
+                    stats["total_in"]   = (rx_avg * window_sec / 8) if rx_avg else 0
+                    stats["total_out"]  = (tx_avg * window_sec / 8) if tx_avg else 0
+                    stats["current"]    = (rx_cur or 0) + (tx_cur or 0)
+                    stats["avg"]        = ((rx_avg or 0) + (tx_avg or 0)) / 2
+                    stats["max"]        = max(rx_max or 0, tx_max or 0)
+                    # last updated — most recent _time
+                    rows = influx_query(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="rx_bps")'
+                        f' |> last() |> keep(columns:["_time"])')
+                    if rows:
+                        stats["last_updated"] = rows[0].get("_time")
+                    # points count
+                    rows2 = influx_query(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter} and r._field=="rx_bps")'
+                        f' |> count()')
+                    if rows2:
+                        try: stats["points"] = int(rows2[0].get("_value") or 0)
+                        except: pass
+                else:
+                    _fmap = {"cpu": "cpu_pct", "memory": "mem_pct",
+                             "temperature": "temp_c", "uptime": "uptime_sec",
+                             "errors": "rx_errors"}
+                    field = _fmap.get(gtype, gtype)
+                    base_filter = (f'r._measurement=="net_resource"'
+                                   f' and r.device_id=="{did}"'
+                                   f' and r._field=="{field}"')
+                    stats["current"] = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> last()')
+                    stats["avg"] = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> mean()')
+                    stats["max"] = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> max()')
+                    rows = influx_query(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> last()'
+                        f' |> keep(columns:["_time"])')
+                    if rows: stats["last_updated"] = rows[0].get("_time")
+                    rows2 = influx_query(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> count()')
+                    if rows2:
+                        try: stats["points"] = int(rows2[0].get("_value") or 0)
+                        except: pass
+
+                resp = {"ok": True, "stats": stats, "graph": graph}
+                _net_stats_cache_put(_cache_key, resp)
+                return self.send_json(200, resp)
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
@@ -3172,7 +3350,13 @@ from(bucket:"{INFLUX_BUCKET}")
             except ValueError as e:
                 return self.send_json(400, {"ok": False, "error": str(e)})
             except Exception as e:
-                return self.send_json(500, {"ok": False, "error": str(e)})
+                msg = str(e)
+                if "UNIQUE constraint failed: network_devices.ip" in msg:
+                    ip = payload.get("ip", "")
+                    return self.send_json(409, {"ok": False,
+                        "error": f"A device with IP {ip} already exists. "
+                                  "Find it in the Devices list and edit it instead."})
+                return self.send_json(500, {"ok": False, "error": msg})
 
         # ── POST /network/devices/<id>/discover ───────────────────────────────
         elif re.match(r"^/network/devices/(\d+)/discover$", parsed.path):

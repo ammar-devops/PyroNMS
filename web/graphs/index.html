@@ -197,9 +197,10 @@
 
     /* ── Status dots ── */
     .pg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
-    .pg-dot-green { background: var(--green); }
-    .pg-dot-red { background: var(--red); }
-    .pg-dot-gray { background: var(--muted); }
+    .pg-dot-green  { background: var(--green); }
+    .pg-dot-red    { background: var(--red); }
+    .pg-dot-yellow { background: var(--yellow); box-shadow: 0 0 4px var(--yellow); }
+    .pg-dot-gray   { background: var(--muted); }
 
     /* ── Template cards ── */
     .pg-tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap: 12px; }
@@ -604,11 +605,14 @@ async function pgInit() {
 }
 
 function pgUpdateStatusPill() {
-  const online = pgDevices.filter(d => d.status === 'online').length;
-  const offline = pgDevices.filter(d => d.status === 'offline').length;
+  const _st = d => d.last_status || d.status || '';
+  const online    = pgDevices.filter(d => _st(d) === 'online').length;
+  const degraded  = pgDevices.filter(d => _st(d) === 'degraded').length;
+  const offline   = pgDevices.filter(d => _st(d) === 'offline').length;
   document.getElementById('pg-status-pill').innerHTML =
-    `<span style="color:#22c55e;">●</span> ${online} online &nbsp;` +
-    (offline ? `<span style="color:#ef4444;">●</span> ${offline} offline` : '');
+    `<span style="color:#22c55e;">●</span> ${online} online` +
+    (degraded ? ` &nbsp;<span style="color:#eab308;">●</span> ${degraded} degraded` : '') +
+    (offline  ? ` &nbsp;<span style="color:#ef4444;">●</span> ${offline} offline`   : '');
 }
 
 // ── Tab switching ────────────────────────
@@ -661,8 +665,11 @@ function pgRenderTree() {
     </div>
     <div class="pg-tree-children" id="${folderId}">`;
     grouped[gi].forEach(dev => {
-      const dot = dev.status === 'online' ? '#22c55e' : dev.status === 'offline' ? '#ef4444' : '#6b7280';
-      html += `<div class="pg-tree-device" onclick="pgTreeSelectDev(${dev.id})" id="pg-tdev-${dev.id}">
+      const st  = dev.last_status || dev.status || '';
+      const dot = st === 'online'  ? '#22c55e' :
+                  st === 'offline' ? '#ef4444' :
+                  st === 'degraded'? '#eab308' : '#6b7280';
+      html += `<div class="pg-tree-device" onclick="pgTreeSelectDev(${dev.id})" id="pg-tdev-${dev.id}" title="${st}">
         <span style="color:${dot};">●</span> ${_pgEsc(dev.name)}
       </div>`;
     });
@@ -744,6 +751,10 @@ function pgSetRange(r) {
 }
 
 // ── Grid loading ─────────────────────────
+// Server returns: {ok:true, previews:[{graph:{id,graph_name,graph_type,device_id,
+//   device_name,interface_name,...}, labels:[], series:[{name,data}]}]}
+// We flatten into: {graph_id, graph_name, device_name, graph_type,
+//   interface_name, labels, series}
 async function pgLoadGrid() {
   const grid = document.getElementById('pg-grid');
   grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">Loading…</div>`;
@@ -752,18 +763,48 @@ async function pgLoadGrid() {
   Object.values(pgCharts).forEach(c => { try { c.destroy(); } catch(e){} });
   pgCharts = {};
 
-  let url = API + '/network/graph-preview?range=' + pgRange;
-  if (pgDevFilter) url += '&device_id=' + pgDevFilter;
-
+  // graph-preview needs a device_id. If "All Devices" selected, loop over all.
+  let rawPreviews = [];
   try {
-    const res = await fetch(url, { headers: pgAuthHeaders() });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    pgPreviews = data.graphs || [];
+    let devIds = [];
+    if (pgDevFilter) {
+      devIds = [pgDevFilter];
+    } else {
+      devIds = pgDevices.map(d => d.id);
+    }
+    if (!devIds.length) {
+      grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">
+        <div style="font-size:18px;margin-bottom:8px;">No devices yet</div>
+        <div style="font-size:13px;">Click <strong>+ Device</strong> to add your first SNMP device.</div>
+      </div>`;
+      pgRenderPager(0, 0);
+      return;
+    }
+    // Fetch graph-preview for each device in parallel
+    const results = await Promise.all(devIds.map(async (did) => {
+      try {
+        const r = await fetch(API + '/network/graph-preview?range=' + pgRange + '&device_id=' + did,
+          { headers: pgAuthHeaders() });
+        if (!r.ok) return [];
+        const j = await r.json();
+        return (j.previews || []).map(p => ({
+          graph_id:       p.graph?.id,
+          graph_name:     p.graph?.graph_name || '',
+          graph_type:     p.graph?.graph_type || '',
+          device_id:      p.graph?.device_id,
+          device_name:    p.graph?.device_name || '',
+          interface_name: p.graph?.interface_name || '',
+          labels:         p.labels || [],
+          series:         p.series || [],
+        }));
+      } catch(e) { return []; }
+    }));
+    rawPreviews = results.flat();
   } catch(e) {
     grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:#ef4444;">Failed to load graphs: ${e.message}</div>`;
     return;
   }
+  pgPreviews = rawPreviews;
 
   // Apply client-side filters
   let filtered = pgPreviews;
@@ -781,7 +822,10 @@ async function pgLoadGrid() {
     `${total} graph${total !== 1 ? 's' : ''}`;
 
   if (!slice.length) {
-    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">No graphs found. Add a device and run the poller.</div>`;
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">
+      <div style="font-size:16px;margin-bottom:8px;">No graphs yet</div>
+      <div style="font-size:12px;">Run <strong>Discover</strong> on a device to create graphs from its interfaces.</div>
+    </div>`;
     pgRenderPager(0, 0);
     return;
   }
@@ -798,7 +842,88 @@ async function pgLoadGrid() {
     if (pv.labels && pv.series) pgDrawChart(canId, pv.labels, pv.series);
   });
 
+  // Fetch real Cacti stats per card (server-side via /network/graph-stats)
+  slice.forEach((pv) => pgFetchCardStats(pv));
+
   pgRenderPager(pgPage, totalPages);
+}
+
+// ── Fetch real Cacti-style stats from server (per card) ─────────────────
+async function pgFetchCardStats(pv) {
+  if (!pv.graph_id) return;
+  try {
+    const r = await fetch(API + '/network/graph-stats?graph_id=' + pv.graph_id + '&range=' + pgRange,
+      { headers: pgAuthHeaders() });
+    if (!r.ok) return;
+    const j = await r.json();
+    const s = j.stats || {};
+    const el = document.getElementById('pg-stats-' + pv.graph_id);
+    if (!el) return;
+    el.innerHTML = pgBuildStatsTable(s, pv.graph_type);
+    const footerEl = document.getElementById('pg-footer-' + pv.graph_id);
+    if (footerEl && s.last_updated) {
+      footerEl.innerHTML = `Interface: ${_pgEsc(pv.interface_name||pv.graph_name||'—')} · ` +
+        `Updated: ${pgRelTime(s.last_updated)} · ${s.points||0} pts`;
+    }
+  } catch(e) { /* silent */ }
+}
+
+function pgBuildStatsTable(s, gtype) {
+  if (gtype === 'traffic') {
+    return `<table class="pg-stats">
+      <thead><tr><th></th><th>Direction</th><th>Current</th><th>Avg</th><th>Max</th><th>Total</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="pg-swatch" style="background:${PG_COLORS[0]}"></span></td>
+          <td>Inbound</td>
+          <td class="pg-stat-val">${pgFmtBps(s.rx_current)}</td>
+          <td class="pg-stat-val">${pgFmtBps(s.rx_avg)}</td>
+          <td class="pg-stat-val">${pgFmtBps(s.rx_max)}</td>
+          <td class="pg-stat-val">${pgFmtBytes(s.total_in)}</td>
+        </tr>
+        <tr>
+          <td><span class="pg-swatch" style="background:${PG_COLORS[1]}"></span></td>
+          <td>Outbound</td>
+          <td class="pg-stat-val">${pgFmtBps(s.tx_current)}</td>
+          <td class="pg-stat-val">${pgFmtBps(s.tx_avg)}</td>
+          <td class="pg-stat-val">${pgFmtBps(s.tx_max)}</td>
+          <td class="pg-stat-val">${pgFmtBytes(s.total_out)}</td>
+        </tr>
+      </tbody>
+    </table>`;
+  } else {
+    return `<table class="pg-stats">
+      <thead><tr><th></th><th>Metric</th><th>Current</th><th>Avg</th><th>Max</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="pg-swatch" style="background:${PG_COLORS[0]}"></span></td>
+          <td>${_pgEsc(gtype||'value')}</td>
+          <td class="pg-stat-val">${pgFmtVal(s.current, gtype)}</td>
+          <td class="pg-stat-val">${pgFmtVal(s.avg, gtype)}</td>
+          <td class="pg-stat-val">${pgFmtVal(s.max, gtype)}</td>
+        </tr>
+      </tbody>
+    </table>`;
+  }
+}
+
+function pgFmtBytes(v) {
+  if (!isFinite(v) || v == null) return '—';
+  if (v >= 1e12) return (v/1e12).toFixed(2) + ' TB';
+  if (v >= 1e9)  return (v/1e9).toFixed(2)  + ' GB';
+  if (v >= 1e6)  return (v/1e6).toFixed(2)  + ' MB';
+  if (v >= 1e3)  return (v/1e3).toFixed(2)  + ' KB';
+  return v.toFixed(0) + ' B';
+}
+
+function pgRelTime(iso) {
+  if (!iso) return 'never';
+  const t = new Date(iso).getTime();
+  const ago = (Date.now() - t) / 1000;
+  if (ago < 60)   return Math.floor(ago) + 's ago';
+  if (ago < 3600) return Math.floor(ago/60) + 'm ago';
+  if (ago < 86400) return Math.floor(ago/3600) + 'h ago';
+  return Math.floor(ago/86400) + 'd ago';
 }
 
 function pgRenderCard(pv, idx) {
@@ -810,35 +935,19 @@ function pgRenderCard(pv, idx) {
   const badge = pv.graph_type || 'graph';
   const devName = _pgEsc(pv.device_name || 'Unknown');
   const graphName = _pgEsc(pv.graph_name || 'Graph');
+  const ifaceName = _pgEsc(pv.interface_name || pv.graph_name || '');
 
-  // Build stats rows
-  let statsRows = '';
-  if (pv.series && pv.series.length) {
-    pv.series.forEach((s, si) => {
-      const st = pgCalcStats(s.data || []);
-      const color = PG_COLORS[si % PG_COLORS.length];
-      statsRows += `<tr>
-        <td><span class="pg-swatch" style="background:${color}"></span></td>
-        <td>${_pgEsc(s.label||'Series '+(si+1))}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.current, pv.graph_type)}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.avg, pv.graph_type)}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.max, pv.graph_type)}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.total, pv.graph_type)}</td>
-      </tr>`;
-    });
-  }
-
+  // Stats container — populated async by pgFetchCardStats (real backend values)
   card.innerHTML = `
     <div class="pg-card-title">
       <span>${devName} — ${graphName}</span>
       <span class="pg-badge">${badge}</span>
     </div>
     <div class="pg-canvas-wrap"><canvas id="${canId}"></canvas></div>
-    ${statsRows ? `<table class="pg-stats">
-      <thead><tr><th></th><th>Name</th><th>Current</th><th>Avg</th><th>Max</th><th>Total</th></tr></thead>
-      <tbody>${statsRows}</tbody>
-    </table>` : ''}
-    <div class="pg-card-footer">Device: ${devName} · Interface: ${graphName}</div>
+    <div id="pg-stats-${pv.graph_id}" class="pg-stats-wrap">
+      <div style="font-size:10px;color:var(--muted);padding:4px;text-align:center;">⏳ loading stats…</div>
+    </div>
+    <div id="pg-footer-${pv.graph_id}" class="pg-card-footer">Interface: ${ifaceName}</div>
   `;
   return card;
 }
@@ -992,24 +1101,17 @@ async function pgZoomLoad() {
       }
     });
 
-    // Stats table
-    let rows = '';
-    series.forEach((s, si) => {
-      const st  = pgCalcStats(s.data || []);
-      const col = PG_COLORS[si % PG_COLORS.length];
-      rows += `<tr>
-        <td><span class="pg-swatch" style="background:${col}"></span></td>
-        <td>${_pgEsc(s.label||'Series '+(si+1))}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.current, gtype)}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.avg, gtype)}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.max, gtype)}</td>
-        <td class="pg-stat-val">${pgFmtVal(st.total, gtype)}</td>
-      </tr>`;
-    });
-    statsEl.innerHTML = rows ? `<table class="pg-stats" style="margin-top:8px;">
-      <thead><tr><th></th><th>Series</th><th>Current</th><th>Avg</th><th>Max</th><th>Total</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>` : '';
+    // Real Cacti stats from backend (server-computed via Flux)
+    try {
+      const sr = await fetch(API + '/network/graph-stats?graph_id=' + pgZoomGraphId + '&range=' + pgZoomRange,
+        { headers: pgAuthHeaders() });
+      const sj = await sr.json();
+      const s = sj.stats || {};
+      statsEl.innerHTML = pgBuildStatsTable(s, gtype) +
+        (s.last_updated ? `<div style="font-size:11px;color:var(--muted);margin-top:8px;text-align:right;">Last updated: ${pgRelTime(s.last_updated)} · ${s.points||0} data points</div>` : '');
+    } catch(se) {
+      statsEl.innerHTML = `<div style="color:#ef4444;font-size:12px;">Stats error: ${se.message}</div>`;
+    }
 
   } catch(e) {
     statsEl.innerHTML = `<div style="color:#ef4444;font-size:12px;">Error: ${e.message}</div>`;
@@ -1045,17 +1147,24 @@ async function pgRenderDevicesPage(c) {
     pgDevices = devs;
 
     let rows = devs.map(d => {
-      const dot = d.status === 'online'  ? 'pg-dot-green' :
-                  d.status === 'offline' ? 'pg-dot-red'   : 'pg-dot-gray';
+      const st = d.last_status || d.status || 'unknown';
+      const dot = st === 'online'   ? 'pg-dot-green' :
+                  st === 'offline'  ? 'pg-dot-red'   :
+                  st === 'degraded' ? 'pg-dot-yellow': 'pg-dot-gray';
+      const stColor = st === 'online'   ? '#22c55e' :
+                      st === 'offline'  ? '#ef4444' :
+                      st === 'degraded' ? '#eab308' : '#6b7280';
+      const lastPoll = d.last_poll_ms ? `${d.last_poll_ms}ms` : '—';
       return `<tr>
         <td>${d.id}</td>
         <td><strong>${_pgEsc(d.name)}</strong></td>
-        <td>${_pgEsc(d.ip_address)}</td>
+        <td>${_pgEsc(d.ip||d.ip_address||'')}</td>
         <td>${_pgEsc(d.vendor||'generic')}</td>
         <td>${_pgEsc(d.snmp_community||'public')}</td>
-        <td><span class="pg-dot ${dot}"></span> ${d.status||'unknown'}</td>
+        <td><span class="pg-dot ${dot}"></span> <span style="color:${stColor};font-weight:600;">${st}</span> <span style="color:var(--muted);font-size:10px;">${lastPoll}</span></td>
         <td style="white-space:nowrap;">
-          <button class="pg-action-btn pg-btn-blue" onclick="pgEditDevice(${d.id})">Edit</button>
+          <button class="pg-action-btn pg-btn-gray" onclick="pgTestDevice(${d.id})" title="SNMP connectivity test">🔍 Test</button>
+          <button class="pg-action-btn pg-btn-blue" onclick="pgEditDevice(${d.id})" style="margin-left:4px;">Edit</button>
           <button class="pg-action-btn pg-btn-gray" onclick="pgDiscover(${d.id})" style="margin-left:4px;">Discover</button>
           <button class="pg-action-btn pg-btn-red" onclick="pgDeleteDevice(${d.id})" style="margin-left:4px;">Delete</button>
         </td>
@@ -1127,7 +1236,7 @@ async function pgRenderGraphMgmtPage(c) {
 async function pgDeleteGraph(id) {
   if (!confirm('Delete this graph and its data?')) return;
   try {
-    await fetch(API + '/network/graphs/' + id, { method: 'DELETE', headers: pgAuthHeaders() });
+    await fetch(API + '/network/graphs/' + id + '/delete', { method: 'POST', headers: pgAuthHeaders() });
     pgConsole('graphmgmt');
     pgLoadGrid();
   } catch(e) { alert('Error: ' + e.message); }
@@ -1183,29 +1292,71 @@ function pgRenderPollerTab() {
 async function pgRenderPollerPage(c) {
   c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
   try {
-    const res = await fetch(API + '/network/poller-status', { headers: pgAuthHeaders() });
-    const d = await res.json();
-    c.innerHTML = `<div class="pg-page-title">⚙ Poller Status</div>
+    const res = await fetch(API + '/network/poller/status', { headers: pgAuthHeaders() });
+    const j = await res.json();
+    const s = (j && j.status) ? j.status : {};
+    const uptime = s.uptime_sec ? _pgFmtDuration(s.uptime_sec) : '—';
+    const lastCycle = s.last_cycle_at ? new Date(s.last_cycle_at * 1000).toLocaleString() : '—';
+    const slowest = (s.slowest_devices || []).map(d =>
+      `<tr><td>${_pgEsc(d.name||'')}</td><td>${d.ms} ms</td></tr>`).join('');
+    const failed  = (s.failed_devices  || []).map(d =>
+      `<tr><td>${_pgEsc(d.name||'')}</td><td>${_pgEsc(d.ip||'')}</td><td style="color:#ef4444;">${_pgEsc(d.error||'')}</td></tr>`).join('');
+    const lastSuccess = s.last_success_at
+      ? new Date(s.last_success_at * 1000).toLocaleString() + ` (${pgRelTime(new Date(s.last_success_at*1000).toISOString())})`
+      : '—';
+    const degraded  = (s.degraded_devices || []).map(d =>
+      `<tr><td>${_pgEsc(d.name||'')}</td><td style="color:#eab308;">${d.retries||0} retries</td><td>${d.ts ? new Date(d.ts*1000).toLocaleTimeString() : '—'}</td></tr>`).join('');
+    c.innerHTML = `<div class="pg-page-title">⚙ Poller Health — Spine-style Cacti Engine</div>
       <div class="pg-stat-grid">
-        <div class="pg-stat-card"><div class="pg-stat-num">${d.total_devices??'—'}</div><div class="pg-stat-lbl">Total Devices</div></div>
-        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#22c55e">${d.online??'—'}</div><div class="pg-stat-lbl">Online</div></div>
-        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#ef4444">${d.offline??'—'}</div><div class="pg-stat-lbl">Offline</div></div>
-        <div class="pg-stat-card"><div class="pg-stat-num">${d.total_graphs??'—'}</div><div class="pg-stat-lbl">Graphs</div></div>
-        <div class="pg-stat-card"><div class="pg-stat-num">${d.poll_interval??60}s</div><div class="pg-stat-lbl">Poll Interval</div></div>
-        <div class="pg-stat-card"><div class="pg-stat-num">${d.threads??4}</div><div class="pg-stat-lbl">Threads</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num">${s.cycles??'—'}</div><div class="pg-stat-lbl">Total Cycles</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#22c55e">${s.devices_polled??'—'}</div><div class="pg-stat-lbl">Polled (last cycle)</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#ef4444">${s.devices_failed??0}</div><div class="pg-stat-lbl">Failed (last cycle)</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#eab308">${s.total_retries??0}</div><div class="pg-stat-lbl">Total Retries</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num">${s.avg_poll_ms??'—'}<span style="font-size:14px;color:var(--muted);"> ms</span></div><div class="pg-stat-lbl">Avg Poll Duration</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num">${s.last_cycle_ms??'—'}<span style="font-size:14px;color:var(--muted);"> ms</span></div><div class="pg-stat-lbl">Last Cycle Time</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num" style="color:var(--accent)">${s.active_workers??0}<span style="font-size:14px;color:var(--muted);"> / ${s.max_workers??8}</span></div><div class="pg-stat-lbl">Active / Workers</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num">${s.queue_depth??0}</div><div class="pg-stat-lbl">Queue Depth</div></div>
+        <div class="pg-stat-card"><div class="pg-stat-num" style="color:#f59e0b">${s.degraded_count??0}</div><div class="pg-stat-lbl">Degraded Polls</div></div>
       </div>
-      <table class="pg-table">
+      <table class="pg-table" style="margin-bottom:20px;">
         <thead><tr><th>Field</th><th>Value</th></tr></thead>
         <tbody>
-          <tr><td>Last Poll</td><td>${d.last_poll||'—'}</td></tr>
-          <tr><td>Next Poll</td><td>${d.next_poll||'—'}</td></tr>
-          <tr><td>InfluxDB Bucket</td><td>${d.influx_bucket||'network_monitoring'}</td></tr>
+          <tr><td>Started</td><td>${s.started_at ? new Date(s.started_at*1000).toLocaleString() : '—'}</td></tr>
+          <tr><td>Uptime</td><td>${uptime}</td></tr>
+          <tr><td>Last Cycle</td><td>${lastCycle}</td></tr>
+          <tr><td>Last Successful Poll</td><td>${lastSuccess}</td></tr>
+          <tr><td>InfluxDB Bucket</td><td>network_monitoring</td></tr>
           <tr><td>Service</td><td>pyronms-network-poller.service</td></tr>
         </tbody>
+      </table>
+      <h3 style="font-size:13px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Slowest Devices (last cycle)</h3>
+      <table class="pg-table" style="margin-bottom:20px;">
+        <thead><tr><th>Device</th><th>Poll Duration</th></tr></thead>
+        <tbody>${slowest || '<tr><td colspan="2" style="text-align:center;color:var(--muted);">No slow devices recorded.</td></tr>'}</tbody>
+      </table>
+      <h3 style="font-size:13px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Recent Failures</h3>
+      <table class="pg-table" style="margin-bottom:20px;">
+        <thead><tr><th>Device</th><th>IP</th><th>Error</th></tr></thead>
+        <tbody>${failed || '<tr><td colspan="3" style="text-align:center;color:#22c55e;">No failures.</td></tr>'}</tbody>
+      </table>
+      <h3 style="font-size:13px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Recent Degraded Polls (succeeded after retries)</h3>
+      <table class="pg-table">
+        <thead><tr><th>Device</th><th>Retries</th><th>When</th></tr></thead>
+        <tbody>${degraded || '<tr><td colspan="3" style="text-align:center;color:#22c55e;">No degraded polls.</td></tr>'}</tbody>
       </table>`;
   } catch(e) {
     c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
   }
+}
+
+function _pgFmtDuration(secs) {
+  if (!secs || secs < 0) return '—';
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 // ── Device CRUD modal ────────────────────
@@ -1256,14 +1407,15 @@ async function pgSaveDevice() {
     errEl.style.display = 'block'; return;
   }
 
-  const payload = { name, ip_address: ip, snmp_community: community, snmp_version: snmpVer, vendor };
+  // Server uses 'ip' (not ip_address)
+  const payload = { name, ip, snmp_community: community, snmp_version: snmpVer, vendor };
   const editId  = document.getElementById('pg-dev-edit-id').value;
-  const method  = editId ? 'PUT' : 'POST';
+  // Update + Create both use POST (real server endpoints)
   const url     = editId ? API + '/network/devices/' + editId : API + '/network/devices';
 
   try {
     const res = await fetch(url, {
-      method,
+      method: 'POST',
       headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
       body: JSON.stringify(payload),
     });
@@ -1292,7 +1444,7 @@ async function pgSaveDevice() {
 async function pgDeleteDevice(id) {
   if (!confirm('Delete this device and all its graphs?')) return;
   try {
-    await fetch(API + '/network/devices/' + id, { method: 'DELETE', headers: pgAuthHeaders() });
+    await fetch(API + '/network/devices/' + id + '/delete', { method: 'POST', headers: pgAuthHeaders() });
     const r2 = await fetch(API + '/network/devices', { headers: pgAuthHeaders() });
     const d2 = await r2.json();
     pgDevices = d2.devices || [];
@@ -1303,36 +1455,34 @@ async function pgDeleteDevice(id) {
   } catch(e) { alert('Error: ' + e.message); }
 }
 
-// ── Discover ─────────────────────────────
+// ── Discover (Cacti-style: POST /network/devices/{id}/discover) ──────────
 async function pgDiscover(devId) {
   pgDiscoverDevId = devId;
-  pgDiscoverData  = null;
-  document.getElementById('pg-discover-body').innerHTML = '<div style="color:var(--muted);">Scanning device…</div>';
+  document.getElementById('pg-discover-body').innerHTML =
+    '<div style="color:var(--muted);">🔍 Walking ifTable via SNMP… (this may take a few seconds)</div>';
   document.getElementById('pg-discover-apply-btn').style.display = 'none';
   document.getElementById('pg-discover-overlay').classList.add('open');
   try {
-    const res = await fetch(API + '/network/discover?device_id=' + devId, { headers: pgAuthHeaders() });
+    const res = await fetch(API + '/network/devices/' + devId + '/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
+      body: '{}',
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Discover failed');
-    pgDiscoverData = data;
     const ifaces = data.interfaces || [];
-    if (!ifaces.length) {
-      document.getElementById('pg-discover-body').innerHTML = '<div style="color:var(--muted);">No interfaces found.</div>';
-      return;
-    }
-    let html = `<p style="margin-bottom:12px;font-size:12px;color:var(--muted);">Found ${ifaces.length} interface(s). Select to graph:</p>`;
-    ifaces.forEach((iface, i) => {
-      html += `<div class="pg-discover-iface">
-        <input type="checkbox" id="pg-di-${i}" value="${i}" checked>
-        <label for="pg-di-${i}" style="flex:1;cursor:pointer;">
-          <strong>${_pgEsc(iface.if_name||iface.if_index)}</strong>
-          ${iface.if_descr ? '<span style="color:var(--muted);font-size:11px;"> — '+_pgEsc(iface.if_descr)+'</span>' : ''}
-          ${iface.if_speed ? '<span style="color:var(--accent);font-size:11px;"> '+pgFmtBps(iface.if_speed)+'</span>' : ''}
-        </label>
-      </div>`;
-    });
-    document.getElementById('pg-discover-body').innerHTML = html;
-    document.getElementById('pg-discover-apply-btn').style.display = '';
+    const created = data.graphs_created ?? data.created ?? 0;
+    const vendor = data.vendor_detected || data.vendor || '';
+    document.getElementById('pg-discover-body').innerHTML = `
+      <div style="color:#22c55e;font-weight:600;margin-bottom:10px;">✓ Discovery complete</div>
+      <table class="pg-table" style="font-size:12px;">
+        <tr><td><strong>Vendor detected</strong></td><td>${_pgEsc(vendor||'unknown')}</td></tr>
+        <tr><td><strong>Interfaces found</strong></td><td>${ifaces.length}</td></tr>
+        <tr><td><strong>Graphs created</strong></td><td style="color:#22c55e;">${created}</td></tr>
+        <tr><td><strong>sysDescr</strong></td><td style="font-size:11px;color:var(--muted);">${_pgEsc(data.sys_descr||'—')}</td></tr>
+      </table>
+      <div style="margin-top:14px;font-size:11px;color:var(--muted);">Graphs will be polled on the next cycle. Close this and check the Graphs tab.</div>
+    `;
   } catch(e) {
     document.getElementById('pg-discover-body').innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
   }
@@ -1340,27 +1490,36 @@ async function pgDiscover(devId) {
 
 function pgCloseDiscover() {
   document.getElementById('pg-discover-overlay').classList.remove('open');
+  // Refresh data after discovery
+  pgLoadGrid();
+  if (pgActiveTab === 'devices') pgRenderDevicesTab();
 }
 
-async function pgApplyDiscover() {
-  if (!pgDiscoverData) return;
-  const ifaces = pgDiscoverData.interfaces || [];
-  const selected = [];
-  ifaces.forEach((iface, i) => {
-    const cb = document.getElementById('pg-di-' + i);
-    if (cb && cb.checked) selected.push(iface);
-  });
-  if (!selected.length) { alert('Select at least one interface.'); return; }
+// ── Test SNMP (Cacti-style: POST /network/devices/{id}/test) ──────────
+async function pgTestDevice(id) {
+  const dev = pgDevices.find(d => d.id === id);
+  if (!dev) return;
   try {
-    const res = await fetch(API + '/network/apply-discovery', {
+    const res = await fetch(API + '/network/devices/' + id + '/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
-      body: JSON.stringify({ device_id: pgDiscoverDevId, interfaces: selected }),
+      body: '{}',
     });
-    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Apply failed'); }
-    pgCloseDiscover();
-    pgLoadGrid();
-  } catch(e) { alert('Error: ' + e.message); }
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      alert(`❌ SNMP test failed for ${dev.name}\n\n${data.error || 'Unknown error'}`);
+      return;
+    }
+    const r = data.result || data;
+    const msg = `✓ SNMP OK — ${dev.name}\n\n` +
+      `Latency: ${r.ms||'?'} ms\n` +
+      `Vendor: ${r.vendor_detected||'unknown'}\n` +
+      `sysName: ${r.sys_name||'—'}\n` +
+      `sysDescr: ${(r.sys_descr||'').substring(0,120)}`;
+    alert(msg);
+  } catch(e) {
+    alert('Test failed: ' + e.message);
+  }
 }
 
 // ── Utility ──────────────────────────────

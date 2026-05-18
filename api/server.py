@@ -35,7 +35,7 @@ except Exception as e:
 import urllib.parse
 import urllib.request
 import urllib.error
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 GENIEACS_NBI   = "http://localhost:7557"
@@ -3850,8 +3850,12 @@ def _uplink_poller():
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", API_PORT), Handler)
-    print(f"[API] ONT Monitor API running on port {API_PORT}")
+    # ThreadingHTTPServer — each request runs in its own thread so the
+    # heavy InfluxDB Flux queries from /network/graph-stats don't serialize
+    # and block the whole API (which used to hang the PyroGraphs UI).
+    server = ThreadingHTTPServer(("0.0.0.0", API_PORT), Handler)
+    server.daemon_threads = True
+    print(f"[API] ONT Monitor API running on port {API_PORT} (threaded)")
     print(f"[API] GenieACS NBI: {GENIEACS_NBI}")
     # Start background MAC vendor prefetch (runs 10s after startup)
     threading.Thread(target=_prefetch_mac_vendors, daemon=True, name="mac-prefetch").start()

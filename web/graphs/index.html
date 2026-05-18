@@ -562,6 +562,16 @@ function pgGetToken() {
   return localStorage.getItem('ont_token') || localStorage.getItem('token') || localStorage.getItem('pyronms_token') || '';
 }
 
+// ── fetch() wrapper with timeout (AbortController) ─────────────────────
+// Default 15s — prevents UI from hanging forever if an API call stalls.
+function pgFetch(url, opts = {}) {
+  const ctrl = new AbortController();
+  const timeoutMs = opts.timeout || 15000;
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 function pgAuthHeaders() {
   const tok = pgGetToken();
   return tok ? { 'Authorization': 'Bearer ' + tok } : {};
@@ -590,13 +600,24 @@ async function pgInit() {
   if (!pgCheckAuth()) return;
   try {
     const [dRes, tRes] = await Promise.all([
-      fetch(API + '/network/devices', { headers: pgAuthHeaders() }),
-      fetch(API + '/network/templates', { headers: pgAuthHeaders() }),
+      pgFetch(API + '/network/devices',   { headers: pgAuthHeaders() }),
+      pgFetch(API + '/network/templates', { headers: pgAuthHeaders() }),
     ]);
-    pgDevices   = dRes.ok   ? (await dRes.json()).devices   || [] : [];
-    pgTemplates = tRes.ok   ? (await tRes.json()).templates || [] : [];
+    if (dRes.status === 401) {
+      pgCheckAuth();  // re-render auth gate
+      return;
+    }
+    pgDevices   = dRes.ok ? (await dRes.json()).devices   || [] : [];
+    pgTemplates = tRes.ok ? (await tRes.json()).templates || [] : [];
   } catch(e) {
-    console.warn('pgInit fetch error', e);
+    console.error('pgInit fetch error', e);
+    document.getElementById('pg-grid').innerHTML =
+      `<div style="grid-column:1/-1;text-align:center;padding:60px;color:#ef4444;">
+        <div style="font-size:16px;font-weight:700;margin-bottom:8px;">⚠ API unreachable</div>
+        <div style="font-size:12px;color:var(--muted);">${e.message || e}</div>
+        <button onclick="location.reload()" style="margin-top:14px;padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">Retry</button>
+      </div>`;
+    return;
   }
   pgRenderTree();
   pgPopulateDevFilter();
@@ -780,11 +801,11 @@ async function pgLoadGrid() {
       pgRenderPager(0, 0);
       return;
     }
-    // Fetch graph-preview for each device in parallel
+    // Fetch graph-preview for each device in parallel (with 20s timeout each)
     const results = await Promise.all(devIds.map(async (did) => {
       try {
-        const r = await fetch(API + '/network/graph-preview?range=' + pgRange + '&device_id=' + did,
-          { headers: pgAuthHeaders() });
+        const r = await pgFetch(API + '/network/graph-preview?range=' + pgRange + '&device_id=' + did,
+          { headers: pgAuthHeaders(), timeout: 20000 });
         if (!r.ok) return [];
         const j = await r.json();
         return (j.previews || []).map(p => ({
@@ -851,21 +872,27 @@ async function pgLoadGrid() {
 // ── Fetch real Cacti-style stats from server (per card) ─────────────────
 async function pgFetchCardStats(pv) {
   if (!pv.graph_id) return;
+  const statsEl  = document.getElementById('pg-stats-'  + pv.graph_id);
+  const footerEl = document.getElementById('pg-footer-' + pv.graph_id);
   try {
-    const r = await fetch(API + '/network/graph-stats?graph_id=' + pv.graph_id + '&range=' + pgRange,
-      { headers: pgAuthHeaders() });
-    if (!r.ok) return;
+    const r = await pgFetch(API + '/network/graph-stats?graph_id=' + pv.graph_id + '&range=' + pgRange,
+      { headers: pgAuthHeaders(), timeout: 10000 });
+    if (!r.ok) {
+      if (statsEl) statsEl.innerHTML = `<div style="font-size:10px;color:#ef4444;text-align:center;padding:4px;">stats unavailable (HTTP ${r.status})</div>`;
+      return;
+    }
     const j = await r.json();
     const s = j.stats || {};
-    const el = document.getElementById('pg-stats-' + pv.graph_id);
-    if (!el) return;
-    el.innerHTML = pgBuildStatsTable(s, pv.graph_type);
-    const footerEl = document.getElementById('pg-footer-' + pv.graph_id);
+    if (statsEl) statsEl.innerHTML = pgBuildStatsTable(s, pv.graph_type);
     if (footerEl && s.last_updated) {
       footerEl.innerHTML = `Interface: ${_pgEsc(pv.interface_name||pv.graph_name||'—')} · ` +
         `Updated: ${pgRelTime(s.last_updated)} · ${s.points||0} pts`;
+    } else if (footerEl) {
+      footerEl.innerHTML = `Interface: ${_pgEsc(pv.interface_name||pv.graph_name||'—')} · <span style="color:var(--muted);">no recent data</span>`;
     }
-  } catch(e) { /* silent */ }
+  } catch(e) {
+    if (statsEl) statsEl.innerHTML = `<div style="font-size:10px;color:#ef4444;text-align:center;padding:4px;">${e.name === 'AbortError' ? 'timeout' : e.message || 'error'}</div>`;
+  }
 }
 
 function pgBuildStatsTable(s, gtype) {

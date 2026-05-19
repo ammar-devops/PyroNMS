@@ -3,7 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PyroGraphs — Network Monitor</title>
+  <!-- Force fresh load — prevents browsers from caching stale JS that
+       breaks the Edit modal on field-name changes. -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>PyroGraphs v5.4.2 — Network Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     :root {
@@ -278,6 +283,9 @@
 <div id="pg-header">
   <div id="pg-logo">🔥 PyroGraphs</div>
   <div id="pg-subtitle">Cacti-style Network Monitoring</div>
+  <!-- Version pill — if you see anything OTHER than v5.4.2 here you are
+       running a cached older copy; Ctrl+F5 to reload. -->
+  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v5.4.2</span>
   <div id="pg-header-spacer"></div>
   <span id="pg-status-pill"></span>
   <button class="pg-header-btn" onclick="pgAddDevice()">+ Device</button>
@@ -1940,14 +1948,18 @@ function pgAddDevice() {
   if (overlay) overlay.classList.add('open');
 }
 
-// Show ROS API block only when vendor=mikrotik
+// Show ROS API block only when vendor=mikrotik (safe against missing elements)
 function _pgDevVendorChanged() {
-  const vendor = document.getElementById('pg-dev-vendor').value;
-  document.getElementById('pg-dev-ros-block').style.display = (vendor === 'mikrotik') ? '' : 'none';
+  const sel   = document.getElementById('pg-dev-vendor');
+  const block = document.getElementById('pg-dev-ros-block');
+  if (!sel || !block) return;
+  block.style.display = (sel.value === 'mikrotik') ? '' : 'none';
 }
 function _pgDevToggleROS() {
-  const en = document.getElementById('pg-dev-ros-enabled').checked;
-  document.getElementById('pg-dev-ros-fields').style.display = en ? '' : 'none';
+  const cb   = document.getElementById('pg-dev-ros-enabled');
+  const flds = document.getElementById('pg-dev-ros-fields');
+  if (!cb || !flds) return;
+  flds.style.display = cb.checked ? '' : 'none';
 }
 
 // Tiny helper — set element value/checked but never throw on missing elements
@@ -1960,20 +1972,26 @@ function _pgSet(id, value, isCheckbox) {
 }
 
 async function pgEditDevice(id) {
-  // Always RE-FETCH the device from the API instead of using stale pgDevices
-  // cache — guarantees we show the current DB state, not a 60s-old snapshot.
-  let dev = pgDevices.find(d => d.id === id);
-  try {
-    const r = await pgFetch(API + '/network/devices/' + id, { headers: pgAuthHeaders() });
-    if (r.ok) {
-      const j = await r.json();
-      if (j.device) dev = j.device;
-    }
-  } catch(_) { /* fall back to cached */ }
+  console.log('[PyroGraphs] pgEditDevice called id=', id, 'cache size=', pgDevices.length);
+  // pgRenderDevicesPage refreshes pgDevices on every visit, so the cached
+  // entry IS fresh by the time the user can click Edit. Avoid the extra
+  // GET that could fail / hang.
+  let dev = pgDevices.find(d => d.id === id || d.id === Number(id));
   if (!dev) {
-    alert('Could not load device id=' + id + ' for editing.');
+    // Final fallback — try a one-shot fetch with short timeout
+    try {
+      const r = await pgFetch(API + '/network/devices/' + id, { headers: pgAuthHeaders(), timeout: 5000 });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.device) dev = j.device;
+      }
+    } catch(e) { console.warn('[PyroGraphs] device GET fallback failed:', e); }
+  }
+  if (!dev) {
+    alert('Could not load device id=' + id + ' for editing.\nCheck your network connection and reload the page.');
     return;
   }
+  console.log('[PyroGraphs] editing device:', dev);
   pgEditDevId = id;
   _pgSet('pg-dev-modal-title', null);  // title set by textContent below
   const t = document.getElementById('pg-dev-modal-title');
@@ -1988,9 +2006,10 @@ async function pgEditDevice(id) {
   _pgSet('pg-dev-retries',       dev.snmp_retries || 1);
   _pgSet('pg-dev-poll-interval', dev.polling_interval || 60);
   _pgSet('pg-dev-poll-enabled',  (dev.polling_enabled !== 0), true);
-  document.getElementById('pg-dev-templates').value = '';
-  document.getElementById('pg-dev-edit-id').value = id;
-  document.getElementById('pg-dev-modal-err').style.display = 'none';
+  _pgSet('pg-dev-templates', '');
+  _pgSet('pg-dev-edit-id',   id);
+  const _errEl = document.getElementById('pg-dev-modal-err');
+  if (_errEl) _errEl.style.display = 'none';
   // Parse existing ROS creds from device.notes JSON
   let ros = { ros_user:'', ros_pass:'', ros_port:8728 };
   let hasRos = false;
@@ -2004,30 +2023,48 @@ async function pgEditDevice(id) {
       }
     }
   } catch(_){}
-  document.getElementById('pg-dev-ros-enabled').checked = hasRos;
-  document.getElementById('pg-dev-ros-user').value = ros.ros_user;
-  document.getElementById('pg-dev-ros-pass').value = ros.ros_pass;
-  document.getElementById('pg-dev-ros-port').value = ros.ros_port;
-  document.getElementById('pg-dev-ros-fields').style.display = hasRos ? '' : 'none';
-  _pgDevVendorChanged();
-  document.getElementById('pg-dev-modal-overlay').classList.add('open');
+  _pgSet('pg-dev-ros-enabled', hasRos, true);
+  _pgSet('pg-dev-ros-user',    ros.ros_user);
+  _pgSet('pg-dev-ros-pass',    ros.ros_pass);
+  _pgSet('pg-dev-ros-port',    ros.ros_port);
+  const _rosFlds = document.getElementById('pg-dev-ros-fields');
+  if (_rosFlds) _rosFlds.style.display = hasRos ? '' : 'none';
+  if (typeof _pgDevVendorChanged === 'function') _pgDevVendorChanged();
+  const _overlay = document.getElementById('pg-dev-modal-overlay');
+  if (_overlay) {
+    _overlay.classList.add('open');
+    console.log('[PyroGraphs] modal opened for device', dev.name);
+  } else {
+    console.error('[PyroGraphs] FATAL: pg-dev-modal-overlay element not found in DOM');
+    alert('Modal element missing — please hard-refresh (Ctrl+F5)');
+  }
 }
 
 function pgCloseDevModal() {
-  document.getElementById('pg-dev-modal-overlay').classList.remove('open');
+  const o = document.getElementById('pg-dev-modal-overlay');
+  if (o) o.classList.remove('open');
 }
 
 async function pgSaveDevice() {
-  const name      = document.getElementById('pg-dev-name').value.trim();
-  const ip        = document.getElementById('pg-dev-ip').value.trim();
-  const community = document.getElementById('pg-dev-community').value.trim() || 'public';
-  const snmpVer   = document.getElementById('pg-dev-snmp-ver').value;
-  const vendor    = document.getElementById('pg-dev-vendor').value;
+  console.log('[PyroGraphs] pgSaveDevice called');
+  const _getVal = (id, def) => {
+    const el = document.getElementById(id);
+    return el ? el.value : (def || '');
+  };
+  const name      = _getVal('pg-dev-name').trim();
+  const ip        = _getVal('pg-dev-ip').trim();
+  const community = _getVal('pg-dev-community').trim() || 'public';
+  const snmpVer   = _getVal('pg-dev-snmp-ver', '2c');
+  const vendor    = _getVal('pg-dev-vendor', 'generic');
   const errEl     = document.getElementById('pg-dev-modal-err');
+  const _showErr  = (msg) => {
+    if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+    else alert(msg);
+  };
 
   if (!name || !ip) {
-    errEl.textContent = 'Name and IP Address are required.';
-    errEl.style.display = 'block'; return;
+    _showErr('Name and IP Address are required.');
+    return;
   }
 
   // Server uses 'ip' (not ip_address). Read inputs safely — older cached
@@ -2089,9 +2126,10 @@ async function pgSaveDevice() {
   }
   // If rosOnEl is missing entirely (stale cached HTML), don't touch notes
 
-  const editId  = document.getElementById('pg-dev-edit-id').value;
+  const editId  = _getVal('pg-dev-edit-id');
   // Update + Create both use POST (real server endpoints)
   const url     = editId ? API + '/network/devices/' + editId : API + '/network/devices';
+  console.log('[PyroGraphs] saving device — editId=', editId, 'url=', url, 'payload=', payload);
 
   try {
     const res = await pgFetch(url, {
@@ -2099,10 +2137,11 @@ async function pgSaveDevice() {
       headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    console.log('[PyroGraphs] save response status=', res.status, 'data=', data);
     if (!res.ok || data.ok === false) {
-      errEl.textContent = data.error || data.detail || 'Save failed.';
-      errEl.style.display = 'block'; return;
+      _showErr(data.error || data.detail || `Save failed (HTTP ${res.status}).`);
+      return;
     }
     pgCloseDevModal();
     // Refresh devices list from server — guarantees fresh values (no
@@ -2121,8 +2160,8 @@ async function pgSaveDevice() {
     if (pgActiveTab === 'console') pgConsole(pgConsolePage);
     pgLoadGrid();
   } catch(e) {
-    errEl.textContent = 'Network error: ' + e.message;
-    errEl.style.display = 'block';
+    console.error('[PyroGraphs] save error:', e);
+    _showErr('Network error: ' + (e.message || e));
   }
 }
 

@@ -3545,6 +3545,19 @@ from(bucket:"{INFLUX_BUCKET}")
                 # so PyroGraphs frontend doesn't need to pass anything special.
                 # Caller can pass {"auto_create_traffic": false} to disable.
                 graphs_created = 0
+                # Breakdown counters so the UI can explain why N→M (e.g.
+                # "found 2428 ifaces but only 4 are physical" → not a bug).
+                skip_counts = {
+                    "already_graphed": 0,
+                    "vlan":            0,
+                    "loopback":        0,
+                    "tunnel":          0,
+                    "virtual":         0,
+                    "pppoe_session":   0,
+                    "not_present":     0,
+                    "other_software":  0,
+                }
+                eligible_count = 0
                 auto_create = payload.get("auto_create_traffic", True)
                 if auto_create and ifaces:
                     templates = ndb.get_templates(graph_type="traffic")
@@ -3556,9 +3569,7 @@ from(bucket:"{INFLUX_BUCKET}")
                         existing_iface_ids = {g.get("interface_id") for g in existing}
 
                         # Real-physical filter (type + name based) avoids the
-                        # "2400 PPPoE-session graph" problem on MikroTik while
-                        # also handling Huawei OLT (ethernet0/6/0, GPON 0/0/0).
-                        #
+                        # "2400 PPPoE-session graph" problem on MikroTik.
                         # SKIP these IF-MIB ifTypes (RFC 1213 / IANA ifType MIB):
                         #   1   = other            (null0)
                         #   24  = softwareLoopback (lo, InLoopBack0)
@@ -3566,29 +3577,49 @@ from(bucket:"{INFLUX_BUCKET}")
                         #   131 = tunnel
                         #   135 = l2vlan
                         #   136 = l3ipvlan        (vlanif on Huawei)
-                        # Names starting with these are also skipped:
-                        #   pppoe-*, vlan*, vlanif*, lo, loop*, tunnel*,
-                        #   br-*, bridge*, null*
-                        SKIP_TYPES = {1, 24, 53, 131, 135, 136}
-                        SKIP_NAME_PREFIX = (
-                            "pppoe-", "vlan", "lo", "tunnel", "br-",
-                            "bridge", "null", "<")
+                        SKIP_TYPE_REASON = {
+                            1:   "other_software",
+                            24:  "loopback",
+                            53:  "virtual",
+                            131: "tunnel",
+                            135: "vlan",
+                            136: "vlan",
+                        }
+                        SKIP_NAME_PREFIX_REASON = (
+                            ("pppoe-", "pppoe_session"),
+                            ("vlan",   "vlan"),
+                            ("lo",     "loopback"),
+                            ("tunnel", "tunnel"),
+                            ("br-",    "virtual"),
+                            ("bridge", "virtual"),
+                            ("null",   "other_software"),
+                            ("<",      "pppoe_session"),  # MikroTik <pppoe-foo>
+                        )
 
                         for iface_row in ndb.get_interfaces(dev_id):
                             if iface_row["id"] in existing_iface_ids:
+                                skip_counts["already_graphed"] += 1
                                 continue
                             ifname = (iface_row.get("if_name") or "").strip()
                             iftype = iface_row.get("if_type") or 0
-                            if iftype in SKIP_TYPES:
+                            if iftype in SKIP_TYPE_REASON:
+                                skip_counts[SKIP_TYPE_REASON[iftype]] += 1
                                 continue
                             if iface_row.get("is_vlan"):
+                                skip_counts["vlan"] += 1
                                 continue
                             lower = ifname.lower()
-                            if any(lower.startswith(p) for p in SKIP_NAME_PREFIX):
+                            matched_prefix = next(
+                                (r for (p, r) in SKIP_NAME_PREFIX_REASON
+                                 if lower.startswith(p)), None)
+                            if matched_prefix:
+                                skip_counts[matched_prefix] += 1
                                 continue
-                            # Skip "notPresent" (oper_status=6 = empty slot)
                             if iface_row.get("oper_status") == 6:
+                                skip_counts["not_present"] += 1
                                 continue
+                            # Eligible — create the graph
+                            eligible_count += 1
                             try:
                                 ndb.add_graph(
                                     device_id=dev_id,
@@ -3625,10 +3656,14 @@ from(bucket:"{INFLUX_BUCKET}")
                                     graphs_created += 1
                     except Exception:
                         pass
+                # Total physical-eligible graphs (existing + newly created)
+                total_physical_graphs = skip_counts["already_graphed"] + graphs_created
                 return self.send_json(200, {
                     "ok": True,
                     "interfaces":       ifaces,
                     "graphs_created":   graphs_created,
+                    "skip_counts":      skip_counts,
+                    "physical_graphs":  total_physical_graphs,
                     "snmp_ok":          sysinfo.get("snmp_ok", False),
                     "vendor_detected":  vendor_det,
                     "sys_name":         sysinfo.get("sys_name", ""),

@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>PyroGraphs v6.1.2 — Network Monitor</title>
+  <title>PyroGraphs v6.1.3 — Network Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     :root {
@@ -283,9 +283,9 @@
 <div id="pg-header">
   <div id="pg-logo">🔥 PyroGraphs</div>
   <div id="pg-subtitle">Cacti-style Network Monitoring</div>
-  <!-- Version pill — if you see anything OTHER than v6.1.2 here you are
+  <!-- Version pill — if you see anything OTHER than v6.1.3 here you are
        running a cached older copy; Ctrl+F5 to reload. -->
-  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.1.2</span>
+  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.1.3</span>
   <div id="pg-header-spacer"></div>
   <span id="pg-status-pill"></span>
   <button class="pg-header-btn" onclick="pgAddDevice()">+ Device</button>
@@ -2593,28 +2593,64 @@ async function pgDiscover(devId) {
   document.getElementById('pg-discover-apply-btn').style.display = 'none';
   document.getElementById('pg-discover-overlay').classList.add('open');
   try {
-    const res = await fetch(API + '/network/devices/' + devId + '/discover', {
+    const res = await pgFetch(API + '/network/devices/' + devId + '/discover', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
       body: '{}',
+      timeout: 60000,
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Discover failed');
-    const ifaces = data.interfaces || [];
-    const created = data.graphs_created ?? data.created ?? 0;
-    const vendor = data.vendor_detected || data.vendor || '';
+    const ifaces  = data.interfaces || [];
+    const created = data.graphs_created ?? 0;
+    const vendor  = data.vendor_detected || data.vendor || '';
+    const skip    = data.skip_counts || {};
+    const phys    = data.physical_graphs ?? 0;
+    const already = skip.already_graphed || 0;
+
+    // Build skip-reason rows (only show ones with non-zero count)
+    const skipLabels = {
+      vlan:           'VLAN sub-interfaces',
+      loopback:       'Loopback',
+      tunnel:         'Tunnel',
+      virtual:        'Virtual / bridge',
+      pppoe_session:  'PPPoE sessions',
+      not_present:    'Not present (empty slots)',
+      other_software: 'Other software',
+    };
+    let breakdown = '';
+    Object.entries(skipLabels).forEach(([k, label]) => {
+      const v = skip[k] || 0;
+      if (v === 0) return;
+      breakdown += `<tr><td style="padding-left:18px;color:var(--muted);font-size:11px;">↳ ${label}</td><td style="color:var(--muted);text-align:right;font-size:11px;">${v.toLocaleString()}</td></tr>`;
+    });
+    const totalSkipped = Object.entries(skip)
+      .filter(([k]) => k !== 'already_graphed')
+      .reduce((s, [, v]) => s + (v || 0), 0);
+
     document.getElementById('pg-discover-body').innerHTML = `
-      <div style="color:#22c55e;font-weight:600;margin-bottom:10px;">✓ Discovery complete</div>
+      <div style="color:#22c55e;font-weight:600;margin-bottom:12px;">✓ Discovery complete</div>
       <table class="pg-table" style="font-size:12px;">
-        <tr><td><strong>Vendor detected</strong></td><td>${_pgEsc(vendor||'unknown')}</td></tr>
-        <tr><td><strong>Interfaces found</strong></td><td>${ifaces.length}</td></tr>
-        <tr><td><strong>Graphs created</strong></td><td style="color:#22c55e;">${created}</td></tr>
-        <tr><td><strong>sysDescr</strong></td><td style="font-size:11px;color:var(--muted);">${_pgEsc(data.sys_descr||'—')}</td></tr>
+        <tbody>
+          <tr><td><strong>Vendor detected</strong></td><td>${_pgEsc(vendor||'unknown')}</td></tr>
+          <tr><td><strong>sysName</strong></td><td>${_pgEsc(data.sys_name||'—')}</td></tr>
+          <tr><td><strong>sysDescr</strong></td><td style="font-size:11px;color:var(--muted);">${_pgEsc(data.sys_descr||'—')}</td></tr>
+          <tr><td><strong>Latency</strong></td><td>${data.ms || 0} ms</td></tr>
+          <tr><td colspan="2" style="padding:6px 0;border-bottom:1px solid var(--border);"></td></tr>
+          <tr><td><strong>Interfaces walked</strong></td><td><strong>${ifaces.length.toLocaleString()}</strong></td></tr>
+          <tr><td style="color:#22c55e;">✓ Physical / eligible</td><td style="color:#22c55e;font-weight:700;text-align:right;">${phys}</td></tr>
+          <tr><td style="padding-left:18px;color:var(--muted);font-size:11px;">↳ Already had a graph</td><td style="color:var(--muted);text-align:right;font-size:11px;">${already}</td></tr>
+          <tr><td style="padding-left:18px;color:#22c55e;font-size:11px;">↳ New this run</td><td style="color:#22c55e;text-align:right;font-size:11px;">${created}</td></tr>
+          <tr><td style="color:var(--muted);">⊖ Filtered out</td><td style="color:var(--muted);text-align:right;">${totalSkipped.toLocaleString()}</td></tr>
+          ${breakdown}
+        </tbody>
       </table>
-      <div style="margin-top:14px;font-size:11px;color:var(--muted);">Graphs will be polled on the next cycle. Close this and check the Graphs tab.</div>
+      <div style="margin-top:14px;font-size:11px;color:var(--muted);line-height:1.5;background:var(--bg3);padding:10px;border-radius:6px;border-left:3px solid var(--accent);">
+        💡 PyroGraphs only graphs <strong>physical interfaces</strong> by design — without this filter, a single MikroTik with 2,000+ PPPoE users would create 2,000+ useless graphs. PPPoE session totals are tracked separately via the <strong>PPPoE Sessions</strong> template.
+      </div>
     `;
   } catch(e) {
-    document.getElementById('pg-discover-body').innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+    document.getElementById('pg-discover-body').innerHTML = `<div style="color:#ef4444;">Error: ${_pgEsc(e.message || e)}</div>`;
   }
 }
 

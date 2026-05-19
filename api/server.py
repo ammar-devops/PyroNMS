@@ -3858,6 +3858,75 @@ from(bucket:"{INFLUX_BUCKET}")
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
+        # ── POST /network/tree/<id>/move — drag-drop reparent + insert pos ────
+        # Body: {"parent_id": <int|null>, "sort_order": <int|optional>}
+        elif re.match(r"^/network/tree/(\d+)/move$", parsed.path):
+            user = require_auth(self)
+            if not user: return
+            m = re.match(r"^/network/tree/(\d+)/move$", parsed.path)
+            nid = int(m.group(1))
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            if "parent_id" not in payload:
+                return self.send_json(400, {"error": "parent_id required (use null for root)"})
+            try:
+                import network_db as ndb
+                target_parent = payload.get("parent_id")
+                # Prevent moving a node into itself
+                if target_parent is not None and int(target_parent) == nid:
+                    return self.send_json(400, {"error": "Cannot move node into itself"})
+                # Prevent moving a node into one of its own descendants (cycle)
+                if target_parent is not None:
+                    cur = int(target_parent)
+                    for _ in range(64):
+                        if cur == nid:
+                            return self.send_json(400, {"error":
+                                "Cannot move node into one of its own descendants"})
+                        con = ndb.get_db()
+                        try:
+                            row = con.execute(
+                                "SELECT parent_id FROM graph_tree WHERE id=?",
+                                (cur,)).fetchone()
+                        finally:
+                            con.close()
+                        if not row or row["parent_id"] is None:
+                            break
+                        cur = row["parent_id"]
+                kw = {"parent_id": (None if target_parent is None
+                                    else int(target_parent))}
+                if "sort_order" in payload:
+                    kw["sort_order"] = int(payload["sort_order"])
+                ok = ndb.update_tree_node(nid, **kw)
+                if not ok:
+                    return self.send_json(404, {"ok": False, "error": "Node not found"})
+                return self.send_json(200, {"ok": True})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
+        # ── POST /network/tree/reorder — bulk sibling sort_order ─────────────
+        # Body: {"parent_id": <int|null>, "order": [id1, id2, ...]}
+        elif parsed.path == "/network/tree/reorder":
+            user = require_auth(self)
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length)) if length else {}
+            except Exception:
+                return self.send_json(400, {"error": "Invalid JSON"})
+            order = payload.get("order")
+            if not isinstance(order, list):
+                return self.send_json(400, {"error": "order (array) required"})
+            parent_id = payload.get("parent_id")
+            try:
+                import network_db as ndb
+                updated = ndb.reorder_tree_nodes(parent_id, order)
+                return self.send_json(200, {"ok": True, "updated": updated})
+            except Exception as e:
+                return self.send_json(500, {"ok": False, "error": str(e)})
+
         else:
             return self.send_json(404, {"error": "Not found"})
 

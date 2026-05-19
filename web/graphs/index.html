@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>PyroGraphs v5.4.2 — Network Monitor</title>
+  <title>PyroGraphs v6.0.0 — Network Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     :root {
@@ -283,9 +283,9 @@
 <div id="pg-header">
   <div id="pg-logo">🔥 PyroGraphs</div>
   <div id="pg-subtitle">Cacti-style Network Monitoring</div>
-  <!-- Version pill — if you see anything OTHER than v5.4.2 here you are
+  <!-- Version pill — if you see anything OTHER than v6.0.0 here you are
        running a cached older copy; Ctrl+F5 to reload. -->
-  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v5.4.2</span>
+  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.0.0</span>
   <div id="pg-header-spacer"></div>
   <span id="pg-status-pill"></span>
   <button class="pg-header-btn" onclick="pgAddDevice()">+ Device</button>
@@ -295,13 +295,11 @@
 <!-- ═══════════════════════════════════════
      TOP TABS
 ════════════════════════════════════════ -->
+<!-- True Cacti layout: only Graphs (viewer) + Console (admin). Everything
+     else lives inside Console's left sidebar. -->
 <div id="pg-tabs">
-  <button class="pg-tab active" id="pg-tab-graphs"    onclick="pgTab('graphs')">📊 Graphs</button>
-  <button class="pg-tab"        id="pg-tab-console"   onclick="pgTab('console')">🖥 Console</button>
-  <button class="pg-tab"        id="pg-tab-devices"   onclick="pgTab('devices')">📡 Devices</button>
-  <button class="pg-tab"        id="pg-tab-templates" onclick="pgTab('templates')">📐 Templates</button>
-  <button class="pg-tab"        id="pg-tab-poller"    onclick="pgTab('poller')">⚙ Poller</button>
-  <button class="pg-tab"        id="pg-tab-logs"      onclick="pgTab('logs')">📋 Logs</button>
+  <button class="pg-tab active" id="pg-tab-graphs"  onclick="pgTab('graphs')">📊 Graphs</button>
+  <button class="pg-tab"        id="pg-tab-console" onclick="pgTab('console')">🖥 Console</button>
 </div>
 
 <!-- ═══════════════════════════════════════
@@ -399,58 +397,17 @@
         <div class="pg-cnav-item"        id="pg-cnav-graphmgmt" onclick="pgConsole('graphmgmt')">📈 Graph Management</div>
         <div class="pg-cnav-item"        id="pg-cnav-templates" onclick="pgConsole('templates2')">📐 Graph Templates</div>
         <div class="pg-cnav-item"        id="pg-cnav-tree"      onclick="pgConsole('tree')">🌳 Tree Management</div>
+        <div class="pg-console-nav-title" style="margin-top:18px;">System</div>
         <div class="pg-cnav-item"        id="pg-cnav-poller2"   onclick="pgConsole('poller2')">⚙ Poller</div>
+        <div class="pg-cnav-item"        id="pg-cnav-logs"      onclick="pgConsole('logs')">📋 Logs</div>
       </div>
       <div id="pg-console-content" style="flex:1;overflow-y:auto;padding:20px 24px;"></div>
     </div>
 
-    <!-- ── DEVICES TAB ── -->
-    <div class="pg-view" id="pg-devices-view" style="flex-direction:column;overflow:hidden;">
-      <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="pg-devices-content"></div>
-    </div>
+    <!-- (v6) Devices / Templates / Poller / Logs are no longer top-nav
+         tabs — they live inside Console's left sidebar. Removed empty
+         containers to match true Cacti UX. -->
 
-    <!-- ── TEMPLATES TAB ── -->
-    <div class="pg-view" id="pg-templates-view" style="flex-direction:column;overflow:hidden;">
-      <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="pg-templates-content"></div>
-    </div>
-
-    <!-- ── POLLER TAB ── -->
-    <div class="pg-view" id="pg-poller-view" style="flex-direction:column;overflow:hidden;">
-      <div style="flex:1;overflow-y:auto;padding:20px 24px;" id="pg-poller-content"></div>
-    </div>
-
-    <!-- ── LOGS TAB ── -->
-    <div class="pg-view" id="pg-logs-view" style="flex-direction:column;overflow:hidden;">
-      <!-- Logs toolbar -->
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;">
-        <span class="pg-filter-label">Level:</span>
-        <select class="pg-filter-select" id="pg-log-level" onchange="pgLogsLoad()">
-          <option value="ALL">All</option>
-          <option value="INFO">Info</option>
-          <option value="WARNING">Warning</option>
-          <option value="ERROR">Error</option>
-          <option value="DEBUG">Debug</option>
-        </select>
-        <span class="pg-filter-label">Show:</span>
-        <select class="pg-filter-select" id="pg-log-limit" onchange="pgLogsLoad()">
-          <option value="100">100</option>
-          <option value="200" selected>200</option>
-          <option value="500">500</option>
-          <option value="1000">1000</option>
-        </select>
-        <span class="pg-filter-label">Filter:</span>
-        <input class="pg-filter-input" id="pg-log-search" placeholder="text in message…" oninput="pgLogsRender()">
-        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;margin-left:8px;">
-          <input type="checkbox" id="pg-log-autorefresh" checked onchange="pgLogsToggleRefresh()"> auto-refresh (5s)
-        </label>
-        <button class="pg-refresh-btn" onclick="pgLogsLoad()">↻ Refresh</button>
-        <span id="pg-log-status" style="font-size:11px;color:var(--muted);"></span>
-      </div>
-      <!-- Logs viewer -->
-      <div id="pg-logs-content" style="flex:1;overflow-y:auto;padding:0;background:#0a0c12;font-family:'JetBrains Mono','Consolas',monospace;font-size:11px;line-height:1.5;">
-        <div style="padding:40px;text-align:center;color:var(--muted);">Loading logs…</div>
-      </div>
-    </div>
 
   </div><!-- end #pg-content -->
 </div><!-- end #pg-body -->
@@ -635,8 +592,10 @@ let pgPerPage     = 12;
 let pgPage        = 0;
 let pgHideZero    = true;        // default hide zero-traffic graphs
 let pgTreeMode    = false;       // false = vendor groups, true = user-defined tree
-let _pgUserTree   = [];          // flat list of tree nodes when in tree mode
+let _pgUserTree         = [];        // flat list of tree nodes (for descendants lookup)
+let _pgUserTreeNested   = [];        // nested for hierarchical render
 let _pgTreeSelectedNodeId = null;
+let _pgGraphsTreeExpanded = new Set();  // expand state for the Graphs-tab tree
 let pgDevices     = [];
 let pgTemplates   = [];
 let pgPreviews    = [];
@@ -729,22 +688,35 @@ function pgUpdateStatusPill() {
 }
 
 // ── Tab switching ────────────────────────
+// v6 — only two top tabs exist: 'graphs' | 'console'. Legacy names
+// ('devices'/'templates'/'poller'/'logs') silently redirect into the
+// Console sub-page system so any stale onclick handler still works.
 function pgTab(name) {
+  // Legacy alias map → land inside Console
+  const consoleAlias = { devices:'devices', templates:'templates2',
+                          poller:'poller2', logs:'logs' };
+  if (name in consoleAlias) {
+    pgTab('console');
+    pgConsole(consoleAlias[name]);
+    return;
+  }
+  if (name !== 'graphs' && name !== 'console') name = 'graphs';
+
   pgActiveTab = name;
   document.querySelectorAll('.pg-tab').forEach(b => b.classList.remove('active'));
-  document.getElementById('pg-tab-' + name).classList.add('active');
+  const tabEl = document.getElementById('pg-tab-' + name);
+  if (tabEl) tabEl.classList.add('active');
   document.querySelectorAll('.pg-view').forEach(v => v.classList.remove('active'));
-  document.getElementById('pg-' + name + '-view').classList.add('active');
-  // Show/hide left tree
-  document.getElementById('pg-tree').style.display = (name === 'graphs') ? 'block' : 'none';
+  const viewEl = document.getElementById('pg-' + name + '-view');
+  if (viewEl) viewEl.classList.add('active');
+  // Show left tree only on Graphs
+  const treeEl = document.getElementById('pg-tree');
+  if (treeEl) treeEl.style.display = (name === 'graphs') ? 'block' : 'none';
 
-  if (name === 'devices')   pgRenderDevicesTab();
-  if (name === 'templates') pgRenderTemplatesTab();
-  if (name === 'poller')    pgRenderPollerTab();
-  if (name === 'logs')      pgLogsLoad();
-  // Stop log auto-refresh when leaving Logs tab
-  if (name !== 'logs') pgLogsStopRefresh();
-  if (name === 'console')   pgConsole(pgConsolePage);
+  // Stop log auto-refresh when leaving the Logs page
+  if (typeof pgLogsStopRefresh === 'function') pgLogsStopRefresh();
+
+  if (name === 'console') pgConsole(pgConsolePage);
 }
 
 // ── Left tree ────────────────────────────
@@ -752,24 +724,34 @@ function pgRenderTree() {
   const list = document.getElementById('pg-tree-list');
   let html = '';
 
-  // ── Tree Mode: user-defined folder/device/graph hierarchy ──────────
+  // ── Tree Mode: user-defined folder/device/graph hierarchy with
+  //                expand/collapse arrows (reuses Tree Mgmt nested data) ───
   if (pgTreeMode) {
-    if (!_pgUserTree.length) {
+    if (!_pgUserTreeNested || !_pgUserTreeNested.length) {
       list.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:12px;">
         No tree nodes yet.<br>Go to <strong>Console → Tree Management</strong> to create folders.
       </div>`;
       return;
     }
-    _pgUserTree.forEach(n => {
-      const indent = n.depth * 12;
-      const icon = n.node_type === 'folder' ? '📁' :
-                   n.node_type === 'device' ? '🖥' : '📊';
-      const active = (_pgTreeSelectedNodeId === n.id) ? 'active' : '';
-      html += `<div class="pg-tree-device ${active}" style="padding-left:${4+indent}px;"
-                    onclick="pgTreeSelectNode(${n.id}, '${n.node_type}', ${n.device_id||'null'}, ${n.graph_id||'null'})">
-        ${icon} ${_pgEsc(n.name||'')}
-      </div>`;
-    });
+    const walk = (nodes, depth) => {
+      (nodes || []).forEach(n => {
+        const hasKids = (n.children || []).length > 0;
+        const open    = _pgGraphsTreeExpanded.has(n.id);
+        const twist   = hasKids ? (open ? '▼' : '▶') : '·';
+        const icon    = n.node_type === 'folder' ? '📁' :
+                         n.node_type === 'device' ? '🖥' : '📊';
+        const active  = (_pgTreeSelectedNodeId === n.id) ? 'active' : '';
+        html += `<div class="pg-tree-device ${active}"
+                      style="padding-left:${4 + depth*12}px;display:flex;align-items:center;gap:4px;"
+                      onclick="pgTreeSelectNode(${n.id}, '${n.node_type}', ${n.device_id||'null'}, ${n.graph_id||'null'})">
+          <span style="display:inline-block;width:12px;color:var(--muted);font-size:9px;text-align:center;"
+                onclick="event.stopPropagation();_pgGraphsTreeToggle(${n.id})">${twist}</span>
+          ${icon} <span style="flex:1;">${_pgEsc(n.name||'')}</span>
+        </div>`;
+        if (open && hasKids) walk(n.children, depth + 1);
+      });
+    };
+    walk(_pgUserTreeNested, 0);
     list.innerHTML = html;
     return;
   }
@@ -894,17 +876,31 @@ function pgApplyFilters() {
 }
 
 async function pgToggleTreeMode() {
-  pgTreeMode = document.getElementById('pg-tree-mode').checked;
-  // Re-render the left panel
+  const cb = document.getElementById('pg-tree-mode');
+  pgTreeMode = !!(cb && cb.checked);
   if (pgTreeMode) {
     try {
       const r = await pgFetch(API + '/network/tree', { headers: pgAuthHeaders() });
       const j = await r.json();
-      _pgUserTree = _pgTreeFlatten(j.tree || [], null, 0);
-    } catch(e) { _pgUserTree = []; }
+      _pgUserTreeNested = j.tree || [];
+      _pgUserTree       = _pgTreeFlatten(_pgUserTreeNested, null, 0);
+      // Auto-expand all folders on first toggle so user sees structure
+      if (_pgGraphsTreeExpanded.size === 0) {
+        _pgUserTree.filter(n => n.node_type === 'folder').forEach(n =>
+          _pgGraphsTreeExpanded.add(n.id));
+      }
+    } catch(e) {
+      _pgUserTreeNested = []; _pgUserTree = [];
+    }
   }
   pgRenderTree();
   pgLoadGrid();
+}
+
+function _pgGraphsTreeToggle(id) {
+  if (_pgGraphsTreeExpanded.has(id)) _pgGraphsTreeExpanded.delete(id);
+  else _pgGraphsTreeExpanded.add(id);
+  pgRenderTree();
 }
 
 function pgApplyCols() {
@@ -1372,12 +1368,14 @@ function pgConsole(page) {
   if (page === 'templates2') pgRenderTemplatesPage(c);
   if (page === 'tree')       pgRenderTreePage(c);
   if (page === 'poller2')    pgRenderPollerPage(c);
+  if (page === 'logs')       pgRenderLogsPage(c);
+  // Stop log auto-refresh when leaving Logs
+  if (page !== 'logs' && typeof pgLogsStopRefresh === 'function') pgLogsStopRefresh();
 }
 
 // ── Devices tab & console page ───────────
-function pgRenderDevicesTab() {
-  pgRenderDevicesPage(document.getElementById('pg-devices-content'));
-}
+// v6 alias — Devices is no longer a top tab. Redirect into Console.
+function pgRenderDevicesTab() { pgTab('console'); pgConsole('devices'); }
 
 async function pgRenderDevicesPage(c) {
   c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
@@ -1593,9 +1591,8 @@ async function pgDeleteGraph(id) {
 }
 
 // ── Templates ────────────────────────────
-function pgRenderTemplatesTab() {
-  pgRenderTemplatesPage(document.getElementById('pg-templates-content'));
-}
+// v6 alias — Templates is no longer a top tab. Redirect into Console.
+function pgRenderTemplatesTab() { pgTab('console'); pgConsole('templates2'); }
 
 async function pgRenderTemplatesPage(c) {
   c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
@@ -1616,16 +1613,19 @@ async function pgRenderTemplatesPage(c) {
   }
 }
 
-// ── Tree Management ──────────────────────
+// ── Tree Management (v6 — hierarchical drag-drop) ─────────────────────
 // Real Cacti-style graph tree (folders / subfolders / device / graph nodes).
-// Uses /network/tree (GET, POST add, POST {id}/delete, POST {id} rename/move).
-let _pgTreeData = null;     // last fetched tree (nested)
-let _pgTreeFlat = [];       // flat list of {id, parent_id, name, node_type, device_id, graph_id, depth}
+// Uses /network/tree (GET, POST add, POST {id}/delete, POST {id} rename,
+// POST {id}/move, POST /network/tree/reorder).
+let _pgTreeData     = null;       // nested tree from server
+let _pgTreeFlat     = [];         // flat list with .depth
+let _pgTreeExpanded = new Set();  // node ids currently expanded
+let _pgTreeSelected = null;       // currently-selected node id
+let _pgTreeDragId   = null;       // id of node being dragged
 
 async function pgRenderTreePage(c) {
-  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
+  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading tree…</div>`;
   try {
-    // Fetch tree + graphs in parallel (need graphs for picker dropdown)
     const [tr, gr] = await Promise.all([
       pgFetch(API + '/network/tree',   { headers: pgAuthHeaders() }),
       pgFetch(API + '/network/graphs', { headers: pgAuthHeaders() }),
@@ -1635,7 +1635,11 @@ async function pgRenderTreePage(c) {
     _pgTreeData  = tj.tree || [];
     _pgTreeFlat  = _pgTreeFlatten(_pgTreeData, null, 0);
     _pgGmgmtAll  = gj.graphs || [];
-    _pgTreeRender(c);
+    // Expand all on first render so user sees structure
+    if (_pgTreeExpanded.size === 0) {
+      _pgTreeFlat.filter(n => n.node_type === 'folder').forEach(n => _pgTreeExpanded.add(n.id));
+    }
+    _pgTreeRenderShell(c);
   } catch(e) {
     c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
   }
@@ -1652,91 +1656,286 @@ function _pgTreeFlatten(nodes, parent_id, depth) {
   return out;
 }
 
-function _pgTreeRender(c) {
-  // Build parent-folder dropdown options (folders only)
-  const folders = _pgTreeFlat.filter(n => n.node_type === 'folder');
-  const folderOpts = ['<option value="">(root)</option>'].concat(
-    folders.map(f => `<option value="${f.id}">${'— '.repeat(f.depth)}${_pgEsc(f.name)}</option>`)
-  ).join('');
-
-  // Build device + graph dropdowns
-  const devOpts   = pgDevices.map(d => `<option value="${d.id}">${_pgEsc(d.name)}</option>`).join('');
-  const graphOpts = (_pgGmgmtAll.length ? _pgGmgmtAll : []).map(g =>
-    `<option value="${g.id}">${_pgEsc(g.device_name||'')} — ${_pgEsc(g.graph_name||'')}</option>`).join('');
-
-  // Render tree rows
-  let rowsHtml = '';
-  _pgTreeFlat.forEach(n => {
-    const icon = n.node_type === 'folder' ? '📁' :
-                 n.node_type === 'device' ? '🖥' : '📊';
-    const indent = '&nbsp;'.repeat(n.depth * 4);
-    const label = _pgEsc(n.name || '(unnamed)');
-    rowsHtml += `<tr>
-      <td>${indent}${icon} <strong>${label}</strong></td>
-      <td><span style="font-size:10px;padding:2px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--muted);">${_pgEsc(n.node_type||'')}</span></td>
-      <td style="white-space:nowrap;">
-        <button class="pg-action-btn pg-btn-gray" onclick="_pgTreeRename(${n.id})">Rename</button>
-        <button class="pg-action-btn pg-btn-red" onclick="_pgTreeDelete(${n.id})" style="margin-left:4px;">Delete</button>
-      </td>
-    </tr>`;
-  });
-
+// Build the two-pane shell (left tree + right details) ONCE, then call
+// _pgTreeRenderLeft / _pgTreeRenderRight to refresh just one side.
+function _pgTreeRenderShell(c) {
   c.innerHTML = `
     <div class="pg-page-title">🌳 Tree Management
-      <span style="font-size:11px;color:var(--muted);font-weight:400;">${_pgTreeFlat.length} nodes</span>
+      <span style="font-size:11px;color:var(--muted);font-weight:400;">${_pgTreeFlat.length} nodes — drag rows to reparent or reorder</span>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:24px;">
-      <!-- Add Folder -->
-      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">📁 Add Folder</div>
-        <input class="pg-form-input" id="pg-tree-fname" placeholder="Folder name" style="margin-bottom:6px;">
-        <select class="pg-form-select" id="pg-tree-fparent" style="margin-bottom:8px;">${folderOpts}</select>
-        <button class="pg-action-btn pg-btn-green" style="width:100%;padding:7px;" onclick="_pgTreeAddFolder()">+ Add Folder</button>
+    <div style="display:flex;gap:14px;height:calc(100vh - 220px);min-height:480px;">
+      <!-- Left pane: tree -->
+      <div style="flex:1;border:1px solid var(--border);border-radius:8px;background:var(--bg2);display:flex;flex-direction:column;overflow:hidden;">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <button class="pg-action-btn pg-btn-green" onclick="_pgTreeAddRootFolder()">+ Root Folder</button>
+          <button class="pg-action-btn pg-btn-gray"  onclick="_pgTreeExpandAll()">⊞ Expand all</button>
+          <button class="pg-action-btn pg-btn-gray"  onclick="_pgTreeCollapseAll()">⊟ Collapse</button>
+          <button class="pg-action-btn pg-btn-gray"  onclick="pgRenderTreePage(document.getElementById('pg-console-content'))" style="margin-left:auto;">↻ Reload</button>
+        </div>
+        <div id="pg-tree-list" style="flex:1;overflow-y:auto;padding:6px 0;"></div>
+        <!-- Drop zone for root-level reparent -->
+        <div id="pg-tree-root-drop"
+             ondragover="_pgTreeDragOver(event)"
+             ondragleave="_pgTreeDragLeave(event)"
+             ondrop="_pgTreeDropToRoot(event)"
+             style="padding:8px 12px;border-top:1px dashed var(--border);font-size:11px;color:var(--muted);text-align:center;flex-shrink:0;">
+          drop here to move to root level
+        </div>
       </div>
-      <!-- Add Device node -->
-      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">🖥 Add Device Node</div>
-        <select class="pg-form-select" id="pg-tree-dev" style="margin-bottom:6px;"><option value="">— pick device —</option>${devOpts}</select>
-        <select class="pg-form-select" id="pg-tree-dparent" style="margin-bottom:8px;">${folderOpts}</select>
-        <button class="pg-action-btn pg-btn-blue" style="width:100%;padding:7px;" onclick="_pgTreeAddDevice()">+ Add Device</button>
-      </div>
-      <!-- Add Graph node -->
-      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;">
-        <div style="font-weight:700;margin-bottom:8px;">📊 Add Graph Node</div>
-        <select class="pg-form-select" id="pg-tree-graph" style="margin-bottom:6px;"><option value="">— pick graph —</option>${graphOpts || '<option disabled>load Graph Mgmt first</option>'}</select>
-        <select class="pg-form-select" id="pg-tree-gparent" style="margin-bottom:8px;">${folderOpts}</select>
-        <button class="pg-action-btn pg-btn-blue" style="width:100%;padding:7px;" onclick="_pgTreeAddGraph()">+ Add Graph</button>
+      <!-- Right pane: details for selected node -->
+      <div id="pg-tree-details" style="width:340px;flex-shrink:0;border:1px solid var(--border);border-radius:8px;background:var(--bg2);padding:14px;overflow-y:auto;">
+        <div style="color:var(--muted);text-align:center;padding:24px 0;font-size:12px;">Select a node to see details</div>
       </div>
     </div>
-
-    <table class="pg-table">
-      <thead><tr><th>Tree Node</th><th>Type</th><th style="width:170px;">Actions</th></tr></thead>
-      <tbody>${rowsHtml || '<tr><td colspan="3" style="text-align:center;color:var(--muted);">No tree nodes yet. Add a folder to start.</td></tr>'}</tbody>
-    </table>
   `;
+  // Style injection for tree rows (idempotent)
+  if (!document.getElementById('pg-tree-styles')) {
+    const st = document.createElement('style');
+    st.id = 'pg-tree-styles';
+    st.textContent = `
+      .pg-tree-row { display:flex; align-items:center; gap:6px;
+        padding:5px 12px; cursor:pointer; user-select:none;
+        border-left:2px solid transparent; transition:background .1s; }
+      .pg-tree-row:hover { background:var(--bg3); }
+      .pg-tree-row.selected { background:rgba(99,102,241,.18);
+        border-left-color:var(--accent); }
+      .pg-tree-row.drag-over { background:rgba(34,197,94,.18);
+        border-left-color:var(--green); }
+      .pg-tree-row .twist { width:14px; text-align:center; color:var(--muted);
+        font-size:9px; }
+      .pg-tree-row .icon { width:16px; text-align:center; }
+      .pg-tree-row .name { flex:1; color:var(--text); font-size:12px; }
+      .pg-tree-row .badge { font-size:9px; padding:1px 6px;
+        background:var(--bg3); border:1px solid var(--border);
+        border-radius:8px; color:var(--muted); }
+      #pg-tree-root-drop.drag-over { background:rgba(34,197,94,.12);
+        color:var(--green); }
+    `;
+    document.head.appendChild(st);
+  }
+  _pgTreeRenderLeft();
+  _pgTreeRenderRight();
 }
 
-async function _pgTreeAddFolder() {
-  const name = document.getElementById('pg-tree-fname').value.trim();
-  const parent_id = document.getElementById('pg-tree-fparent').value || null;
-  if (!name) { alert('Enter a folder name'); return; }
-  await _pgTreePost({ name, node_type: 'folder', parent_id });
+function _pgTreeRenderLeft() {
+  const list = document.getElementById('pg-tree-list');
+  if (!list) return;
+  let html = '';
+  // Recursive renderer using nested data, but only show children if expanded
+  const walk = (nodes, depth) => {
+    (nodes || []).forEach(n => {
+      const hasKids = (n.children || []).length > 0;
+      const open    = _pgTreeExpanded.has(n.id);
+      const twist   = hasKids ? (open ? '▼' : '▶') : '·';
+      const icon    = n.node_type === 'folder' ? '📁' :
+                       n.node_type === 'device' ? '🖥' : '📊';
+      const sel     = (_pgTreeSelected === n.id) ? ' selected' : '';
+      html += `<div class="pg-tree-row${sel}" data-id="${n.id}"
+                    style="padding-left:${4 + depth*14}px;"
+                    draggable="true"
+                    ondragstart="_pgTreeDragStart(event, ${n.id})"
+                    ondragover="_pgTreeDragOver(event)"
+                    ondragleave="_pgTreeDragLeave(event)"
+                    ondrop="_pgTreeDrop(event, ${n.id})"
+                    onclick="_pgTreeSelect(${n.id}, event)">
+        <span class="twist" onclick="_pgTreeToggle(${n.id}, event)">${twist}</span>
+        <span class="icon">${icon}</span>
+        <span class="name">${_pgEsc(n.name || '(unnamed)')}</span>
+        <span class="badge">${n.node_type}</span>
+      </div>`;
+      if (open && hasKids) walk(n.children, depth + 1);
+    });
+  };
+  walk(_pgTreeData, 0);
+  list.innerHTML = html || '<div style="padding:40px;text-align:center;color:var(--muted);font-size:12px;">No tree nodes yet. Click "+ Root Folder" to start.</div>';
 }
-async function _pgTreeAddDevice() {
-  const device_id = document.getElementById('pg-tree-dev').value;
-  const parent_id = document.getElementById('pg-tree-dparent').value || null;
-  if (!device_id) { alert('Pick a device'); return; }
-  const dev = pgDevices.find(d => String(d.id) === String(device_id));
+
+function _pgTreeRenderRight() {
+  const det = document.getElementById('pg-tree-details');
+  if (!det) return;
+  if (_pgTreeSelected == null) {
+    det.innerHTML = `<div style="color:var(--muted);text-align:center;padding:24px 0;font-size:12px;">Select a node to see details</div>`;
+    return;
+  }
+  const n = _pgTreeFlat.find(x => x.id === _pgTreeSelected);
+  if (!n) { det.innerHTML = ''; return; }
+  let body = '';
+  if (n.node_type === 'folder') {
+    // Folder: inline rename, add-child controls
+    const devOpts   = pgDevices.map(d => `<option value="${d.id}">${_pgEsc(d.name)}</option>`).join('');
+    const graphOpts = _pgGmgmtAll.map(g =>
+      `<option value="${g.id}">${_pgEsc(g.device_name||'')} — ${_pgEsc(g.graph_name||'')}</option>`).join('');
+    body = `
+      <div class="pg-form-row" style="margin-bottom:14px;">
+        <label class="pg-form-label">📁 Folder name</label>
+        <div style="display:flex;gap:6px;">
+          <input class="pg-form-input" id="pg-tree-rename" value="${_pgEsc(n.name)}">
+          <button class="pg-action-btn pg-btn-blue" onclick="_pgTreeSaveRename(${n.id})">Rename</button>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin:12px 0;padding-top:12px;">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Add child</div>
+        <input class="pg-form-input" id="pg-tree-new-folder" placeholder="New subfolder name" style="margin-bottom:4px;">
+        <button class="pg-action-btn pg-btn-green" style="width:100%;margin-bottom:10px;" onclick="_pgTreeAddSubfolder(${n.id})">+ Subfolder</button>
+
+        <select class="pg-form-select" id="pg-tree-new-dev" style="margin-bottom:4px;"><option value="">— pick device —</option>${devOpts}</select>
+        <button class="pg-action-btn pg-btn-blue" style="width:100%;margin-bottom:10px;" onclick="_pgTreeAttachDevice(${n.id})">+ Device</button>
+
+        <select class="pg-form-select" id="pg-tree-new-graph" style="margin-bottom:4px;"><option value="">— pick graph —</option>${graphOpts || ''}</select>
+        <button class="pg-action-btn pg-btn-blue" style="width:100%;" onclick="_pgTreeAttachGraph(${n.id})">+ Graph</button>
+      </div>
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <button class="pg-action-btn pg-btn-red" style="width:100%;" onclick="_pgTreeDelete(${n.id})">🗑 Delete folder + all children</button>
+      </div>`;
+  } else if (n.node_type === 'device') {
+    const dev = pgDevices.find(d => d.id === n.device_id);
+    body = `
+      <div class="pg-form-row" style="margin-bottom:14px;">
+        <label class="pg-form-label">🖥 Device node label</label>
+        <div style="display:flex;gap:6px;">
+          <input class="pg-form-input" id="pg-tree-rename" value="${_pgEsc(n.name)}">
+          <button class="pg-action-btn pg-btn-blue" onclick="_pgTreeSaveRename(${n.id})">Rename</button>
+        </div>
+      </div>
+      ${dev ? `<div style="font-size:11px;color:var(--muted);line-height:1.7;background:var(--bg3);padding:10px;border-radius:6px;">
+        <div><strong>Device:</strong> ${_pgEsc(dev.name)}</div>
+        <div><strong>IP:</strong> ${_pgEsc(dev.ip||'')}</div>
+        <div><strong>Vendor:</strong> ${_pgEsc(dev.vendor||'')}</div>
+        <div><strong>Status:</strong> ${_pgEsc(dev.last_status||'unknown')} (${dev.last_poll_ms||0}ms)</div>
+      </div>` : `<div style="color:var(--muted);font-size:11px;">Device id ${n.device_id} not found in current list.</div>`}
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <button class="pg-action-btn pg-btn-red" style="width:100%;" onclick="_pgTreeDelete(${n.id})">🗑 Remove from tree</button>
+      </div>`;
+  } else if (n.node_type === 'graph') {
+    const g = _pgGmgmtAll.find(x => x.id === n.graph_id);
+    body = `
+      <div class="pg-form-row" style="margin-bottom:14px;">
+        <label class="pg-form-label">📊 Graph node label</label>
+        <div style="display:flex;gap:6px;">
+          <input class="pg-form-input" id="pg-tree-rename" value="${_pgEsc(n.name)}">
+          <button class="pg-action-btn pg-btn-blue" onclick="_pgTreeSaveRename(${n.id})">Rename</button>
+        </div>
+      </div>
+      ${g ? `<div style="font-size:11px;color:var(--muted);line-height:1.7;background:var(--bg3);padding:10px;border-radius:6px;">
+        <div><strong>Graph:</strong> ${_pgEsc(g.graph_name)}</div>
+        <div><strong>Device:</strong> ${_pgEsc(g.device_name||'')}</div>
+        <div><strong>Type:</strong> ${_pgEsc(g.graph_type||'')}</div>
+      </div>` : `<div style="color:var(--muted);font-size:11px;">Graph id ${n.graph_id} not found.</div>`}
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <button class="pg-action-btn pg-btn-red" style="width:100%;" onclick="_pgTreeDelete(${n.id})">🗑 Remove from tree</button>
+      </div>`;
+  }
+  det.innerHTML = body;
+}
+
+function _pgTreeSelect(id, ev) {
+  if (ev) ev.stopPropagation();
+  _pgTreeSelected = id;
+  _pgTreeRenderLeft();
+  _pgTreeRenderRight();
+}
+
+function _pgTreeToggle(id, ev) {
+  if (ev) ev.stopPropagation();
+  if (_pgTreeExpanded.has(id)) _pgTreeExpanded.delete(id);
+  else _pgTreeExpanded.add(id);
+  _pgTreeRenderLeft();
+}
+
+function _pgTreeExpandAll() {
+  _pgTreeFlat.filter(n => n.node_type === 'folder').forEach(n => _pgTreeExpanded.add(n.id));
+  _pgTreeRenderLeft();
+}
+function _pgTreeCollapseAll() {
+  _pgTreeExpanded.clear();
+  _pgTreeRenderLeft();
+}
+
+// ── Drag-drop handlers ──────────────────────────────────────────────
+function _pgTreeDragStart(ev, id) {
+  _pgTreeDragId = id;
+  ev.dataTransfer.effectAllowed = 'move';
+  ev.dataTransfer.setData('text/plain', String(id));
+}
+function _pgTreeDragOver(ev) {
+  if (_pgTreeDragId == null) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  ev.currentTarget.classList.add('drag-over');
+}
+function _pgTreeDragLeave(ev) {
+  ev.currentTarget.classList.remove('drag-over');
+}
+async function _pgTreeDrop(ev, targetId) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  const srcId = _pgTreeDragId;
+  _pgTreeDragId = null;
+  if (srcId == null || srcId === targetId) return;
+  const target = _pgTreeFlat.find(n => n.id === targetId);
+  // If target is a folder → reparent into it. Otherwise → move next to it (same parent).
+  let body;
+  if (target && target.node_type === 'folder') {
+    body = { parent_id: targetId };
+  } else {
+    body = { parent_id: target ? target.parent_id : null };
+  }
+  try {
+    const r = await pgFetch(API + '/network/tree/' + srcId + '/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(()=>({}));
+      alert('Move failed: ' + (j.error || r.status));
+    }
+  } catch(e) { alert('Move error: ' + e.message); }
+  pgRenderTreePage(document.getElementById('pg-console-content'));
+}
+async function _pgTreeDropToRoot(ev) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  const srcId = _pgTreeDragId;
+  _pgTreeDragId = null;
+  if (srcId == null) return;
+  try {
+    await pgFetch(API + '/network/tree/' + srcId + '/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
+      body: JSON.stringify({ parent_id: null }),
+    });
+  } catch(e) { alert('Move error: ' + e.message); }
+  pgRenderTreePage(document.getElementById('pg-console-content'));
+}
+
+// ── Add / edit / delete helpers ──────────────────────────────────────
+async function _pgTreeAddRootFolder() {
+  const name = prompt('New root folder name:');
+  if (!name || !name.trim()) return;
+  await _pgTreePost({ name: name.trim(), node_type: 'folder', parent_id: null });
+}
+async function _pgTreeAddSubfolder(parentId) {
+  const el = document.getElementById('pg-tree-new-folder');
+  const name = (el && el.value || '').trim();
+  if (!name) { alert('Enter a subfolder name'); return; }
+  await _pgTreePost({ name, node_type: 'folder', parent_id: parentId });
+}
+async function _pgTreeAttachDevice(parentId) {
+  const el = document.getElementById('pg-tree-new-dev');
+  const did = el && el.value;
+  if (!did) { alert('Pick a device'); return; }
+  const dev = pgDevices.find(d => String(d.id) === String(did));
   await _pgTreePost({ name: dev ? dev.name : 'device',
-                       node_type: 'device', device_id: parseInt(device_id), parent_id });
+                       node_type: 'device', device_id: parseInt(did), parent_id: parentId });
 }
-async function _pgTreeAddGraph() {
-  const graph_id = document.getElementById('pg-tree-graph').value;
-  const parent_id = document.getElementById('pg-tree-gparent').value || null;
-  if (!graph_id) { alert('Pick a graph'); return; }
-  const g = _pgGmgmtAll.find(x => String(x.id) === String(graph_id));
+async function _pgTreeAttachGraph(parentId) {
+  const el = document.getElementById('pg-tree-new-graph');
+  const gid = el && el.value;
+  if (!gid) { alert('Pick a graph'); return; }
+  const g = _pgGmgmtAll.find(x => String(x.id) === String(gid));
   await _pgTreePost({ name: g ? g.graph_name : 'graph',
-                       node_type: 'graph', graph_id: parseInt(graph_id), parent_id });
+                       node_type: 'graph', graph_id: parseInt(gid), parent_id: parentId });
 }
 async function _pgTreePost(body) {
   try {
@@ -1749,6 +1948,8 @@ async function _pgTreePost(body) {
       const j = await r.json().catch(()=>({}));
       alert('Error: ' + (j.error || r.status)); return;
     }
+    // Auto-expand parent so new node is visible
+    if (body.parent_id) _pgTreeExpanded.add(body.parent_id);
     pgRenderTreePage(document.getElementById('pg-console-content'));
   } catch(e) { alert('Error: ' + e.message); }
 }
@@ -1757,27 +1958,27 @@ async function _pgTreeDelete(id) {
   try {
     await pgFetch(API + '/network/tree/' + id + '/delete',
       { method: 'POST', headers: pgAuthHeaders() });
+    if (_pgTreeSelected === id) _pgTreeSelected = null;
     pgRenderTreePage(document.getElementById('pg-console-content'));
   } catch(e) { alert('Error: ' + e.message); }
 }
-async function _pgTreeRename(id) {
-  const node = _pgTreeFlat.find(n => n.id === id);
-  const newName = prompt('Rename node:', node ? node.name : '');
-  if (newName === null || !newName.trim()) return;
+async function _pgTreeSaveRename(id) {
+  const el = document.getElementById('pg-tree-rename');
+  const name = el && el.value && el.value.trim();
+  if (!name) { alert('Name cannot be empty'); return; }
   try {
     await pgFetch(API + '/network/tree/' + id, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
-      body: JSON.stringify({ name: newName.trim() }),
+      body: JSON.stringify({ name }),
     });
     pgRenderTreePage(document.getElementById('pg-console-content'));
   } catch(e) { alert('Error: ' + e.message); }
 }
 
 // ── Poller ───────────────────────────────
-function pgRenderPollerTab() {
-  pgRenderPollerPage(document.getElementById('pg-poller-content'));
-}
+// v6 alias — Poller is no longer a top tab. Redirect into Console.
+function pgRenderPollerTab() { pgTab('console'); pgConsole('poller2'); }
 
 async function pgRenderPollerPage(c) {
   c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
@@ -1853,9 +2054,50 @@ function _pgFmtDuration(secs) {
 let _pgLogsEntries = [];        // cached entries from last fetch
 let _pgLogsTimer   = null;       // auto-refresh interval
 
+// v6 — Logs as Console sub-page. Builds toolbar + viewer into pg-console-content.
+function pgRenderLogsPage(c) {
+  c.innerHTML = `
+    <div style="display:flex;flex-direction:column;height:100%;">
+      <div style="display:flex;align-items:center;gap:8px;padding:0 0 12px 0;flex-shrink:0;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:12px;">
+        <div class="pg-page-title" style="margin:0;">📋 Logs</div>
+        <span class="pg-filter-label" style="margin-left:24px;">Level:</span>
+        <select class="pg-filter-select" id="pg-log-level" onchange="pgLogsLoad()">
+          <option value="ALL">All</option>
+          <option value="INFO">Info</option>
+          <option value="WARNING">Warning</option>
+          <option value="ERROR">Error</option>
+          <option value="DEBUG">Debug</option>
+        </select>
+        <span class="pg-filter-label">Show:</span>
+        <select class="pg-filter-select" id="pg-log-limit" onchange="pgLogsLoad()">
+          <option value="100">100</option>
+          <option value="200" selected>200</option>
+          <option value="500">500</option>
+          <option value="1000">1000</option>
+        </select>
+        <span class="pg-filter-label">Filter:</span>
+        <input class="pg-filter-input" id="pg-log-search" placeholder="text in message…" oninput="pgLogsRender()">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);cursor:pointer;margin-left:8px;">
+          <input type="checkbox" id="pg-log-autorefresh" checked onchange="pgLogsToggleRefresh()"> auto-refresh (5s)
+        </label>
+        <button class="pg-refresh-btn" onclick="pgLogsLoad()">↻ Refresh</button>
+        <span id="pg-log-status" style="font-size:11px;color:var(--muted);margin-left:auto;"></span>
+      </div>
+      <div id="pg-logs-content" style="flex:1;overflow-y:auto;padding:0;background:#0a0c12;font-family:'JetBrains Mono','Consolas',monospace;font-size:11px;line-height:1.5;border:1px solid var(--border);border-radius:6px;">
+        <div style="padding:40px;text-align:center;color:var(--muted);">Loading logs…</div>
+      </div>
+    </div>
+  `;
+  pgLogsLoad();
+}
+
 async function pgLogsLoad() {
-  const level = document.getElementById('pg-log-level').value || 'ALL';
-  const limit = document.getElementById('pg-log-limit').value || '200';
+  // Logs controls may not exist if we're not on the Logs page yet.
+  if (!document.getElementById('pg-logs-content')) return;
+  const levelEl = document.getElementById('pg-log-level');
+  const limitEl = document.getElementById('pg-log-limit');
+  const level = (levelEl && levelEl.value) || 'ALL';
+  const limit = (limitEl && limitEl.value) || '200';
   const statusEl = document.getElementById('pg-log-status');
   if (statusEl) statusEl.textContent = 'fetching…';
   try {

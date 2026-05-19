@@ -612,11 +612,49 @@ def update_tree_node(nid: int, name: str = None, parent_id=...,
 
 
 def delete_tree_node(nid: int) -> bool:
+    """Delete a tree node AND cascade-delete all descendant nodes.
+    (graph_tree has no FK ON DELETE CASCADE — descendants would become
+    orphans linked to a missing parent_id otherwise.)"""
     con = get_db()
     try:
-        cur = con.execute("DELETE FROM graph_tree WHERE id=?", (nid,))
+        # Walk descendants iteratively
+        to_delete = {nid}
+        frontier  = {nid}
+        while frontier:
+            placeholders = ",".join("?" * len(frontier))
+            rows = con.execute(
+                f"SELECT id FROM graph_tree WHERE parent_id IN ({placeholders})",
+                list(frontier)).fetchall()
+            new = {r["id"] for r in rows} - to_delete
+            to_delete |= new
+            frontier = new
+        placeholders = ",".join("?" * len(to_delete))
+        cur = con.execute(
+            f"DELETE FROM graph_tree WHERE id IN ({placeholders})",
+            list(to_delete))
         con.commit()
         return cur.rowcount > 0
+    finally:
+        con.close()
+
+
+def reorder_tree_nodes(parent_id, ordered_ids: list) -> int:
+    """Bulk re-set sort_order for sibling nodes under the given parent.
+    `ordered_ids` is the new sort order; first id → sort_order 0, etc.
+    Returns the number of rows updated. Used by the drag-drop UI to
+    persist a reorder within the same parent.
+    """
+    con = get_db()
+    try:
+        updated = 0
+        for i, nid in enumerate(ordered_ids):
+            cur = con.execute(
+                "UPDATE graph_tree SET sort_order=? WHERE id=? AND "
+                "(parent_id IS ? OR parent_id = ?)",
+                (i, int(nid), parent_id, parent_id))
+            updated += cur.rowcount
+        con.commit()
+        return updated
     finally:
         con.close()
 

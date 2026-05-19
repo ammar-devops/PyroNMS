@@ -122,10 +122,17 @@ _DEVICE_EDITABLE = {
     "notes", "tags",
 }
 
-# Fields returned by API list (secrets removed)
+# Fields returned by API list. Only the high-secrecy fields
+# (snmp_v3_auth_pass, snmp_v3_priv_pass) are filtered out.
+# snmp_community is included — every API caller has already been
+# authenticated by require_auth(), and the Edit Device modal needs
+# to round-trip this value or save would appear to fail (the modal
+# defaulted to "public" when the field was missing).
 _DEVICE_PUBLIC = {
     "id", "name", "hostname", "ip", "vendor", "device_type", "location",
-    "snmp_version", "snmp_port", "snmp_timeout", "snmp_retries",
+    "snmp_version", "snmp_community",
+    "snmp_v3_user", "snmp_v3_auth_proto", "snmp_v3_priv_proto",
+    "snmp_port", "snmp_timeout", "snmp_retries",
     "polling_enabled", "polling_interval",
     "notes", "tags",
     "last_poll", "last_status", "last_poll_ms",
@@ -219,7 +226,18 @@ def add_device(fields: dict) -> int:
 
 
 def update_device(device_id: int, fields: dict) -> bool:
-    allowed = {k: v for k, v in fields.items() if k in _DEVICE_EDITABLE}
+    """
+    Return True iff at least one row was updated.
+    Caller can distinguish "no editable fields in payload" via the
+    `update_device_fields_check()` helper below if needed.
+    Logs any keys it had to drop (for visibility in poller/API logs).
+    """
+    import logging as _lg
+    allowed  = {k: v for k, v in fields.items() if k in _DEVICE_EDITABLE}
+    rejected = [k for k in fields.keys() if k not in _DEVICE_EDITABLE and k != "id"]
+    if rejected:
+        _lg.getLogger("network_db").warning(
+            f"update_device(id={device_id}): ignored unknown fields: {rejected}")
     if not allowed:
         return False
     allowed["updated_at"] = int(time.time())

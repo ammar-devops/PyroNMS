@@ -3518,10 +3518,22 @@ from(bucket:"{INFLUX_BUCKET}")
                     return self.send_json(404, {"ok": False, "error": "Device not found"})
                 # Vendor + sys info
                 sysinfo = nsnmp.test_device(dev)
-                vendor_det = "unknown"
+                vendor_det = dev.get("vendor", "unknown")
                 if sysinfo.get("snmp_ok"):
-                    vendor_det = sysinfo.get("vendor_detected") or dev.get("vendor", "generic")
-                    ndb.update_device(dev_id, {"vendor": vendor_det})
+                    detected = (sysinfo.get("vendor_detected") or "").strip().lower()
+                    current  = (dev.get("vendor") or "").strip().lower()
+                    # Only OVERWRITE vendor when detection is specific AND
+                    # the current value is missing/generic. Trust user-set
+                    # vendor otherwise — they may have picked it intentionally.
+                    if detected and detected != "generic" and current in ("", "generic", "unknown"):
+                        vendor_det = detected
+                        ndb.update_device(dev_id, {"vendor": vendor_det})
+                    elif detected and current == detected:
+                        # No change needed
+                        vendor_det = current
+                    else:
+                        # Keep user choice
+                        vendor_det = current or detected or "unknown"
                     ndb.set_device_status(dev_id, "online", sysinfo.get("ms", 0),
                                           sys_name=sysinfo.get("sys_name"),
                                           sys_descr=sysinfo.get("sys_descr"),
@@ -3672,10 +3684,21 @@ from(bucket:"{INFLUX_BUCKET}")
                 return self.send_json(400, {"error": "Invalid JSON"})
             try:
                 import network_db as ndb
+                # Confirm device exists first so we can distinguish
+                # "not found" from "no editable fields"
+                existing = ndb.get_device(dev_id)
+                if not existing:
+                    return self.send_json(404, {"ok": False, "error": "Device not found"})
                 ok = ndb.update_device(dev_id, payload)
                 if not ok:
-                    return self.send_json(404, {"ok": False, "error": "Device not found"})
-                return self.send_json(200, {"ok": True})
+                    return self.send_json(400, {
+                        "ok": False,
+                        "error": "No editable fields in payload (or value unchanged)",
+                        "editable_fields": sorted(list(ndb._DEVICE_EDITABLE)),
+                    })
+                # Return updated device so client doesn't need second GET
+                return self.send_json(200, {"ok": True,
+                                            "device": ndb.get_device(dev_id)})
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 

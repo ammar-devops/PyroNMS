@@ -519,9 +519,33 @@
         </select>
       </div>
     </div>
+    <!-- SNMP transport tuning -->
+    <div class="pg-form-row-2">
+      <div class="pg-form-row">
+        <label class="pg-form-label">SNMP Port</label>
+        <input class="pg-form-input" type="number" id="pg-dev-port" value="161" min="1" max="65535">
+      </div>
+      <div class="pg-form-row">
+        <label class="pg-form-label">SNMP Timeout (s)</label>
+        <input class="pg-form-input" type="number" id="pg-dev-timeout" value="3" min="1" max="30">
+      </div>
+    </div>
+    <div class="pg-form-row-2">
+      <div class="pg-form-row">
+        <label class="pg-form-label">SNMP Retries</label>
+        <input class="pg-form-input" type="number" id="pg-dev-retries" value="1" min="0" max="5">
+      </div>
+      <div class="pg-form-row">
+        <label class="pg-form-label">Poll Interval (s)</label>
+        <input class="pg-form-input" type="number" id="pg-dev-poll-interval" value="60" min="15" max="3600">
+      </div>
+    </div>
     <div class="pg-form-row">
-      <label class="pg-form-label">Graph Templates (comma-separated OIDs or leave blank for auto)</label>
-      <input class="pg-form-input" id="pg-dev-templates" placeholder="auto-detected from vendor">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;">
+        <input type="checkbox" id="pg-dev-poll-enabled" checked>
+        <strong>Polling Enabled</strong>
+        <span style="color:var(--muted);font-size:11px;">— uncheck to keep device but pause polling</span>
+      </label>
     </div>
 
     <!-- MikroTik-only API credentials (used for PPPoE sessions etc.) -->
@@ -1018,10 +1042,10 @@ async function pgLoadGrid() {
     grid.appendChild(card);
   });
 
-  // Draw charts after DOM insertion
+  // Draw charts after DOM insertion (pass graph_type for axis formatting)
   slice.forEach((pv) => {
     const canId = 'pgc-' + pv.graph_id;
-    if (pv.labels && pv.series) pgDrawChart(canId, pv.labels, pv.series);
+    if (pv.labels && pv.series) pgDrawChart(canId, pv.labels, pv.series, pv.graph_type);
   });
 
   // Fetch real Cacti stats per card (server-side via /network/graph-stats)
@@ -1184,13 +1208,29 @@ function pgFmtBps(v) {
 }
 
 // ── Chart.js drawing ─────────────────────
-function pgDrawChart(canId, labels, series) {
+// Pick the right y-axis formatter for a graph_type.
+// PPPoE shows raw integer count, CPU/Memory/Disk show %, Temp shows °C,
+// everything else (traffic, errors, etc.) defaults to bps.
+function _pgYFmt(gtype) {
+  if (gtype === 'pppoe' || gtype === 'sessions') {
+    return v => Math.round(v).toLocaleString();
+  }
+  if (gtype === 'cpu' || gtype === 'memory' || gtype === 'disk') {
+    return v => v.toFixed(0) + '%';
+  }
+  if (gtype === 'temperature') return v => v.toFixed(0) + '°C';
+  if (gtype === 'uptime')      return v => Math.round(v).toLocaleString();
+  if (gtype === 'errors')      return v => Math.round(v).toLocaleString();
+  return pgFmtBps;
+}
+
+function pgDrawChart(canId, labels, series, gtype) {
   const canvas = document.getElementById(canId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
   const datasets = series.map((s, i) => ({
-    label: s.label || ('Series ' + (i+1)),
+    label: s.label || s.name || ('Series ' + (i+1)),
     data: s.data,
     borderColor: PG_COLORS[i % PG_COLORS.length],
     backgroundColor: PG_COLORS[i % PG_COLORS.length] + '22',
@@ -1199,6 +1239,8 @@ function pgDrawChart(canId, labels, series) {
     fill: true,
     tension: 0.3,
   }));
+
+  const yFmt = _pgYFmt(gtype);
 
   pgCharts[canId] = new Chart(ctx, {
     type: 'line',
@@ -1212,8 +1254,9 @@ function pgDrawChart(canId, labels, series) {
         x: { display: false },
         y: {
           display: true,
+          beginAtZero: (gtype === 'pppoe' || gtype === 'sessions'),
           ticks: { color: '#64748b', font: { size: 9 }, maxTicksLimit: 4,
-            callback: v => pgFmtBps(v) },
+            callback: v => yFmt(v) },
           grid: { color: '#2a2f3e55' },
         }
       }
@@ -1278,6 +1321,7 @@ async function pgZoomLoad() {
       fill: true,
       tension: 0.3,
     }));
+    const yFmt = _pgYFmt(gtype);
     pgZoomChart = new Chart(ctx, {
       type: 'line',
       data: { labels, datasets },
@@ -1286,7 +1330,7 @@ async function pgZoomLoad() {
         plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 12 } } },
         scales: {
           x: { ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: '#2a2f3e55' } },
-          y: { ticks: { color: '#64748b', font: { size: 10 }, callback: v => pgFmtBps(v) }, grid: { color: '#2a2f3e55' } }
+          y: { ticks: { color: '#64748b', font: { size: 10 }, callback: v => yFmt(v) }, grid: { color: '#2a2f3e55' } }
         }
       }
     });
@@ -1876,7 +1920,11 @@ function pgAddDevice() {
   document.getElementById('pg-dev-community').value = 'public';
   document.getElementById('pg-dev-snmp-ver').value = '2c';
   document.getElementById('pg-dev-vendor').value = 'mikrotik';
-  document.getElementById('pg-dev-templates').value = '';
+  document.getElementById('pg-dev-port').value = '161';
+  document.getElementById('pg-dev-timeout').value = '3';
+  document.getElementById('pg-dev-retries').value = '1';
+  document.getElementById('pg-dev-poll-interval').value = '60';
+  document.getElementById('pg-dev-poll-enabled').checked = true;
   document.getElementById('pg-dev-edit-id').value = '';
   document.getElementById('pg-dev-modal-err').style.display = 'none';
   // Reset ROS fields
@@ -1900,15 +1948,29 @@ function _pgDevToggleROS() {
 }
 
 async function pgEditDevice(id) {
-  const dev = pgDevices.find(d => d.id === id);
+  // Always RE-FETCH the device from the API instead of using stale pgDevices
+  // cache — guarantees we show the current DB state, not a 60s-old snapshot.
+  let dev = pgDevices.find(d => d.id === id);
+  try {
+    const r = await pgFetch(API + '/network/devices/' + id, { headers: pgAuthHeaders() });
+    if (r.ok) {
+      const j = await r.json();
+      if (j.device) dev = j.device;
+    }
+  } catch(_) { /* fall back to cached */ }
   if (!dev) return;
   pgEditDevId = id;
   document.getElementById('pg-dev-modal-title').textContent = 'Edit Device';
   document.getElementById('pg-dev-name').value = dev.name || '';
   document.getElementById('pg-dev-ip').value = dev.ip || dev.ip_address || '';
-  document.getElementById('pg-dev-community').value = dev.snmp_community || 'public';
+  document.getElementById('pg-dev-community').value = dev.snmp_community || '';
   document.getElementById('pg-dev-snmp-ver').value = dev.snmp_version || '2c';
-  document.getElementById('pg-dev-vendor').value = dev.vendor || 'mikrotik';
+  document.getElementById('pg-dev-vendor').value = dev.vendor || 'generic';
+  document.getElementById('pg-dev-port').value = dev.snmp_port || 161;
+  document.getElementById('pg-dev-timeout').value = dev.snmp_timeout || 3;
+  document.getElementById('pg-dev-retries').value = dev.snmp_retries || 1;
+  document.getElementById('pg-dev-poll-interval').value = dev.polling_interval || 60;
+  document.getElementById('pg-dev-poll-enabled').checked = (dev.polling_enabled !== 0);
   document.getElementById('pg-dev-templates').value = '';
   document.getElementById('pg-dev-edit-id').value = id;
   document.getElementById('pg-dev-modal-err').style.display = 'none';
@@ -1951,22 +2013,40 @@ async function pgSaveDevice() {
     errEl.style.display = 'block'; return;
   }
 
-  // Server uses 'ip' (not ip_address)
-  const payload = { name, ip, snmp_community: community, snmp_version: snmpVer, vendor };
+  // Server uses 'ip' (not ip_address). Include all editable fields so
+  // the user gets the expected "save the whole form" behavior.
+  const payload = {
+    name, ip, snmp_community: community, snmp_version: snmpVer, vendor,
+    snmp_port:        parseInt(document.getElementById('pg-dev-port').value)        || 161,
+    snmp_timeout:     parseInt(document.getElementById('pg-dev-timeout').value)     || 3,
+    snmp_retries:     parseInt(document.getElementById('pg-dev-retries').value)     || 1,
+    polling_interval: parseInt(document.getElementById('pg-dev-poll-interval').value) || 60,
+    polling_enabled:  document.getElementById('pg-dev-poll-enabled').checked ? 1 : 0,
+  };
 
-  // MikroTik RouterOS API creds (stored as JSON in notes field).
-  // Poller already understands {ros_user, ros_pass, ros_port}.
-  if (vendor === 'mikrotik' && document.getElementById('pg-dev-ros-enabled').checked) {
+  // ── Notes handling (ROS API credentials live in here as JSON) ───────
+  // Don't blindly clear notes — the poller stores ROS creds there.
+  // Rule:
+  //   - vendor == mikrotik AND ROS-enabled checkbox checked  →  write JSON
+  //   - vendor == mikrotik AND ROS-enabled UNchecked        →  clear (user
+  //                                                            explicitly
+  //                                                            disabled API)
+  //   - vendor != mikrotik                                  →  clear (API
+  //                                                            doesn't apply)
+  // The user can no longer accidentally wipe creds just by saving the
+  // form — they have to actively uncheck "Enable RouterOS API".
+  const isMt = (vendor === 'mikrotik');
+  const rosOn = document.getElementById('pg-dev-ros-enabled').checked;
+  if (isMt && rosOn) {
     const ros_user = document.getElementById('pg-dev-ros-user').value.trim();
     const ros_pass = document.getElementById('pg-dev-ros-pass').value;
     const ros_port = parseInt(document.getElementById('pg-dev-ros-port').value) || 8728;
     if (ros_user && ros_pass) {
       payload.notes = JSON.stringify({ ros_user, ros_pass, ros_port });
-    } else {
-      payload.notes = '';
     }
+    // If ROS-on but fields empty: leave notes out of payload (preserves DB value)
   } else {
-    payload.notes = '';   // explicitly clear if disabled or vendor changed
+    payload.notes = '';
   }
 
   const editId  = document.getElementById('pg-dev-edit-id').value;
@@ -1974,21 +2054,26 @@ async function pgSaveDevice() {
   const url     = editId ? API + '/network/devices/' + editId : API + '/network/devices';
 
   try {
-    const res = await fetch(url, {
+    const res = await pgFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    if (!res.ok) {
+    if (!res.ok || data.ok === false) {
       errEl.textContent = data.error || data.detail || 'Save failed.';
       errEl.style.display = 'block'; return;
     }
     pgCloseDevModal();
-    // Refresh devices list + tree
-    const r2 = await fetch(API + '/network/devices', { headers: pgAuthHeaders() });
-    const d2 = await r2.json();
-    pgDevices = d2.devices || [];
+    // Refresh devices list from server — guarantees fresh values (no
+    // stale cache). The server's POST response already includes the
+    // updated device row, but we re-fetch the full list to keep state
+    // consistent across other tabs.
+    try {
+      const r2 = await pgFetch(API + '/network/devices', { headers: pgAuthHeaders() });
+      const d2 = await r2.json();
+      pgDevices = d2.devices || [];
+    } catch(_) { /* keep existing list */ }
     pgRenderTree();
     pgPopulateDevFilter();
     // Refresh current view

@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>PyroGraphs v6.1.0 — Network Monitor</title>
+  <title>PyroGraphs v6.1.1 — Network Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     :root {
@@ -283,9 +283,9 @@
 <div id="pg-header">
   <div id="pg-logo">🔥 PyroGraphs</div>
   <div id="pg-subtitle">Cacti-style Network Monitoring</div>
-  <!-- Version pill — if you see anything OTHER than v6.1.0 here you are
+  <!-- Version pill — if you see anything OTHER than v6.1.1 here you are
        running a cached older copy; Ctrl+F5 to reload. -->
-  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.1.0</span>
+  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.1.1</span>
   <div id="pg-header-spacer"></div>
   <span id="pg-status-pill"></span>
   <button class="pg-header-btn" onclick="pgAddDevice()">+ Device</button>
@@ -967,9 +967,25 @@ function pgSetRange(r) {
 //   device_name,interface_name,...}, labels:[], series:[{name,data}]}]}
 // We flatten into: {graph_id, graph_name, device_name, graph_type,
 //   interface_name, labels, series}
+// In-memory preview cache so repeated tree-node clicks for the same
+// device/range pair are instant. 5s TTL — short enough to feel live,
+// long enough to avoid hammering the API while user navigates the tree.
+const _pgPreviewCache = new Map();  // key="<dev_id>:<range>:<hide_zero>" → {at:ms, previews:[]}
+const _PG_PREVIEW_TTL_MS = 5000;
+
 async function pgLoadGrid() {
   const grid = document.getElementById('pg-grid');
-  grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">Loading…</div>`;
+  // Skeleton placeholders so user sees immediate visual feedback. We
+  // estimate 6 cards (matches what one device commonly returns).
+  let skel = '';
+  for (let i = 0; i < 6; i++) {
+    skel += `<div class="pg-card" style="opacity:.55;pointer-events:none;">
+      <div class="pg-card-title" style="background:var(--bg3);height:14px;border-radius:4px;width:60%;"></div>
+      <div class="pg-canvas-wrap" style="background:var(--bg3);border-radius:4px;"></div>
+      <div style="height:10px;background:var(--bg3);border-radius:4px;width:80%;margin-top:6px;"></div>
+    </div>`;
+  }
+  grid.innerHTML = skel;
 
   // Destroy existing charts
   Object.values(pgCharts).forEach(c => { try { c.destroy(); } catch(e){} });
@@ -1030,15 +1046,24 @@ async function pgLoadGrid() {
       pgRenderPager(0, 0);
       return;
     }
-    // Fetch graph-preview for each device in parallel (with 20s timeout each)
+    // Fetch graph-preview for each device in parallel (with 20s timeout each).
+    // Use 5s cache so repeated tree-node clicks for the same device don't
+    // re-hit the API — feels instant on the second click.
     const hideZeroParam = pgHideZero ? '&hide_zero=1' : '';
+    const cacheBust     = pgHideZero ? '1' : '0';
+    const now = Date.now();
     const results = await Promise.all(devIds.map(async (did) => {
+      const cacheKey = `${did}:${pgRange}:${cacheBust}`;
+      const cached   = _pgPreviewCache.get(cacheKey);
+      if (cached && (now - cached.at) < _PG_PREVIEW_TTL_MS) {
+        return cached.previews;
+      }
       try {
         const r = await pgFetch(API + '/network/graph-preview?range=' + pgRange + '&device_id=' + did + hideZeroParam,
           { headers: pgAuthHeaders(), timeout: 20000 });
         if (!r.ok) return [];
         const j = await r.json();
-        return (j.previews || []).map(p => ({
+        const previews = (j.previews || []).map(p => ({
           graph_id:       p.graph?.id,
           graph_name:     p.graph?.graph_name || '',
           graph_type:     p.graph?.graph_type || '',
@@ -1048,6 +1073,8 @@ async function pgLoadGrid() {
           labels:         p.labels || [],
           series:         p.series || [],
         }));
+        _pgPreviewCache.set(cacheKey, { at: now, previews });
+        return previews;
       } catch(e) { return []; }
     }));
     rawPreviews = results.flat();
@@ -1759,37 +1786,87 @@ function _pgTreeRenderShell(c) {
   _pgTreeRenderRight();
 }
 
+// DOM-build approach (no template-literal HTML for rows) — every error is
+// visible because we're constructing real elements. Also surfaces an
+// inline error message if anything in the data shape is wrong.
 function _pgTreeRenderLeft() {
   const list = document.getElementById('pg-tree-list');
-  if (!list) return;
-  let html = '';
-  // Recursive renderer using nested data, but only show children if expanded
-  const walk = (nodes, depth) => {
-    (nodes || []).forEach(n => {
+  if (!list) {
+    console.error('[PyroGraphs] _pgTreeRenderLeft: #pg-tree-list element not found');
+    return;
+  }
+  try {
+    list.innerHTML = '';
+    if (!Array.isArray(_pgTreeData)) {
+      list.innerHTML = `<div style="padding:40px;text-align:center;color:#ef4444;font-size:12px;">⚠ Tree data is not an array (got ${typeof _pgTreeData}). Try Reload.</div>`;
+      console.error('[PyroGraphs] _pgTreeData is not an array:', _pgTreeData);
+      return;
+    }
+    if (_pgTreeData.length === 0) {
+      list.innerHTML = `<div style="padding:40px;text-align:center;color:var(--muted);font-size:12px;">No tree nodes yet. Click "+ Root Folder" to start.</div>`;
+      return;
+    }
+
+    const buildRow = (n, depth) => {
       const hasKids = (n.children || []).length > 0;
       const open    = _pgTreeExpanded.has(n.id);
       const twist   = hasKids ? (open ? '▼' : '▶') : '·';
       const icon    = n.node_type === 'folder' ? '📁' :
-                       n.node_type === 'device' ? '🖥' : '📊';
-      const sel     = (_pgTreeSelected === n.id) ? ' selected' : '';
-      html += `<div class="pg-tree-row${sel}" data-id="${n.id}"
-                    style="padding-left:${4 + depth*14}px;"
-                    draggable="true"
-                    ondragstart="_pgTreeDragStart(event, ${n.id})"
-                    ondragover="_pgTreeDragOver(event)"
-                    ondragleave="_pgTreeDragLeave(event)"
-                    ondrop="_pgTreeDrop(event, ${n.id})"
-                    onclick="_pgTreeSelect(${n.id}, event)">
-        <span class="twist" onclick="_pgTreeToggle(${n.id}, event)">${twist}</span>
-        <span class="icon">${icon}</span>
-        <span class="name">${_pgEsc(n.name || '(unnamed)')}</span>
-        <span class="badge">${n.node_type}</span>
-      </div>`;
-      if (open && hasKids) walk(n.children, depth + 1);
-    });
-  };
-  walk(_pgTreeData, 0);
-  list.innerHTML = html || '<div style="padding:40px;text-align:center;color:var(--muted);font-size:12px;">No tree nodes yet. Click "+ Root Folder" to start.</div>';
+                      n.node_type === 'device' ? '🖥' : '📊';
+      const row = document.createElement('div');
+      row.className = 'pg-tree-row' + (_pgTreeSelected === n.id ? ' selected' : '');
+      row.dataset.id = n.id;
+      row.style.paddingLeft = (4 + depth * 14) + 'px';
+      row.draggable = true;
+      row.addEventListener('click', (ev) => _pgTreeSelect(n.id, ev));
+      row.addEventListener('dragstart', (ev) => _pgTreeDragStart(ev, n.id));
+      row.addEventListener('dragover',  _pgTreeDragOver);
+      row.addEventListener('dragleave', _pgTreeDragLeave);
+      row.addEventListener('drop',      (ev) => _pgTreeDrop(ev, n.id));
+
+      const twistEl = document.createElement('span');
+      twistEl.className = 'twist';
+      twistEl.textContent = twist;
+      twistEl.addEventListener('click', (ev) => _pgTreeToggle(n.id, ev));
+      row.appendChild(twistEl);
+
+      const iconEl = document.createElement('span');
+      iconEl.className = 'icon';
+      iconEl.textContent = icon;
+      row.appendChild(iconEl);
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'name';
+      nameEl.textContent = n.name || '(unnamed)';
+      row.appendChild(nameEl);
+
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'badge';
+      badgeEl.textContent = n.node_type || '?';
+      row.appendChild(badgeEl);
+
+      return row;
+    };
+
+    const walk = (nodes, depth) => {
+      nodes.forEach(n => {
+        list.appendChild(buildRow(n, depth));
+        if (_pgTreeExpanded.has(n.id) && (n.children || []).length) {
+          walk(n.children, depth + 1);
+        }
+      });
+    };
+    walk(_pgTreeData, 0);
+
+    // Sanity check
+    if (list.children.length === 0) {
+      list.innerHTML = `<div style="padding:40px;text-align:center;color:#eab308;font-size:12px;">⚠ Tree has ${_pgTreeData.length} root node(s) but walk produced 0 rows. Data shape issue?</div>`;
+      console.warn('[PyroGraphs] Tree walk produced 0 rows from data:', _pgTreeData);
+    }
+  } catch(e) {
+    console.error('[PyroGraphs] _pgTreeRenderLeft threw:', e);
+    list.innerHTML = `<div style="padding:40px;text-align:center;color:#ef4444;font-size:12px;">⚠ Render error: ${_pgEsc(e.message || e)}</div>`;
+  }
 }
 
 function _pgTreeRenderRight() {

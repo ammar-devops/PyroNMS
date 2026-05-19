@@ -329,6 +329,7 @@
           <option value="traffic">Traffic</option>
           <option value="cpu">CPU</option>
           <option value="memory">Memory</option>
+          <option value="pppoe">PPPoE Sessions</option>
           <option value="disk">Disk</option>
           <option value="latency">Latency</option>
           <option value="uptime">Uptime</option>
@@ -507,7 +508,7 @@
       </div>
       <div class="pg-form-row">
         <label class="pg-form-label">Vendor</label>
-        <select class="pg-form-select" id="pg-dev-vendor">
+        <select class="pg-form-select" id="pg-dev-vendor" onchange="_pgDevVendorChanged()">
           <option value="mikrotik">MikroTik</option>
           <option value="cisco">Cisco</option>
           <option value="juniper">Juniper</option>
@@ -522,6 +523,31 @@
       <label class="pg-form-label">Graph Templates (comma-separated OIDs or leave blank for auto)</label>
       <input class="pg-form-input" id="pg-dev-templates" placeholder="auto-detected from vendor">
     </div>
+
+    <!-- MikroTik-only API credentials (used for PPPoE sessions etc.) -->
+    <div id="pg-dev-ros-block" style="display:none;border-top:1px dashed var(--border);padding-top:12px;margin-top:4px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);cursor:pointer;margin-bottom:8px;">
+        <input type="checkbox" id="pg-dev-ros-enabled" onchange="_pgDevToggleROS()">
+        <strong>Enable MikroTik RouterOS API</strong> <span style="color:var(--muted);font-size:11px;">(for PPPoE session graphs)</span>
+      </label>
+      <div id="pg-dev-ros-fields" style="display:none;">
+        <div class="pg-form-row-2">
+          <div class="pg-form-row">
+            <label class="pg-form-label">API Username</label>
+            <input class="pg-form-input" id="pg-dev-ros-user" placeholder="admin">
+          </div>
+          <div class="pg-form-row">
+            <label class="pg-form-label">API Password</label>
+            <input class="pg-form-input" id="pg-dev-ros-pass" type="password" placeholder="••••••••">
+          </div>
+        </div>
+        <div class="pg-form-row" style="margin-top:8px;">
+          <label class="pg-form-label">API Port</label>
+          <input class="pg-form-input" id="pg-dev-ros-port" value="8728" style="width:120px;">
+        </div>
+      </div>
+    </div>
+
     <input type="hidden" id="pg-dev-edit-id">
     <div class="pg-modal-footer">
       <button class="pg-modal-btn pg-modal-btn-cancel" onclick="pgCloseDevModal()">Cancel</button>
@@ -1143,6 +1169,8 @@ function pgFmtVal(v, gtype) {
   if (gtype === 'cpu' || gtype === 'memory' || gtype === 'disk') return v.toFixed(1) + '%';
   if (gtype === 'latency') return v.toFixed(2) + 'ms';
   if (gtype === 'temperature') return v.toFixed(1) + '°C';
+  if (gtype === 'pppoe' || gtype === 'sessions') return Math.round(v).toLocaleString();
+  if (gtype === 'uptime') return Math.round(v).toLocaleString() + ' s';
   // Default: bps formatting
   return pgFmtBps(v);
 }
@@ -1851,7 +1879,24 @@ function pgAddDevice() {
   document.getElementById('pg-dev-templates').value = '';
   document.getElementById('pg-dev-edit-id').value = '';
   document.getElementById('pg-dev-modal-err').style.display = 'none';
+  // Reset ROS fields
+  document.getElementById('pg-dev-ros-enabled').checked = false;
+  document.getElementById('pg-dev-ros-user').value = '';
+  document.getElementById('pg-dev-ros-pass').value = '';
+  document.getElementById('pg-dev-ros-port').value = '8728';
+  document.getElementById('pg-dev-ros-fields').style.display = 'none';
+  _pgDevVendorChanged();
   document.getElementById('pg-dev-modal-overlay').classList.add('open');
+}
+
+// Show ROS API block only when vendor=mikrotik
+function _pgDevVendorChanged() {
+  const vendor = document.getElementById('pg-dev-vendor').value;
+  document.getElementById('pg-dev-ros-block').style.display = (vendor === 'mikrotik') ? '' : 'none';
+}
+function _pgDevToggleROS() {
+  const en = document.getElementById('pg-dev-ros-enabled').checked;
+  document.getElementById('pg-dev-ros-fields').style.display = en ? '' : 'none';
 }
 
 async function pgEditDevice(id) {
@@ -1860,13 +1905,32 @@ async function pgEditDevice(id) {
   pgEditDevId = id;
   document.getElementById('pg-dev-modal-title').textContent = 'Edit Device';
   document.getElementById('pg-dev-name').value = dev.name || '';
-  document.getElementById('pg-dev-ip').value = dev.ip_address || '';
+  document.getElementById('pg-dev-ip').value = dev.ip || dev.ip_address || '';
   document.getElementById('pg-dev-community').value = dev.snmp_community || 'public';
   document.getElementById('pg-dev-snmp-ver').value = dev.snmp_version || '2c';
   document.getElementById('pg-dev-vendor').value = dev.vendor || 'mikrotik';
   document.getElementById('pg-dev-templates').value = '';
   document.getElementById('pg-dev-edit-id').value = id;
   document.getElementById('pg-dev-modal-err').style.display = 'none';
+  // Parse existing ROS creds from device.notes JSON
+  let ros = { ros_user:'', ros_pass:'', ros_port:8728 };
+  let hasRos = false;
+  try {
+    const raw = (dev.notes || '').trim();
+    if (raw.startsWith('{')) {
+      const j = JSON.parse(raw);
+      if (j.ros_user || j.ros_pass) {
+        ros = { ros_user:j.ros_user||'', ros_pass:j.ros_pass||'', ros_port:j.ros_port||8728 };
+        hasRos = true;
+      }
+    }
+  } catch(_){}
+  document.getElementById('pg-dev-ros-enabled').checked = hasRos;
+  document.getElementById('pg-dev-ros-user').value = ros.ros_user;
+  document.getElementById('pg-dev-ros-pass').value = ros.ros_pass;
+  document.getElementById('pg-dev-ros-port').value = ros.ros_port;
+  document.getElementById('pg-dev-ros-fields').style.display = hasRos ? '' : 'none';
+  _pgDevVendorChanged();
   document.getElementById('pg-dev-modal-overlay').classList.add('open');
 }
 
@@ -1889,6 +1953,22 @@ async function pgSaveDevice() {
 
   // Server uses 'ip' (not ip_address)
   const payload = { name, ip, snmp_community: community, snmp_version: snmpVer, vendor };
+
+  // MikroTik RouterOS API creds (stored as JSON in notes field).
+  // Poller already understands {ros_user, ros_pass, ros_port}.
+  if (vendor === 'mikrotik' && document.getElementById('pg-dev-ros-enabled').checked) {
+    const ros_user = document.getElementById('pg-dev-ros-user').value.trim();
+    const ros_pass = document.getElementById('pg-dev-ros-pass').value;
+    const ros_port = parseInt(document.getElementById('pg-dev-ros-port').value) || 8728;
+    if (ros_user && ros_pass) {
+      payload.notes = JSON.stringify({ ros_user, ros_pass, ros_port });
+    } else {
+      payload.notes = '';
+    }
+  } else {
+    payload.notes = '';   // explicitly clear if disabled or vendor changed
+  }
+
   const editId  = document.getElementById('pg-dev-edit-id').value;
   // Update + Create both use POST (real server endpoints)
   const url     = editId ? API + '/network/devices/' + editId : API + '/network/devices';

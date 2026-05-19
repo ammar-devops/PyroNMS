@@ -105,6 +105,18 @@ BUILTIN_TEMPLATES = [
         "unit":     "°C",
         "oid_map":  {"temp": "1.3.6.1.4.1.14988.1.1.3.10.0"},
     },
+    {
+        # PPPoE active session count. Polled via RouterOS API (librouteros)
+        # not SNMP — credentials are stored as JSON in device.notes:
+        #   {"ros_user":"admin","ros_pass":"secret","ros_port":8728}
+        # The poller writes to InfluxDB measurement `network_pppoe_sessions`
+        # with tags device_id/device_name/profile/service, field active_count.
+        "name":     "MikroTik PPPoE Sessions",
+        "graph_type": "pppoe",
+        "vendor":   "mikrotik",
+        "unit":     "sessions",
+        "oid_map":  {"_source": "routeros-api", "_endpoint": "/ppp/active/print"},
+    },
 
     # ── Cisco ─────────────────────────────────────────────────────────────
     {

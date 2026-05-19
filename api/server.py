@@ -2716,6 +2716,19 @@ from(bucket:"{INFLUX_BUCKET}")
                         {"name": "TX bps",
                          "data": [float(r.get("tx_bps") or 0) for r in rows]},
                     ]
+                elif gtype == "pppoe":
+                    flux = (f'from(bucket:"{NET_BUCKET}")'
+                            f' |> range(start:{start})'
+                            f' |> filter(fn:(r)=>r._measurement=="network_pppoe_sessions"'
+                            f' and r.device_id=="{did}"'
+                            f' and r.profile=="_total"'
+                            f' and r._field=="active_count")'
+                            f' |> aggregateWindow(every:{window},fn:mean,createEmpty:false)'
+                            f' |> sort(columns:["_time"])')
+                    rows = influx_query(flux)
+                    labels = [r.get("_time","") for r in rows]
+                    series = [{"name": "Sessions",
+                               "data": [float(r.get("_value") or 0) for r in rows]}]
                 else:
                     _fmap = {"cpu": "cpu_pct", "memory": "mem_pct",
                              "temperature": "temp_c", "uptime": "uptime_sec",
@@ -2805,6 +2818,23 @@ from(bucket:"{INFLUX_BUCKET}")
                                 {"name": "RX", "data": rx_vals},
                                 {"name": "TX", "data": tx_vals},
                             ]
+                        elif gtype == "pppoe":
+                            # PPPoE total active sessions (profile=_total)
+                            flux = (f'from(bucket:"{NET_BUCKET}")'
+                                    f' |> range(start:{start})'
+                                    f' |> filter(fn:(r)=>r._measurement=="network_pppoe_sessions"'
+                                    f' and r.device_id=="{dids}"'
+                                    f' and r.profile=="_total"'
+                                    f' and r._field=="active_count")'
+                                    f' |> aggregateWindow(every:{window},fn:mean,createEmpty:false)'
+                                    f' |> sort(columns:["_time"])')
+                            rows = influx_query(flux)
+                            labels = [r.get("_time","") for r in rows]
+                            vals   = [float(r.get("_value") or 0) for r in rows]
+                            if hide_zero:
+                                if not vals or max(vals) <= 0:
+                                    continue
+                            series = [{"name": "Sessions", "data": vals}]
                         else:
                             field = _fmap.get(gtype, gtype)
                             flux = (f'from(bucket:"{NET_BUCKET}")'
@@ -2932,6 +2962,31 @@ from(bucket:"{INFLUX_BUCKET}")
                         f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
                         f' |> filter(fn:(r)=>{base_filter} and r._field=="rx_bps")'
                         f' |> count()')
+                    if rows2:
+                        try: stats["points"] = int(rows2[0].get("_value") or 0)
+                        except: pass
+                elif gtype == "pppoe":
+                    base_filter = (f'r._measurement=="network_pppoe_sessions"'
+                                   f' and r.device_id=="{did}"'
+                                   f' and r.profile=="_total"'
+                                   f' and r._field=="active_count"')
+                    stats["current"] = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> last()')
+                    stats["avg"] = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> mean()')
+                    stats["max"] = _flux_one(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> max()')
+                    rows = influx_query(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> last()'
+                        f' |> keep(columns:["_time"])')
+                    if rows: stats["last_updated"] = rows[0].get("_time")
+                    rows2 = influx_query(
+                        f'from(bucket:"{NET_BUCKET}") |> range(start:{start})'
+                        f' |> filter(fn:(r)=>{base_filter}) |> count()')
                     if rows2:
                         try: stats["points"] = int(rows2[0].get("_value") or 0)
                         except: pass
@@ -3531,6 +3586,33 @@ from(bucket:"{INFLUX_BUCKET}")
                                 graphs_created += 1
                             except Exception:
                                 pass
+
+                # ── MikroTik PPPoE auto-graph ───────────────────────────────
+                # If vendor is mikrotik AND ROS API creds are configured
+                # (notes JSON has ros_user/ros_pass), create one PPPoE Sessions
+                # graph for this device (if not already there).
+                if vendor_det == "mikrotik":
+                    try:
+                        notes_raw = dev.get("notes") or ""
+                        has_api = (notes_raw.strip().startswith("{") and
+                                   '"ros_user"' in notes_raw and
+                                   '"ros_pass"' in notes_raw)
+                        if has_api:
+                            pppoe_tpls = ndb.get_templates(vendor="mikrotik",
+                                                            graph_type="pppoe")
+                            if pppoe_tpls:
+                                ptpl = pppoe_tpls[0]
+                                existing_pppoe = ndb.get_graphs(
+                                    device_id=dev_id, graph_type="pppoe")
+                                if not existing_pppoe:
+                                    ndb.add_graph(
+                                        device_id=dev_id,
+                                        template_id=ptpl["id"],
+                                        interface_id=None,
+                                        graph_name=f"{dev.get('name','')} PPPoE Sessions")
+                                    graphs_created += 1
+                    except Exception:
+                        pass
                 return self.send_json(200, {
                     "ok": True,
                     "interfaces":       ifaces,

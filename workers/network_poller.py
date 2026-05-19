@@ -299,8 +299,16 @@ def probe_resources(dev: dict) -> dict:
                             out["mem_pct"]   = round(used_bytes * 100.0 / total_bytes, 1)
             except Exception as _e:
                 log.debug(f"hrStorage memory probe failed for {dev.get('ip')}: {_e}")
-        # Optional: PPPoE session count via RouterOS API
-        # Credentials from notes JSON: {"ros_user":"admin","ros_pass":"..."}
+        # Optional: PPPoE active sessions via RouterOS API.
+        # Credentials from notes JSON:
+        #   {"ros_user":"admin","ros_pass":"secret","ros_port":8728}
+        # Returns:
+        #   out["pppoe_sessions"]         — total active count (legacy)
+        #   out["pppoe_by_profile"]       — {profile_name: count}
+        #   out["pppoe_by_service"]       — {service_name: count}
+        # The poll_one_device caller writes these as a separate
+        # `network_pppoe_sessions` Influx measurement so each profile/service
+        # gets its own time-series.
         try:
             notes_raw = dev.get("notes") or ""
             if notes_raw and notes_raw.strip().startswith("{"):
@@ -316,6 +324,16 @@ def probe_resources(dev: dict) -> dict:
                     sessions = list(conn("/ppp/active/print"))
                     conn.close()
                     out["pppoe_sessions"] = len(sessions)
+                    # Group by profile/service for separate time-series
+                    by_profile, by_service = {}, {}
+                    for s in sessions:
+                        # librouteros returns keys with leading slash
+                        prof = s.get(".profile") or s.get("profile") or "default"
+                        serv = s.get(".service") or s.get("service") or "pppoe"
+                        by_profile[prof] = by_profile.get(prof, 0) + 1
+                        by_service[serv] = by_service.get(serv, 0) + 1
+                    out["pppoe_by_profile"] = by_profile
+                    out["pppoe_by_service"] = by_service
         except Exception as _e:
             log.debug(f"PPPoE session poll skipped for {dev.get('ip')}: {_e}")
 
@@ -444,6 +462,32 @@ def poll_one_device(dev: dict) -> dict:
             if res.get("pppoe_sessions") is not None: fields["pppoe_sessions"] = int(res["pppoe_sessions"])
             l = _build_line("net_resource", base_tags, fields, ts_ns)
             if l: lines.append(l)
+
+        # 2b) PPPoE sessions — separate measurement with profile/service tags
+        if res.get("pppoe_sessions") is not None:
+            # Total active count (always)
+            total_line = _build_line(
+                "network_pppoe_sessions",
+                {**base_tags, "profile": "_total", "service": "_total"},
+                {"active_count": int(res["pppoe_sessions"])},
+                ts_ns)
+            if total_line: lines.append(total_line)
+            # Per-profile breakdown
+            for prof, cnt in (res.get("pppoe_by_profile") or {}).items():
+                pl = _build_line(
+                    "network_pppoe_sessions",
+                    {**base_tags, "profile": str(prof), "service": "_all"},
+                    {"active_count": int(cnt)},
+                    ts_ns)
+                if pl: lines.append(pl)
+            # Per-service breakdown
+            for serv, cnt in (res.get("pppoe_by_service") or {}).items():
+                sl = _build_line(
+                    "network_pppoe_sessions",
+                    {**base_tags, "profile": "_all", "service": str(serv)},
+                    {"active_count": int(cnt)},
+                    ts_ns)
+                if sl: lines.append(sl)
 
         # 3) Interface counters (only if any interface is polling_enabled, OR
         #    if no interfaces yet in DB — initial pre-discovery state)

@@ -337,6 +337,12 @@
         </select>
         <span class="pg-filter-label">Search:</span>
         <input class="pg-filter-input" id="pg-search" placeholder="device or interface…" oninput="pgApplyFilters()">
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text);cursor:pointer;margin-left:8px;">
+          <input type="checkbox" id="pg-hide-zero" checked onchange="pgApplyFilters()"> hide 0-traffic
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text);cursor:pointer;margin-left:4px;">
+          <input type="checkbox" id="pg-tree-mode" onchange="pgToggleTreeMode()"> 🌳 Tree Mode
+        </label>
         <span class="pg-filter-label">Per page:</span>
         <select class="pg-filter-select" id="pg-per-page" onchange="pgApplyFilters()">
           <option value="12">12</option>
@@ -381,10 +387,9 @@
       <div class="pg-console-nav">
         <div class="pg-console-nav-title">Management</div>
         <div class="pg-cnav-item active" id="pg-cnav-devices"   onclick="pgConsole('devices')">🖥 Devices</div>
-        <div class="pg-cnav-item"        id="pg-cnav-sources"   onclick="pgConsole('sources')">📡 Data Sources</div>
         <div class="pg-cnav-item"        id="pg-cnav-graphmgmt" onclick="pgConsole('graphmgmt')">📈 Graph Management</div>
         <div class="pg-cnav-item"        id="pg-cnav-templates" onclick="pgConsole('templates2')">📐 Graph Templates</div>
-        <div class="pg-cnav-item"        id="pg-cnav-hosttpl"   onclick="pgConsole('hosttpl')">🏷 Host Templates</div>
+        <div class="pg-cnav-item"        id="pg-cnav-tree"      onclick="pgConsole('tree')">🌳 Tree Management</div>
         <div class="pg-cnav-item"        id="pg-cnav-poller2"   onclick="pgConsole('poller2')">⚙ Poller</div>
       </div>
       <div id="pg-console-content" style="flex:1;overflow-y:auto;padding:20px 24px;"></div>
@@ -570,6 +575,10 @@ let pgTplFilter   = '';
 let pgSearch      = '';
 let pgPerPage     = 12;
 let pgPage        = 0;
+let pgHideZero    = true;        // default hide zero-traffic graphs
+let pgTreeMode    = false;       // false = vendor groups, true = user-defined tree
+let _pgUserTree   = [];          // flat list of tree nodes when in tree mode
+let _pgTreeSelectedNodeId = null;
 let pgDevices     = [];
 let pgTemplates   = [];
 let pgPreviews    = [];
@@ -685,6 +694,30 @@ function pgRenderTree() {
   const list = document.getElementById('pg-tree-list');
   let html = '';
 
+  // ── Tree Mode: user-defined folder/device/graph hierarchy ──────────
+  if (pgTreeMode) {
+    if (!_pgUserTree.length) {
+      list.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:12px;">
+        No tree nodes yet.<br>Go to <strong>Console → Tree Management</strong> to create folders.
+      </div>`;
+      return;
+    }
+    _pgUserTree.forEach(n => {
+      const indent = n.depth * 12;
+      const icon = n.node_type === 'folder' ? '📁' :
+                   n.node_type === 'device' ? '🖥' : '📊';
+      const active = (_pgTreeSelectedNodeId === n.id) ? 'active' : '';
+      html += `<div class="pg-tree-device ${active}" style="padding-left:${4+indent}px;"
+                    onclick="pgTreeSelectNode(${n.id}, '${n.node_type}', ${n.device_id||'null'}, ${n.graph_id||'null'})">
+        ${icon} ${_pgEsc(n.name||'')}
+      </div>`;
+    });
+    list.innerHTML = html;
+    return;
+  }
+
+  // ── Default Preview Mode: vendor-grouped device list ────────────────
+
   // Build group → devices map
   const grouped = {};
   const ungrouped = [];
@@ -746,9 +779,27 @@ function pgToggleFolder(id) {
 function pgTreeAll() {
   pgDevFilter = '';
   pgPage = 0;
+  _pgTreeSelectedNodeId = null;
   document.getElementById('pg-dev-filter').value = '';
   document.querySelectorAll('.pg-tree-device').forEach(el => el.classList.remove('active'));
   document.getElementById('pg-tree-all').classList.add('active');
+  pgLoadGrid();
+}
+
+// Tree Mode: click a node → filter by it
+function pgTreeSelectNode(nodeId, nodeType, deviceId, graphId) {
+  _pgTreeSelectedNodeId = nodeId;
+  pgPage = 0;
+  if (nodeType === 'device' && deviceId) {
+    pgDevFilter = String(deviceId);
+  } else if (nodeType === 'graph' && graphId) {
+    // For graph node, filter previews to just this graph_id (client-side)
+    pgDevFilter = '';
+  } else {
+    // Folder node — collect all device_ids under it (descendants)
+    pgDevFilter = '';
+  }
+  pgRenderTree();
   pgLoadGrid();
 }
 
@@ -778,7 +829,23 @@ function pgApplyFilters() {
   pgTplFilter = document.getElementById('pg-tpl-filter').value;
   pgSearch    = document.getElementById('pg-search').value.toLowerCase();
   pgPerPage   = parseInt(document.getElementById('pg-per-page').value) || 12;
+  const hzEl  = document.getElementById('pg-hide-zero');
+  pgHideZero  = hzEl ? hzEl.checked : true;
   pgPage = 0;
+  pgLoadGrid();
+}
+
+async function pgToggleTreeMode() {
+  pgTreeMode = document.getElementById('pg-tree-mode').checked;
+  // Re-render the left panel
+  if (pgTreeMode) {
+    try {
+      const r = await pgFetch(API + '/network/tree', { headers: pgAuthHeaders() });
+      const j = await r.json();
+      _pgUserTree = _pgTreeFlatten(j.tree || [], null, 0);
+    } catch(e) { _pgUserTree = []; }
+  }
+  pgRenderTree();
   pgLoadGrid();
 }
 
@@ -814,9 +881,47 @@ async function pgLoadGrid() {
 
   // graph-preview needs a device_id. If "All Devices" selected, loop over all.
   let rawPreviews = [];
+  let treeGraphIds = null; // when set, filter previews to these graph_ids only
   try {
     let devIds = [];
-    if (pgDevFilter) {
+    if (pgTreeMode && _pgTreeSelectedNodeId) {
+      // Tree mode: figure out which devices/graphs the selected node covers
+      const sel = _pgUserTree.find(n => n.id === _pgTreeSelectedNodeId);
+      if (sel) {
+        if (sel.node_type === 'graph') {
+          // Single graph node — filter by graph_id at end, fetch from its device
+          treeGraphIds = new Set([sel.graph_id]);
+          const g = _pgGmgmtAll.find(x => x.id === sel.graph_id);
+          if (g) devIds = [g.device_id];
+        } else if (sel.node_type === 'device') {
+          devIds = [sel.device_id];
+        } else if (sel.node_type === 'folder') {
+          // Collect ALL device+graph nodes under this folder (recursive)
+          const descIds = new Set();
+          const descGraphIds = new Set();
+          const queue = [sel.id];
+          while (queue.length) {
+            const pid = queue.shift();
+            _pgUserTree.filter(n => n.parent_id === pid).forEach(n => {
+              if (n.node_type === 'device' && n.device_id) descIds.add(n.device_id);
+              if (n.node_type === 'graph'  && n.graph_id)  descGraphIds.add(n.graph_id);
+              if (n.node_type === 'folder') queue.push(n.id);
+            });
+          }
+          if (descGraphIds.size) treeGraphIds = descGraphIds;
+          devIds = [...descIds];
+          // If folder only contains graphs, fetch from those graphs' devices
+          if (!devIds.length && treeGraphIds) {
+            const fromGraphs = new Set();
+            treeGraphIds.forEach(gid => {
+              const g = _pgGmgmtAll.find(x => x.id === gid);
+              if (g) fromGraphs.add(g.device_id);
+            });
+            devIds = [...fromGraphs];
+          }
+        }
+      }
+    } else if (pgDevFilter) {
       devIds = [pgDevFilter];
     } else {
       devIds = pgDevices.map(d => d.id);
@@ -830,9 +935,10 @@ async function pgLoadGrid() {
       return;
     }
     // Fetch graph-preview for each device in parallel (with 20s timeout each)
+    const hideZeroParam = pgHideZero ? '&hide_zero=1' : '';
     const results = await Promise.all(devIds.map(async (did) => {
       try {
-        const r = await pgFetch(API + '/network/graph-preview?range=' + pgRange + '&device_id=' + did,
+        const r = await pgFetch(API + '/network/graph-preview?range=' + pgRange + '&device_id=' + did + hideZeroParam,
           { headers: pgAuthHeaders(), timeout: 20000 });
         if (!r.ok) return [];
         const j = await r.json();
@@ -857,8 +963,9 @@ async function pgLoadGrid() {
 
   // Apply client-side filters
   let filtered = pgPreviews;
-  if (pgTplFilter) filtered = filtered.filter(pv => (pv.graph_type||'') === pgTplFilter);
-  if (pgSearch)    filtered = filtered.filter(pv =>
+  if (treeGraphIds) filtered = filtered.filter(pv => treeGraphIds.has(pv.graph_id));
+  if (pgTplFilter)  filtered = filtered.filter(pv => (pv.graph_type||'') === pgTplFilter);
+  if (pgSearch)     filtered = filtered.filter(pv =>
     (pv.device_name||'').toLowerCase().includes(pgSearch) ||
     (pv.graph_name||'').toLowerCase().includes(pgSearch));
 
@@ -1180,12 +1287,11 @@ function pgConsole(page) {
   const navEl = document.getElementById('pg-cnav-' + page.replace('2',''));
   if (navEl) navEl.classList.add('active');
   const c = document.getElementById('pg-console-content');
-  if (page === 'devices')   pgRenderDevicesPage(c);
-  if (page === 'sources')   pgRenderSourcesPage(c);
-  if (page === 'graphmgmt') pgRenderGraphMgmtPage(c);
+  if (page === 'devices')    pgRenderDevicesPage(c);
+  if (page === 'graphmgmt')  pgRenderGraphMgmtPage(c);
   if (page === 'templates2') pgRenderTemplatesPage(c);
-  if (page === 'hosttpl')   pgRenderHostTplPage(c);
-  if (page === 'poller2')   pgRenderPollerPage(c);
+  if (page === 'tree')       pgRenderTreePage(c);
+  if (page === 'poller2')    pgRenderPollerPage(c);
 }
 
 // ── Devices tab & console page ───────────
@@ -1265,27 +1371,136 @@ async function pgRenderSourcesPage(c) {
 }
 
 // ── Graph Management ─────────────────────
+// Graph Management state
+let _pgGmgmtAll       = [];        // all graphs from server
+let _pgGmgmtSelected  = new Set(); // selected graph IDs for bulk delete
+let _pgGmgmtFilter    = '';
+let _pgGmgmtDevFilter = '';
+let _pgGmgmtTypeFilter= '';
+
 async function pgRenderGraphMgmtPage(c) {
   c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
   try {
-    const res = await fetch(API + '/network/graphs', { headers: pgAuthHeaders() });
+    const res = await pgFetch(API + '/network/graphs', { headers: pgAuthHeaders() });
     const data = await res.json();
-    const graphs = data.graphs || [];
-    let rows = graphs.map(g => `<tr>
-      <td>${g.id}</td>
-      <td>${_pgEsc(g.device_name||'?')}</td>
-      <td>${_pgEsc(g.graph_name||'')}</td>
-      <td>${_pgEsc(g.graph_type||'')}</td>
-      <td><button class="pg-action-btn pg-btn-red" onclick="pgDeleteGraph(${g.id})">Delete</button></td>
-    </tr>`).join('');
-    c.innerHTML = `<div class="pg-page-title">📈 Graph Management</div>
-      <table class="pg-table">
-        <thead><tr><th>#</th><th>Device</th><th>Graph Name</th><th>Type</th><th>Action</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:var(--muted);">No graphs yet.</td></tr>'}</tbody>
-      </table>`;
+    _pgGmgmtAll = data.graphs || [];
+    _pgGmgmtSelected.clear();
+    _pgGmgmtRender(c);
   } catch(e) {
     c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
   }
+}
+
+function _pgGmgmtRender(c) {
+  // Build device + type dropdown options
+  const devSet = new Set(), typeSet = new Set();
+  _pgGmgmtAll.forEach(g => {
+    if (g.device_name) devSet.add(g.device_name);
+    if (g.graph_type)  typeSet.add(g.graph_type);
+  });
+  const devOpts  = [...devSet].sort().map(d => `<option value="${_pgEsc(d)}">${_pgEsc(d)}</option>`).join('');
+  const typeOpts = [...typeSet].sort().map(t => `<option value="${_pgEsc(t)}">${_pgEsc(t)}</option>`).join('');
+
+  // Apply filters
+  let filtered = _pgGmgmtAll;
+  if (_pgGmgmtDevFilter)  filtered = filtered.filter(g => g.device_name === _pgGmgmtDevFilter);
+  if (_pgGmgmtTypeFilter) filtered = filtered.filter(g => g.graph_type  === _pgGmgmtTypeFilter);
+  if (_pgGmgmtFilter) {
+    const q = _pgGmgmtFilter.toLowerCase();
+    filtered = filtered.filter(g =>
+      (g.graph_name||'').toLowerCase().includes(q) ||
+      (g.device_name||'').toLowerCase().includes(q) ||
+      String(g.id).includes(q));
+  }
+
+  // Group by device
+  const byDev = {};
+  filtered.forEach(g => {
+    const k = g.device_name || '(no device)';
+    (byDev[k] = byDev[k] || []).push(g);
+  });
+
+  const total    = filtered.length;
+  const selCount = _pgGmgmtSelected.size;
+
+  let groupsHtml = '';
+  Object.keys(byDev).sort().forEach(dev => {
+    const list = byDev[dev];
+    groupsHtml += `<div style="margin-bottom:18px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <div style="background:var(--bg3);padding:8px 12px;font-weight:700;font-size:13px;color:var(--text);display:flex;justify-content:space-between;align-items:center;">
+        <span>🖥 ${_pgEsc(dev)} <span style="color:var(--muted);font-weight:400;font-size:11px;">— ${list.length} graphs</span></span>
+        <button class="pg-action-btn pg-btn-gray" onclick="_pgGmgmtSelectGroup('${_pgEsc(dev).replace(/'/g,"\\'")}')">Select all</button>
+      </div>
+      <table class="pg-table" style="margin:0;border:none;">
+        <thead><tr>
+          <th style="width:36px;"></th><th style="width:60px;">#</th>
+          <th>Graph Name</th><th style="width:100px;">Type</th>
+          <th style="width:80px;">Status</th><th style="width:90px;">Action</th>
+        </tr></thead>
+        <tbody>
+          ${list.map(g => `<tr>
+            <td><input type="checkbox" ${_pgGmgmtSelected.has(g.id)?'checked':''} onchange="_pgGmgmtToggle(${g.id})"></td>
+            <td>${g.id}</td>
+            <td>${_pgEsc(g.graph_name||'')}</td>
+            <td><span style="font-size:10px;padding:2px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--muted);">${_pgEsc(g.graph_type||'')}</span></td>
+            <td>${g.enabled ? '<span style="color:#22c55e;">enabled</span>' : '<span style="color:var(--muted);">disabled</span>'}</td>
+            <td><button class="pg-action-btn pg-btn-red" onclick="pgDeleteGraph(${g.id})">Delete</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  });
+
+  c.innerHTML = `<div class="pg-page-title">📈 Graph Management <span style="font-size:12px;color:var(--muted);font-weight:400;">${total} graph${total!==1?'s':''}</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+      <span class="pg-filter-label">Device:</span>
+      <select class="pg-filter-select" onchange="_pgGmgmtSetDev(this.value)">
+        <option value="">All</option>${devOpts}
+      </select>
+      <span class="pg-filter-label">Type:</span>
+      <select class="pg-filter-select" onchange="_pgGmgmtSetType(this.value)">
+        <option value="">All</option>${typeOpts}
+      </select>
+      <span class="pg-filter-label">Search:</span>
+      <input class="pg-filter-input" placeholder="name, device, id…" value="${_pgEsc(_pgGmgmtFilter)}" oninput="_pgGmgmtSetSearch(this.value)">
+      <button class="pg-action-btn pg-btn-red" ${selCount===0?'disabled style="opacity:.4;cursor:not-allowed;"':''} onclick="_pgGmgmtBulkDelete()">🗑 Delete Selected (${selCount})</button>
+      <button class="pg-action-btn pg-btn-gray" onclick="pgRenderGraphMgmtPage(document.getElementById('pg-console-content'))">↻ Refresh</button>
+    </div>
+    ${groupsHtml || '<div style="padding:40px;text-align:center;color:var(--muted);">No graphs match the filters.</div>'}
+  `;
+
+  // Re-restore values into selects (innerHTML rewrite resets them)
+  const sels = c.querySelectorAll('select');
+  if (sels.length >= 2) {
+    sels[0].value = _pgGmgmtDevFilter;
+    sels[1].value = _pgGmgmtTypeFilter;
+  }
+}
+
+function _pgGmgmtSetDev(v)   { _pgGmgmtDevFilter  = v; _pgGmgmtRender(document.getElementById('pg-console-content')); }
+function _pgGmgmtSetType(v)  { _pgGmgmtTypeFilter = v; _pgGmgmtRender(document.getElementById('pg-console-content')); }
+function _pgGmgmtSetSearch(v){ _pgGmgmtFilter     = v; _pgGmgmtRender(document.getElementById('pg-console-content')); }
+function _pgGmgmtToggle(id) {
+  if (_pgGmgmtSelected.has(id)) _pgGmgmtSelected.delete(id);
+  else _pgGmgmtSelected.add(id);
+  _pgGmgmtRender(document.getElementById('pg-console-content'));
+}
+function _pgGmgmtSelectGroup(dev) {
+  _pgGmgmtAll.filter(g => (g.device_name||'') === dev).forEach(g => _pgGmgmtSelected.add(g.id));
+  _pgGmgmtRender(document.getElementById('pg-console-content'));
+}
+async function _pgGmgmtBulkDelete() {
+  const ids = [..._pgGmgmtSelected];
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} selected graph${ids.length>1?'s':''}? This also deletes the time-series data.`)) return;
+  for (const id of ids) {
+    try {
+      await pgFetch(API + '/network/graphs/' + id + '/delete', {
+        method: 'POST', headers: pgAuthHeaders(), timeout: 8000 });
+    } catch(_) {}
+  }
+  _pgGmgmtSelected.clear();
+  pgRenderGraphMgmtPage(document.getElementById('pg-console-content'));
 }
 
 async function pgDeleteGraph(id) {
@@ -1321,22 +1536,162 @@ async function pgRenderTemplatesPage(c) {
   }
 }
 
-// ── Host Templates ───────────────────────
-function pgRenderHostTplPage(c) {
-  const rows = [
-    ['MikroTik',  'traffic, cpu, memory, wireless'],
-    ['Cisco',     'traffic, cpu, memory, temperature'],
-    ['Juniper',   'traffic, cpu, memory'],
-    ['Huawei',    'traffic, cpu, memory'],
-    ['Linux',     'traffic, cpu, memory, disk'],
-    ['Windows',   'traffic, cpu, memory, disk'],
-    ['Generic',   'traffic'],
-  ];
-  c.innerHTML = `<div class="pg-page-title">🏷 Host Templates</div>
+// ── Tree Management ──────────────────────
+// Real Cacti-style graph tree (folders / subfolders / device / graph nodes).
+// Uses /network/tree (GET, POST add, POST {id}/delete, POST {id} rename/move).
+let _pgTreeData = null;     // last fetched tree (nested)
+let _pgTreeFlat = [];       // flat list of {id, parent_id, name, node_type, device_id, graph_id, depth}
+
+async function pgRenderTreePage(c) {
+  c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
+  try {
+    // Fetch tree + graphs in parallel (need graphs for picker dropdown)
+    const [tr, gr] = await Promise.all([
+      pgFetch(API + '/network/tree',   { headers: pgAuthHeaders() }),
+      pgFetch(API + '/network/graphs', { headers: pgAuthHeaders() }),
+    ]);
+    const tj = await tr.json();
+    const gj = await gr.json();
+    _pgTreeData  = tj.tree || [];
+    _pgTreeFlat  = _pgTreeFlatten(_pgTreeData, null, 0);
+    _pgGmgmtAll  = gj.graphs || [];
+    _pgTreeRender(c);
+  } catch(e) {
+    c.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+function _pgTreeFlatten(nodes, parent_id, depth) {
+  const out = [];
+  (nodes || []).forEach(n => {
+    out.push({ ...n, depth });
+    if (n.children && n.children.length) {
+      out.push(..._pgTreeFlatten(n.children, n.id, depth + 1));
+    }
+  });
+  return out;
+}
+
+function _pgTreeRender(c) {
+  // Build parent-folder dropdown options (folders only)
+  const folders = _pgTreeFlat.filter(n => n.node_type === 'folder');
+  const folderOpts = ['<option value="">(root)</option>'].concat(
+    folders.map(f => `<option value="${f.id}">${'— '.repeat(f.depth)}${_pgEsc(f.name)}</option>`)
+  ).join('');
+
+  // Build device + graph dropdowns
+  const devOpts   = pgDevices.map(d => `<option value="${d.id}">${_pgEsc(d.name)}</option>`).join('');
+  const graphOpts = (_pgGmgmtAll.length ? _pgGmgmtAll : []).map(g =>
+    `<option value="${g.id}">${_pgEsc(g.device_name||'')} — ${_pgEsc(g.graph_name||'')}</option>`).join('');
+
+  // Render tree rows
+  let rowsHtml = '';
+  _pgTreeFlat.forEach(n => {
+    const icon = n.node_type === 'folder' ? '📁' :
+                 n.node_type === 'device' ? '🖥' : '📊';
+    const indent = '&nbsp;'.repeat(n.depth * 4);
+    const label = _pgEsc(n.name || '(unnamed)');
+    rowsHtml += `<tr>
+      <td>${indent}${icon} <strong>${label}</strong></td>
+      <td><span style="font-size:10px;padding:2px 7px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--muted);">${_pgEsc(n.node_type||'')}</span></td>
+      <td style="white-space:nowrap;">
+        <button class="pg-action-btn pg-btn-gray" onclick="_pgTreeRename(${n.id})">Rename</button>
+        <button class="pg-action-btn pg-btn-red" onclick="_pgTreeDelete(${n.id})" style="margin-left:4px;">Delete</button>
+      </td>
+    </tr>`;
+  });
+
+  c.innerHTML = `
+    <div class="pg-page-title">🌳 Tree Management
+      <span style="font-size:11px;color:var(--muted);font-weight:400;">${_pgTreeFlat.length} nodes</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:24px;">
+      <!-- Add Folder -->
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">📁 Add Folder</div>
+        <input class="pg-form-input" id="pg-tree-fname" placeholder="Folder name" style="margin-bottom:6px;">
+        <select class="pg-form-select" id="pg-tree-fparent" style="margin-bottom:8px;">${folderOpts}</select>
+        <button class="pg-action-btn pg-btn-green" style="width:100%;padding:7px;" onclick="_pgTreeAddFolder()">+ Add Folder</button>
+      </div>
+      <!-- Add Device node -->
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">🖥 Add Device Node</div>
+        <select class="pg-form-select" id="pg-tree-dev" style="margin-bottom:6px;"><option value="">— pick device —</option>${devOpts}</select>
+        <select class="pg-form-select" id="pg-tree-dparent" style="margin-bottom:8px;">${folderOpts}</select>
+        <button class="pg-action-btn pg-btn-blue" style="width:100%;padding:7px;" onclick="_pgTreeAddDevice()">+ Add Device</button>
+      </div>
+      <!-- Add Graph node -->
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;">
+        <div style="font-weight:700;margin-bottom:8px;">📊 Add Graph Node</div>
+        <select class="pg-form-select" id="pg-tree-graph" style="margin-bottom:6px;"><option value="">— pick graph —</option>${graphOpts || '<option disabled>load Graph Mgmt first</option>'}</select>
+        <select class="pg-form-select" id="pg-tree-gparent" style="margin-bottom:8px;">${folderOpts}</select>
+        <button class="pg-action-btn pg-btn-blue" style="width:100%;padding:7px;" onclick="_pgTreeAddGraph()">+ Add Graph</button>
+      </div>
+    </div>
+
     <table class="pg-table">
-      <thead><tr><th>Vendor</th><th>Applicable Graph Types</th></tr></thead>
-      <tbody>${rows.map(r=>`<tr><td><strong>${r[0]}</strong></td><td style="color:var(--muted);">${r[1]}</td></tr>`).join('')}</tbody>
-    </table>`;
+      <thead><tr><th>Tree Node</th><th>Type</th><th style="width:170px;">Actions</th></tr></thead>
+      <tbody>${rowsHtml || '<tr><td colspan="3" style="text-align:center;color:var(--muted);">No tree nodes yet. Add a folder to start.</td></tr>'}</tbody>
+    </table>
+  `;
+}
+
+async function _pgTreeAddFolder() {
+  const name = document.getElementById('pg-tree-fname').value.trim();
+  const parent_id = document.getElementById('pg-tree-fparent').value || null;
+  if (!name) { alert('Enter a folder name'); return; }
+  await _pgTreePost({ name, node_type: 'folder', parent_id });
+}
+async function _pgTreeAddDevice() {
+  const device_id = document.getElementById('pg-tree-dev').value;
+  const parent_id = document.getElementById('pg-tree-dparent').value || null;
+  if (!device_id) { alert('Pick a device'); return; }
+  const dev = pgDevices.find(d => String(d.id) === String(device_id));
+  await _pgTreePost({ name: dev ? dev.name : 'device',
+                       node_type: 'device', device_id: parseInt(device_id), parent_id });
+}
+async function _pgTreeAddGraph() {
+  const graph_id = document.getElementById('pg-tree-graph').value;
+  const parent_id = document.getElementById('pg-tree-gparent').value || null;
+  if (!graph_id) { alert('Pick a graph'); return; }
+  const g = _pgGmgmtAll.find(x => String(x.id) === String(graph_id));
+  await _pgTreePost({ name: g ? g.graph_name : 'graph',
+                       node_type: 'graph', graph_id: parseInt(graph_id), parent_id });
+}
+async function _pgTreePost(body) {
+  try {
+    const r = await pgFetch(API + '/network/tree', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(()=>({}));
+      alert('Error: ' + (j.error || r.status)); return;
+    }
+    pgRenderTreePage(document.getElementById('pg-console-content'));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function _pgTreeDelete(id) {
+  if (!confirm('Delete this tree node and all its children?')) return;
+  try {
+    await pgFetch(API + '/network/tree/' + id + '/delete',
+      { method: 'POST', headers: pgAuthHeaders() });
+    pgRenderTreePage(document.getElementById('pg-console-content'));
+  } catch(e) { alert('Error: ' + e.message); }
+}
+async function _pgTreeRename(id) {
+  const node = _pgTreeFlat.find(n => n.id === id);
+  const newName = prompt('Rename node:', node ? node.name : '');
+  if (newName === null || !newName.trim()) return;
+  try {
+    await pgFetch(API + '/network/tree/' + id, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...pgAuthHeaders() },
+      body: JSON.stringify({ name: newName.trim() }),
+    });
+    pgRenderTreePage(document.getElementById('pg-console-content'));
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 // ── Poller ───────────────────────────────

@@ -2739,12 +2739,17 @@ from(bucket:"{INFLUX_BUCKET}")
             except Exception as e:
                 return self.send_json(500, {"ok": False, "error": str(e)})
 
-        # ── GET /network/graph-preview?device_id=N&range=1h ──────────────────
+        # ── GET /network/graph-preview?device_id=N&range=1h&hide_zero=1 ──────
+        # hide_zero: when "1"/"true", drop traffic graphs with max(rx,tx)=0
+        # over the requested range. Lets the Graphs grid skip the clutter
+        # from GPON/notPresent interfaces that never carry traffic.
         elif parsed.path == "/network/graph-preview":
             user = require_auth(self)
             if not user: return
             device_id_s = params.get("device_id", [""])[0].strip()
             range_p     = params.get("range",     ["1h"])[0].strip()
+            hide_zero_p = params.get("hide_zero", ["0"])[0].lower()
+            hide_zero   = hide_zero_p in ("1", "true", "yes")
             if not device_id_s:
                 return self.send_json(400, {"error": "device_id required"})
             try:
@@ -2787,11 +2792,18 @@ from(bucket:"{INFLUX_BUCKET}")
                                     f' |> sort(columns:["_time"])')
                             rows = influx_query(flux)
                             labels = [r.get("_time","") for r in rows]
+                            rx_vals = [float(r.get("rx_bps") or 0) for r in rows]
+                            tx_vals = [float(r.get("tx_bps") or 0) for r in rows]
+                            # hide_zero filter — skip if rx AND tx both never
+                            # exceeded zero over the range
+                            if hide_zero:
+                                rx_max = max(rx_vals) if rx_vals else 0
+                                tx_max = max(tx_vals) if tx_vals else 0
+                                if rx_max <= 0 and tx_max <= 0:
+                                    continue
                             series = [
-                                {"name": "RX",
-                                 "data": [float(r.get("rx_bps") or 0) for r in rows]},
-                                {"name": "TX",
-                                 "data": [float(r.get("tx_bps") or 0) for r in rows]},
+                                {"name": "RX", "data": rx_vals},
+                                {"name": "TX", "data": tx_vals},
                             ]
                         else:
                             field = _fmap.get(gtype, gtype)

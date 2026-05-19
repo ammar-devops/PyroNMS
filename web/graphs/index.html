@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>PyroGraphs v6.0.0 — Network Monitor</title>
+  <title>PyroGraphs v6.1.0 — Network Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     :root {
@@ -283,9 +283,9 @@
 <div id="pg-header">
   <div id="pg-logo">🔥 PyroGraphs</div>
   <div id="pg-subtitle">Cacti-style Network Monitoring</div>
-  <!-- Version pill — if you see anything OTHER than v6.0.0 here you are
+  <!-- Version pill — if you see anything OTHER than v6.1.0 here you are
        running a cached older copy; Ctrl+F5 to reload. -->
-  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.0.0</span>
+  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.1.0</span>
   <div id="pg-header-spacer"></div>
   <span id="pg-status-pill"></span>
   <button class="pg-header-btn" onclick="pgAddDevice()">+ Device</button>
@@ -295,11 +295,13 @@
 <!-- ═══════════════════════════════════════
      TOP TABS
 ════════════════════════════════════════ -->
-<!-- True Cacti layout: only Graphs (viewer) + Console (admin). Everything
-     else lives inside Console's left sidebar. -->
+<!-- Top nav (v6.1): Console (admin) · Graphs (preview grid) · Tree (hierarchical
+     tree viewer). Console is leftmost (admin home), Graphs is the default
+     landing, Tree is rightmost (user-facing folder browser). -->
 <div id="pg-tabs">
-  <button class="pg-tab active" id="pg-tab-graphs"  onclick="pgTab('graphs')">📊 Graphs</button>
   <button class="pg-tab"        id="pg-tab-console" onclick="pgTab('console')">🖥 Console</button>
+  <button class="pg-tab active" id="pg-tab-graphs"  onclick="pgTab('graphs')">📊 Graphs</button>
+  <button class="pg-tab"        id="pg-tab-tree"    onclick="pgTab('tree')">🌳 Tree</button>
 </div>
 
 <!-- ═══════════════════════════════════════
@@ -346,9 +348,6 @@
         <input class="pg-filter-input" id="pg-search" placeholder="device or interface…" oninput="pgApplyFilters()">
         <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text);cursor:pointer;margin-left:8px;">
           <input type="checkbox" id="pg-hide-zero" checked onchange="pgApplyFilters()"> hide 0-traffic
-        </label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text);cursor:pointer;margin-left:4px;">
-          <input type="checkbox" id="pg-tree-mode" onchange="pgToggleTreeMode()"> 🌳 Tree Mode
         </label>
         <span class="pg-filter-label">Per page:</span>
         <select class="pg-filter-select" id="pg-per-page" onchange="pgApplyFilters()">
@@ -688,11 +687,13 @@ function pgUpdateStatusPill() {
 }
 
 // ── Tab switching ────────────────────────
-// v6 — only two top tabs exist: 'graphs' | 'console'. Legacy names
-// ('devices'/'templates'/'poller'/'logs') silently redirect into the
-// Console sub-page system so any stale onclick handler still works.
+// v6.1 — three top tabs: 'console' | 'graphs' | 'tree'.
+// 'graphs' and 'tree' share the SAME view container but flip pgTreeMode:
+//   graphs → vendor-grouped device list on the left, grid on the right
+//   tree   → user-defined folder hierarchy on the left, grid on the right
+// Legacy aliases ('devices'/'templates'/'poller'/'logs') redirect into
+// Console so any cached onclick still works.
 function pgTab(name) {
-  // Legacy alias map → land inside Console
   const consoleAlias = { devices:'devices', templates:'templates2',
                           poller:'poller2', logs:'logs' };
   if (name in consoleAlias) {
@@ -700,23 +701,64 @@ function pgTab(name) {
     pgConsole(consoleAlias[name]);
     return;
   }
-  if (name !== 'graphs' && name !== 'console') name = 'graphs';
+  if (!['console','graphs','tree'].includes(name)) name = 'graphs';
 
   pgActiveTab = name;
   document.querySelectorAll('.pg-tab').forEach(b => b.classList.remove('active'));
   const tabEl = document.getElementById('pg-tab-' + name);
   if (tabEl) tabEl.classList.add('active');
   document.querySelectorAll('.pg-view').forEach(v => v.classList.remove('active'));
-  const viewEl = document.getElementById('pg-' + name + '-view');
-  if (viewEl) viewEl.classList.add('active');
-  // Show left tree only on Graphs
-  const treeEl = document.getElementById('pg-tree');
-  if (treeEl) treeEl.style.display = (name === 'graphs') ? 'block' : 'none';
 
-  // Stop log auto-refresh when leaving the Logs page
+  // Both 'graphs' and 'tree' use the graphs-view container
+  const viewId = (name === 'tree') ? 'pg-graphs-view' : ('pg-' + name + '-view');
+  const viewEl = document.getElementById(viewId);
+  if (viewEl) viewEl.classList.add('active');
+
+  // Left tree panel visible on Graphs + Tree (hidden inside Console)
+  const treeEl = document.getElementById('pg-tree');
+  if (treeEl) treeEl.style.display = (name === 'console') ? 'none' : 'block';
+
+  // Stop log auto-refresh when leaving Logs
   if (typeof pgLogsStopRefresh === 'function') pgLogsStopRefresh();
 
-  if (name === 'console') pgConsole(pgConsolePage);
+  if (name === 'console') {
+    pgTreeMode = false;
+    pgConsole(pgConsolePage);
+    return;
+  }
+
+  // Switch left-pane mode + re-render
+  pgTreeMode = (name === 'tree');
+  if (pgTreeMode) {
+    // Fetch tree if we haven't already this session
+    if (!_pgUserTreeNested || !_pgUserTreeNested.length) {
+      _pgLoadUserTreeForViewer();
+    } else {
+      pgRenderTree();
+      pgLoadGrid();
+    }
+  } else {
+    pgRenderTree();
+    pgLoadGrid();
+  }
+}
+
+// Fetch the user-defined tree for the Tree tab (idempotent).
+async function _pgLoadUserTreeForViewer() {
+  try {
+    const r = await pgFetch(API + '/network/tree', { headers: pgAuthHeaders() });
+    const j = await r.json();
+    _pgUserTreeNested = j.tree || [];
+    _pgUserTree       = _pgTreeFlatten(_pgUserTreeNested, null, 0);
+    if (_pgGraphsTreeExpanded.size === 0) {
+      _pgUserTree.filter(n => n.node_type === 'folder').forEach(n =>
+        _pgGraphsTreeExpanded.add(n.id));
+    }
+  } catch(e) {
+    _pgUserTreeNested = []; _pgUserTree = [];
+  }
+  pgRenderTree();
+  pgLoadGrid();
 }
 
 // ── Left tree ────────────────────────────

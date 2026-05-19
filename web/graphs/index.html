@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>PyroGraphs v6.1.1 — Network Monitor</title>
+  <title>PyroGraphs v6.1.2 — Network Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     :root {
@@ -283,9 +283,9 @@
 <div id="pg-header">
   <div id="pg-logo">🔥 PyroGraphs</div>
   <div id="pg-subtitle">Cacti-style Network Monitoring</div>
-  <!-- Version pill — if you see anything OTHER than v6.1.1 here you are
+  <!-- Version pill — if you see anything OTHER than v6.1.2 here you are
        running a cached older copy; Ctrl+F5 to reload. -->
-  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.1.1</span>
+  <span style="font-size:10px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px 8px;margin-left:6px;">v6.1.2</span>
   <div id="pg-header-spacer"></div>
   <span id="pg-status-pill"></span>
   <button class="pg-header-btn" onclick="pgAddDevice()">+ Device</button>
@@ -744,18 +744,31 @@ function pgTab(name) {
 }
 
 // Fetch the user-defined tree for the Tree tab (idempotent).
+// Also fetches the graphs list (needed so the folder→graph→device
+// fallback in pgLoadGrid can resolve which devices' previews to load
+// when a folder contains only graph nodes).
 async function _pgLoadUserTreeForViewer() {
   try {
-    const r = await pgFetch(API + '/network/tree', { headers: pgAuthHeaders() });
-    const j = await r.json();
-    _pgUserTreeNested = j.tree || [];
-    _pgUserTree       = _pgTreeFlatten(_pgUserTreeNested, null, 0);
-    if (_pgGraphsTreeExpanded.size === 0) {
-      _pgUserTree.filter(n => n.node_type === 'folder').forEach(n =>
-        _pgGraphsTreeExpanded.add(n.id));
+    const [tr, gr] = await Promise.all([
+      pgFetch(API + '/network/tree',   { headers: pgAuthHeaders() }),
+      pgFetch(API + '/network/graphs', { headers: pgAuthHeaders() }),
+    ]);
+    if (tr.ok) {
+      const j = await tr.json();
+      _pgUserTreeNested = j.tree || [];
+      _pgUserTree       = _pgTreeFlatten(_pgUserTreeNested, null, 0);
+      if (_pgGraphsTreeExpanded.size === 0) {
+        _pgUserTree.filter(n => n.node_type === 'folder').forEach(n =>
+          _pgGraphsTreeExpanded.add(n.id));
+      }
+    }
+    if (gr.ok) {
+      const gj = await gr.json();
+      if (Array.isArray(gj && gj.graphs)) _pgGmgmtAll = gj.graphs;
     }
   } catch(e) {
-    _pgUserTreeNested = []; _pgUserTree = [];
+    _pgUserTreeNested = _pgUserTreeNested || [];
+    _pgUserTree       = _pgUserTree       || [];
   }
   pgRenderTree();
   pgLoadGrid();
@@ -1036,13 +1049,34 @@ async function pgLoadGrid() {
     } else if (pgDevFilter) {
       devIds = [pgDevFilter];
     } else {
+      // Self-heal: if pgDevices is empty (some other code path wiped it),
+      // refetch it inline so the user doesn't see a permanent
+      // "No devices yet" while devices DO exist server-side.
+      if (!pgDevices.length) {
+        try {
+          const r = await pgFetch(API + '/network/devices',
+            { headers: pgAuthHeaders(), timeout: 6000 });
+          if (r.ok) {
+            const j = await r.json();
+            if (Array.isArray(j && j.devices)) pgDevices = j.devices;
+          }
+        } catch(_) {}
+      }
       devIds = pgDevices.map(d => d.id);
     }
     if (!devIds.length) {
-      grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">
-        <div style="font-size:18px;margin-bottom:8px;">No devices yet</div>
-        <div style="font-size:13px;">Click <strong>+ Device</strong> to add your first SNMP device.</div>
-      </div>`;
+      // Different messages for tree-mode-with-selection vs fresh-install
+      let msg;
+      if (pgTreeMode && _pgTreeSelectedNodeId) {
+        msg = `<div style="font-size:16px;margin-bottom:8px;">Empty folder</div>
+               <div style="font-size:12px;">Drag devices or graphs into this folder via <strong>Console → Tree Management</strong>.</div>`;
+      } else {
+        msg = `<div style="font-size:18px;margin-bottom:8px;">No devices yet</div>
+               <div style="font-size:13px;">Click <strong>+ Device</strong> to add your first SNMP device.</div>`;
+      }
+      grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">${msg}</div>`;
+      const info = document.getElementById('pg-grid-info');
+      if (info) info.textContent = '0 graphs';
       pgRenderPager(0, 0);
       return;
     }
@@ -1449,9 +1483,20 @@ function pgRenderDevicesTab() { pgTab('console'); pgConsole('devices'); }
 async function pgRenderDevicesPage(c) {
   c.innerHTML = `<div style="color:var(--muted);padding:40px;text-align:center;">Loading…</div>`;
   try {
-    const res = await fetch(API + '/network/devices', { headers: pgAuthHeaders() });
+    const res = await pgFetch(API + '/network/devices', { headers: pgAuthHeaders(), timeout: 10000 });
+    if (!res.ok) {
+      c.innerHTML = `<div style="color:#ef4444;padding:40px;text-align:center;">Failed to load devices (HTTP ${res.status}). Refresh the page or check the API.</div>`;
+      // DO NOT blank pgDevices — keep whatever pgInit loaded so other
+      // tabs (Tree, Graphs) keep working.
+      return;
+    }
     const data = await res.json();
-    const devs = data.devices || [];
+    const devs = Array.isArray(data && data.devices) ? data.devices : null;
+    if (devs === null) {
+      c.innerHTML = `<div style="color:#ef4444;padding:40px;text-align:center;">Devices response had no .devices field — server returned: ${_pgEsc(JSON.stringify(data).slice(0,120))}</div>`;
+      return;
+    }
+    // Only OVERWRITE pgDevices when we have a confirmed valid response.
     pgDevices = devs;
 
     let rows = devs.map(d => {

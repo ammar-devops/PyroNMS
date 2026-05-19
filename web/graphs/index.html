@@ -1914,27 +1914,30 @@ function pgLogsStopRefresh() {
 // ── Device CRUD modal ────────────────────
 function pgAddDevice() {
   pgEditDevId = null;
-  document.getElementById('pg-dev-modal-title').textContent = 'Add Device';
-  document.getElementById('pg-dev-name').value = '';
-  document.getElementById('pg-dev-ip').value = '';
-  document.getElementById('pg-dev-community').value = 'public';
-  document.getElementById('pg-dev-snmp-ver').value = '2c';
-  document.getElementById('pg-dev-vendor').value = 'mikrotik';
-  document.getElementById('pg-dev-port').value = '161';
-  document.getElementById('pg-dev-timeout').value = '3';
-  document.getElementById('pg-dev-retries').value = '1';
-  document.getElementById('pg-dev-poll-interval').value = '60';
-  document.getElementById('pg-dev-poll-enabled').checked = true;
-  document.getElementById('pg-dev-edit-id').value = '';
-  document.getElementById('pg-dev-modal-err').style.display = 'none';
-  // Reset ROS fields
-  document.getElementById('pg-dev-ros-enabled').checked = false;
-  document.getElementById('pg-dev-ros-user').value = '';
-  document.getElementById('pg-dev-ros-pass').value = '';
-  document.getElementById('pg-dev-ros-port').value = '8728';
-  document.getElementById('pg-dev-ros-fields').style.display = 'none';
-  _pgDevVendorChanged();
-  document.getElementById('pg-dev-modal-overlay').classList.add('open');
+  const t = document.getElementById('pg-dev-modal-title');
+  if (t) t.textContent = 'Add Device';
+  _pgSet('pg-dev-name', '');
+  _pgSet('pg-dev-ip', '');
+  _pgSet('pg-dev-community', 'public');
+  _pgSet('pg-dev-snmp-ver', '2c');
+  _pgSet('pg-dev-vendor', 'mikrotik');
+  _pgSet('pg-dev-port', '161');
+  _pgSet('pg-dev-timeout', '3');
+  _pgSet('pg-dev-retries', '1');
+  _pgSet('pg-dev-poll-interval', '60');
+  _pgSet('pg-dev-poll-enabled', true, true);
+  _pgSet('pg-dev-edit-id', '');
+  const errEl = document.getElementById('pg-dev-modal-err');
+  if (errEl) errEl.style.display = 'none';
+  _pgSet('pg-dev-ros-enabled', false, true);
+  _pgSet('pg-dev-ros-user', '');
+  _pgSet('pg-dev-ros-pass', '');
+  _pgSet('pg-dev-ros-port', '8728');
+  const rosFields = document.getElementById('pg-dev-ros-fields');
+  if (rosFields) rosFields.style.display = 'none';
+  if (typeof _pgDevVendorChanged === 'function') _pgDevVendorChanged();
+  const overlay = document.getElementById('pg-dev-modal-overlay');
+  if (overlay) overlay.classList.add('open');
 }
 
 // Show ROS API block only when vendor=mikrotik
@@ -1945,6 +1948,15 @@ function _pgDevVendorChanged() {
 function _pgDevToggleROS() {
   const en = document.getElementById('pg-dev-ros-enabled').checked;
   document.getElementById('pg-dev-ros-fields').style.display = en ? '' : 'none';
+}
+
+// Tiny helper — set element value/checked but never throw on missing elements
+// (protects against stale-cached HTML missing newer modal fields).
+function _pgSet(id, value, isCheckbox) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (isCheckbox) el.checked = !!value;
+  else el.value = value;
 }
 
 async function pgEditDevice(id) {
@@ -1958,19 +1970,24 @@ async function pgEditDevice(id) {
       if (j.device) dev = j.device;
     }
   } catch(_) { /* fall back to cached */ }
-  if (!dev) return;
+  if (!dev) {
+    alert('Could not load device id=' + id + ' for editing.');
+    return;
+  }
   pgEditDevId = id;
-  document.getElementById('pg-dev-modal-title').textContent = 'Edit Device';
-  document.getElementById('pg-dev-name').value = dev.name || '';
-  document.getElementById('pg-dev-ip').value = dev.ip || dev.ip_address || '';
-  document.getElementById('pg-dev-community').value = dev.snmp_community || '';
-  document.getElementById('pg-dev-snmp-ver').value = dev.snmp_version || '2c';
-  document.getElementById('pg-dev-vendor').value = dev.vendor || 'generic';
-  document.getElementById('pg-dev-port').value = dev.snmp_port || 161;
-  document.getElementById('pg-dev-timeout').value = dev.snmp_timeout || 3;
-  document.getElementById('pg-dev-retries').value = dev.snmp_retries || 1;
-  document.getElementById('pg-dev-poll-interval').value = dev.polling_interval || 60;
-  document.getElementById('pg-dev-poll-enabled').checked = (dev.polling_enabled !== 0);
+  _pgSet('pg-dev-modal-title', null);  // title set by textContent below
+  const t = document.getElementById('pg-dev-modal-title');
+  if (t) t.textContent = 'Edit Device';
+  _pgSet('pg-dev-name',          dev.name || '');
+  _pgSet('pg-dev-ip',            dev.ip || dev.ip_address || '');
+  _pgSet('pg-dev-community',     dev.snmp_community || '');
+  _pgSet('pg-dev-snmp-ver',      dev.snmp_version || '2c');
+  _pgSet('pg-dev-vendor',        dev.vendor || 'generic');
+  _pgSet('pg-dev-port',          dev.snmp_port || 161);
+  _pgSet('pg-dev-timeout',       dev.snmp_timeout || 3);
+  _pgSet('pg-dev-retries',       dev.snmp_retries || 1);
+  _pgSet('pg-dev-poll-interval', dev.polling_interval || 60);
+  _pgSet('pg-dev-poll-enabled',  (dev.polling_enabled !== 0), true);
   document.getElementById('pg-dev-templates').value = '';
   document.getElementById('pg-dev-edit-id').value = id;
   document.getElementById('pg-dev-modal-err').style.display = 'none';
@@ -2013,16 +2030,33 @@ async function pgSaveDevice() {
     errEl.style.display = 'block'; return;
   }
 
-  // Server uses 'ip' (not ip_address). Include all editable fields so
-  // the user gets the expected "save the whole form" behavior.
+  // Server uses 'ip' (not ip_address). Read inputs safely — older cached
+  // HTML may be missing the newer fields; in that case we let the server
+  // keep whatever is already in the DB rather than blasting defaults.
+  const _v = (id, def) => {
+    const el = document.getElementById(id);
+    return el ? el.value : def;
+  };
+  const _chk = (id, def) => {
+    const el = document.getElementById(id);
+    return el ? el.checked : def;
+  };
   const payload = {
     name, ip, snmp_community: community, snmp_version: snmpVer, vendor,
-    snmp_port:        parseInt(document.getElementById('pg-dev-port').value)        || 161,
-    snmp_timeout:     parseInt(document.getElementById('pg-dev-timeout').value)     || 3,
-    snmp_retries:     parseInt(document.getElementById('pg-dev-retries').value)     || 1,
-    polling_interval: parseInt(document.getElementById('pg-dev-poll-interval').value) || 60,
-    polling_enabled:  document.getElementById('pg-dev-poll-enabled').checked ? 1 : 0,
   };
+  // Only include numeric fields when the input actually exists in the DOM,
+  // so users with a stale-cached HTML version can still save name/community
+  // without their port/timeout getting clobbered to defaults.
+  if (document.getElementById('pg-dev-port'))
+    payload.snmp_port        = parseInt(_v('pg-dev-port', '161')) || 161;
+  if (document.getElementById('pg-dev-timeout'))
+    payload.snmp_timeout     = parseInt(_v('pg-dev-timeout', '3')) || 3;
+  if (document.getElementById('pg-dev-retries'))
+    payload.snmp_retries     = parseInt(_v('pg-dev-retries', '1')) || 1;
+  if (document.getElementById('pg-dev-poll-interval'))
+    payload.polling_interval = parseInt(_v('pg-dev-poll-interval', '60')) || 60;
+  if (document.getElementById('pg-dev-poll-enabled'))
+    payload.polling_enabled  = _chk('pg-dev-poll-enabled', true) ? 1 : 0;
 
   // ── Notes handling (ROS API credentials live in here as JSON) ───────
   // Don't blindly clear notes — the poller stores ROS creds there.
@@ -2035,19 +2069,25 @@ async function pgSaveDevice() {
   //                                                            doesn't apply)
   // The user can no longer accidentally wipe creds just by saving the
   // form — they have to actively uncheck "Enable RouterOS API".
-  const isMt = (vendor === 'mikrotik');
-  const rosOn = document.getElementById('pg-dev-ros-enabled').checked;
+  const isMt    = (vendor === 'mikrotik');
+  const rosOnEl = document.getElementById('pg-dev-ros-enabled');
+  const rosOn   = rosOnEl ? rosOnEl.checked : false;
   if (isMt && rosOn) {
-    const ros_user = document.getElementById('pg-dev-ros-user').value.trim();
-    const ros_pass = document.getElementById('pg-dev-ros-pass').value;
-    const ros_port = parseInt(document.getElementById('pg-dev-ros-port').value) || 8728;
+    const ros_user = (_v('pg-dev-ros-user', '') || '').trim();
+    const ros_pass = _v('pg-dev-ros-pass', '');
+    const ros_port = parseInt(_v('pg-dev-ros-port', '8728')) || 8728;
     if (ros_user && ros_pass) {
       payload.notes = JSON.stringify({ ros_user, ros_pass, ros_port });
     }
     // If ROS-on but fields empty: leave notes out of payload (preserves DB value)
-  } else {
+  } else if (isMt && rosOnEl) {
+    // Mikrotik vendor + explicit uncheck → clear creds
+    payload.notes = '';
+  } else if (!isMt) {
+    // Non-Mikrotik vendor → ROS not applicable, clear
     payload.notes = '';
   }
+  // If rosOnEl is missing entirely (stale cached HTML), don't touch notes
 
   const editId  = document.getElementById('pg-dev-edit-id').value;
   // Update + Create both use POST (real server endpoints)
